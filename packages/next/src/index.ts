@@ -2,6 +2,12 @@ import type { NextConfig } from 'next';
 import semver from 'semver';
 import { getNextBuilder } from './builder.js';
 
+/**
+ * Default directories to scan for workflows and steps.
+ * These are the standard Next.js app directories.
+ */
+const DEFAULT_WORKFLOW_DIRS = ['pages', 'app', 'src/pages', 'src/app'];
+
 export function withWorkflow(
   nextConfigOrFn:
     | NextConfig
@@ -17,6 +23,13 @@ export function withWorkflow(
         port?: number;
         dataDir?: string;
       };
+      /**
+       * Directories to scan for workflows and steps.
+       * If provided, this completely overrides the defaults.
+       *
+       * @default ['pages', 'app', 'src/pages', 'src/app']
+       */
+      dirs?: string[];
     };
   } = {}
 ) {
@@ -121,8 +134,7 @@ export function withWorkflow(
       const NextBuilder = await getNextBuilder();
       const workflowBuilder = new NextBuilder({
         watch: shouldWatch,
-        // discover workflows from pages/app entries
-        dirs: ['pages', 'app', 'src/pages', 'src/app'],
+        dirs: workflows?.dirs ?? DEFAULT_WORKFLOW_DIRS,
         workingDir: process.cwd(),
         buildTarget: 'next',
         workflowsBundlePath: '', // not used in base
