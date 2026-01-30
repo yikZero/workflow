@@ -1,5 +1,8 @@
-import type { WorkflowRun, World } from '@workflow/world';
-import chalk from 'chalk';
+import {
+  isLegacySpecVersion,
+  type WorkflowRun,
+  type World,
+} from '@workflow/world';
 import { logger } from '../config/log.js';
 import { start } from '../runtime.js';
 
@@ -68,6 +71,12 @@ export const startRun = async (
 };
 
 export const cancelRun = async (world: World, runId: string) => {
-  await world.events.create(runId, { eventType: 'run_cancelled' });
-  logger.log(chalk.green(`Cancel signal sent to run ${runId}`));
+  const run = await world.runs.get(runId);
+  await world.events.create(
+    runId,
+    { eventType: 'run_cancelled' },
+    {
+      v1Compat: isLegacySpecVersion(run.specVersion),
+    }
+  );
 };

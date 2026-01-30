@@ -17,13 +17,14 @@ import {
 } from '@workflow/core/serialization';
 import { WorkflowAPIError, WorkflowRunNotFoundError } from '@workflow/errors';
 import { findWorkflowDataDir } from '@workflow/utils/check-data-dir';
-import type {
-  Event,
-  Hook,
-  Step,
-  WorkflowRun,
-  WorkflowRunStatus,
-  World,
+import {
+  type Event,
+  type Hook,
+  isLegacySpecVersion,
+  type Step,
+  type WorkflowRun,
+  type WorkflowRunStatus,
+  type World,
 } from '@workflow/world';
 import { createVercelWorld } from '@workflow/world-vercel';
 
@@ -815,7 +816,13 @@ export async function cancelRun(
 ): Promise<ServerActionResult<void>> {
   try {
     const world = await getWorldFromEnv(worldEnv);
-    await world.events.create(runId, { eventType: 'run_cancelled' });
+    const run = await world.runs.get(runId, { resolveData: 'none' });
+    const compatMode = isLegacySpecVersion(run.specVersion);
+    await world.events.create(
+      runId,
+      { eventType: 'run_cancelled' },
+      { v1Compat: compatMode }
+    );
     return createResponse(undefined);
   } catch (error) {
     return createServerActionError<void>(error, 'world.events.create', {
@@ -837,14 +844,16 @@ export async function recreateRun(
   try {
     const world = await getWorldFromEnv({ ...worldEnv });
     const run = await world.runs.get(runId);
+    // Get original input/output
     const hydratedRun = hydrate(run as WorkflowRun);
-    // hydrateResourceIO deserializes the binary input back to the original array
+
     const newRun = await start(
       { workflowId: run.workflowName },
       hydratedRun.input as unknown as unknown[],
       {
         deploymentId: deploymentId ?? run.deploymentId,
         world,
+        specVersion: run.specVersion,
       }
     );
     return createResponse(newRun.runId);

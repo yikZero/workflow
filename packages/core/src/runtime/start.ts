@@ -2,7 +2,7 @@ import { waitUntil } from '@vercel/functions';
 import { WorkflowRuntimeError } from '@workflow/errors';
 import { withResolvers } from '@workflow/utils';
 import type { WorkflowInvokePayload, World } from '@workflow/world';
-import { SPEC_VERSION_CURRENT } from '@workflow/world';
+import { isLegacySpecVersion, SPEC_VERSION_CURRENT } from '@workflow/world';
 import { Run } from '../runtime.js';
 import type { Serializable } from '../schemas.js';
 import { dehydrateWorkflowArguments } from '../serialization.js';
@@ -27,6 +27,11 @@ export interface StartOptions {
    * by default the world is inferred from the environment variables.
    */
   world?: World;
+
+  /**
+   * The spec version to use for the workflow run. Defaults to the latest version.
+   */
+  specVersion?: number;
 }
 
 /**
@@ -103,24 +108,32 @@ export async function start<TArgs extends unknown[], TResult>(
       // Serialize current trace context to propagate across queue boundary
       const traceCarrier = await serializeTraceCarrier();
 
+      const specVersion = opts.specVersion ?? SPEC_VERSION_CURRENT;
+      const v1Compat = isLegacySpecVersion(specVersion);
+
       // Create run via run_created event (event-sourced architecture)
       // Pass null for runId - the server generates it and returns it in the response
       const workflowArguments = dehydrateWorkflowArguments(
         args,
         ops,
-        runIdPromise
+        runIdPromise,
+        globalThis,
+        v1Compat
       );
-
-      const result = await world.events.create(null, {
-        eventType: 'run_created',
-        specVersion: SPEC_VERSION_CURRENT,
-        eventData: {
-          deploymentId: deploymentId,
-          workflowName: workflowName,
-          input: workflowArguments,
-          executionContext: { traceCarrier, workflowCoreVersion },
+      const result = await world.events.create(
+        null,
+        {
+          eventType: 'run_created',
+          specVersion,
+          eventData: {
+            deploymentId: deploymentId,
+            workflowName: workflowName,
+            input: workflowArguments,
+            executionContext: { traceCarrier, workflowCoreVersion },
+          },
         },
-      });
+        { v1Compat }
+      );
 
       // Assert that the run was created
       if (!result.run) {

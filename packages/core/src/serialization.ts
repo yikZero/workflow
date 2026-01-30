@@ -1,6 +1,6 @@
 import { WorkflowRuntimeError } from '@workflow/errors';
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from '@workflow/serde';
-import { DevalueError, parse, stringify } from 'devalue';
+import { DevalueError, parse, stringify, unflatten } from 'devalue';
 import { monotonicFactory } from 'ulid';
 import { getSerializationClass } from './class-serialization.js';
 import {
@@ -74,13 +74,10 @@ const formatDecoder = new TextDecoder();
  */
 export function encodeWithFormatPrefix(
   format: SerializationFormatType,
-  payload: Uint8Array
-): Uint8Array {
+  payload: Uint8Array | unknown
+): Uint8Array | unknown {
   if (!(payload instanceof Uint8Array)) {
-    throw new WorkflowRuntimeError(
-      `"payload" must be a Uint8Array, got "${typeof payload}"`,
-      { slug: 'serialization-failed', cause: payload }
-    );
+    return payload;
   }
 
   const prefixBytes = formatEncoder.encode(format);
@@ -376,6 +373,12 @@ type Reducers = {
 type Revivers = {
   [K in keyof SerializableSpecial]: (value: SerializableSpecial[K]) => any;
 };
+
+function revive(str: string) {
+  // biome-ignore lint/security/noGlobalEval: Eval is safe here - we are only passing value from `devalue.stringify()`
+  // biome-ignore lint/complexity/noCommaOperator: This is how you do global scope eval
+  return (0, eval)(`(${str})`);
+}
 
 function getCommonReducers(global: Record<string, any> = globalThis) {
   const abToBase64 = (
@@ -1195,10 +1198,14 @@ export function dehydrateWorkflowArguments(
   value: unknown,
   ops: Promise<void>[],
   runId: string | Promise<string>,
-  global: Record<string, any> = globalThis
-): Uint8Array {
+  global: Record<string, any> = globalThis,
+  v1Compat = false
+): Uint8Array | unknown {
   try {
     const str = stringify(value, getExternalReducers(global, ops, runId));
+    if (v1Compat) {
+      return revive(str);
+    }
     const payload = new TextEncoder().encode(str);
     return encodeWithFormatPrefix(SerializationFormat.DEVALUE_V1, payload);
   } catch (error) {
@@ -1223,6 +1230,13 @@ export function hydrateWorkflowArguments(
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {
+  if (!(value instanceof Uint8Array)) {
+    return unflatten(value as any[], {
+      ...getWorkflowRevivers(global),
+      ...extraRevivers,
+    });
+  }
+
   const { format, payload } = decodeFormatPrefix(value);
 
   if (format === SerializationFormat.DEVALUE_V1) {
@@ -1247,10 +1261,14 @@ export function hydrateWorkflowArguments(
  */
 export function dehydrateWorkflowReturnValue(
   value: unknown,
-  global: Record<string, any> = globalThis
-): Uint8Array {
+  global: Record<string, any> = globalThis,
+  v1Compat = false
+): Uint8Array | unknown {
   try {
     const str = stringify(value, getWorkflowReducers(global));
+    if (v1Compat) {
+      return revive(str);
+    }
     const payload = new TextEncoder().encode(str);
     return encodeWithFormatPrefix(SerializationFormat.DEVALUE_V1, payload);
   } catch (error) {
@@ -1280,6 +1298,13 @@ export function hydrateWorkflowReturnValue(
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {
+  if (!(value instanceof Uint8Array)) {
+    return unflatten(value as any[], {
+      ...getExternalRevivers(global, ops, runId),
+      ...extraRevivers,
+    });
+  }
+
   const { format, payload } = decodeFormatPrefix(value);
 
   if (format === SerializationFormat.DEVALUE_V1) {
@@ -1305,10 +1330,14 @@ export function hydrateWorkflowReturnValue(
  */
 export function dehydrateStepArguments(
   value: unknown,
-  global: Record<string, any>
-): Uint8Array {
+  global: Record<string, any>,
+  v1Compat = false
+): Uint8Array | unknown {
   try {
     const str = stringify(value, getWorkflowReducers(global));
+    if (v1Compat) {
+      return revive(str);
+    }
     const payload = new TextEncoder().encode(str);
     return encodeWithFormatPrefix(SerializationFormat.DEVALUE_V1, payload);
   } catch (error) {
@@ -1337,6 +1366,13 @@ export function hydrateStepArguments(
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {
+  if (!(value instanceof Uint8Array)) {
+    return unflatten(value as any[], {
+      ...getStepRevivers(global, ops, runId),
+      ...extraRevivers,
+    });
+  }
+
   const { format, payload } = decodeFormatPrefix(value);
 
   if (format === SerializationFormat.DEVALUE_V1) {
@@ -1366,10 +1402,14 @@ export function dehydrateStepReturnValue(
   value: unknown,
   ops: Promise<any>[],
   runId: string | Promise<string>,
-  global: Record<string, any> = globalThis
-): Uint8Array {
+  global: Record<string, any> = globalThis,
+  v1Compat = false
+): Uint8Array | unknown {
   try {
     const str = stringify(value, getStepReducers(global, ops, runId));
+    if (v1Compat) {
+      return revive(str);
+    }
     const payload = new TextEncoder().encode(str);
     return encodeWithFormatPrefix(SerializationFormat.DEVALUE_V1, payload);
   } catch (error) {
@@ -1394,6 +1434,13 @@ export function hydrateStepReturnValue(
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {
+  if (!(value instanceof Uint8Array)) {
+    return unflatten(value as any[], {
+      ...getWorkflowRevivers(global),
+      ...extraRevivers,
+    });
+  }
+
   const { format, payload } = decodeFormatPrefix(value);
 
   if (format === SerializationFormat.DEVALUE_V1) {

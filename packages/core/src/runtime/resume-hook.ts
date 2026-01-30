@@ -2,6 +2,7 @@ import { waitUntil } from '@vercel/functions';
 import { ERROR_SLUGS, WorkflowRuntimeError } from '@workflow/errors';
 import {
   type Hook,
+  isLegacySpecVersion,
   SPEC_VERSION_CURRENT,
   type WorkflowInvokePayload,
 } from '@workflow/world';
@@ -82,10 +83,13 @@ export async function resumeHook<T = any>(
 
         // Dehydrate the payload for storage
         const ops: Promise<any>[] = [];
+        const v1Compat = isLegacySpecVersion(hook.specVersion);
         const dehydratedPayload = dehydrateStepReturnValue(
           payload,
           ops,
-          hook.runId
+          hook.runId,
+          globalThis,
+          v1Compat
         );
         // NOTE: Workaround instead of injecting catching undefined unhandled rejections in webhook bundle
         waitUntil(
@@ -95,14 +99,18 @@ export async function resumeHook<T = any>(
         );
 
         // Create a hook_received event with the payload
-        await world.events.create(hook.runId, {
-          eventType: 'hook_received',
-          specVersion: SPEC_VERSION_CURRENT,
-          correlationId: hook.hookId,
-          eventData: {
-            payload: dehydratedPayload,
+        await world.events.create(
+          hook.runId,
+          {
+            eventType: 'hook_received',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: hook.hookId,
+            eventData: {
+              payload: dehydratedPayload,
+            },
           },
-        });
+          { v1Compat }
+        );
 
         const workflowRun = await world.runs.get(hook.runId);
 
