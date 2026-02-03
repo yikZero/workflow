@@ -1028,9 +1028,10 @@ impl StepTransform {
                                     return;
                                 }
                                 TransformMode::Client => {
-                                    // In client mode, remove directive and register for serialization
+                                    // In client mode for nested step functions, just remove directive
+                                    // WITHOUT registering - the function will be undefined since the
+                                    // workflow body is replaced with throw Error
                                     self.remove_use_step_directive(&mut fn_decl.function.body);
-                                    self.create_registration_call(&fn_name, fn_decl.function.span);
                                     return;
                                 }
                             }
@@ -5300,9 +5301,18 @@ impl VisitMut for StepTransform {
                 self.step_function_names.insert(fn_name.clone());
 
                 match self.mode {
-                    TransformMode::Step | TransformMode::Client => {
+                    TransformMode::Step => {
                         self.remove_use_step_directive(&mut fn_decl.function.body);
                         self.create_registration_call(&fn_name, fn_decl.function.span);
+                    }
+                    TransformMode::Client => {
+                        self.remove_use_step_directive(&mut fn_decl.function.body);
+                        // Only register module-level step functions in client mode
+                        // Nested step functions are unreachable (their containing function
+                        // bodies are not hoisted to module level)
+                        if self.in_module_level {
+                            self.create_registration_call(&fn_name, fn_decl.function.span);
+                        }
                     }
                     TransformMode::Workflow => {
                         // For workflow mode, we need to replace the entire declaration
@@ -6243,13 +6253,11 @@ impl VisitMut for StepTransform {
                                                 ));
                                             }
                                             TransformMode::Client => {
-                                                // In client mode, remove directive and register for serialization
+                                                // In client mode for nested step functions, just remove directive
+                                                // WITHOUT registering - the function will be undefined since it's
+                                                // locally scoped within another function
                                                 self.remove_use_step_directive_arrow(
                                                     &mut arrow_expr.body,
-                                                );
-                                                self.create_registration_call(
-                                                    &name,
-                                                    arrow_expr.span,
                                                 );
                                             }
                                         }
