@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 import * as z from 'zod';
 import { tool } from 'ai';
 var weatherTool$execute = async ({ location })=>{
@@ -50,6 +49,6 @@ export const weatherTool2 = tool({
         };
     }
 });
-registerStepFunction("step//input.js//weatherTool/execute", weatherTool$execute);
-registerStepFunction("step//input.js//timeTool/execute", timeTool$execute);
-registerStepFunction("step//input.js//weatherTool2/execute", weatherTool2$execute);
+weatherTool$execute.stepId = "step//input.js//weatherTool/execute";
+timeTool$execute.stepId = "step//input.js//timeTool/execute";
+weatherTool2$execute.stepId = "step//input.js//weatherTool2/execute";

@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 import { createConfig } from "some-library";
 var config$level1$level2$level3$myStep = async (input)=>{
     return input * 2;
@@ -15,4 +14,4 @@ export const config = createConfig({
         }
     }
 });
-registerStepFunction("step//input.js//config/level1/level2/level3/myStep", config$level1$level2$level3$myStep);
+config$level1$level2$level3$myStep.stepId = "step//input.js//config/level1/level2/level3/myStep";

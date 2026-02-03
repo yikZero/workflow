@@ -2782,7 +2782,12 @@ impl StepTransform {
     // Creates: functionName.stepId = "stepId"
     fn create_step_id_assignment(&self, fn_name: &str, span: swc_core::common::Span) -> Stmt {
         let step_id = self.create_id(Some(fn_name), span, false);
+        self.create_step_id_assignment_with_id(fn_name, &step_id)
+    }
 
+    // Create a statement that adds stepId property to a function with a pre-computed step_id (client mode)
+    // Creates: functionName.stepId = "stepId"
+    fn create_step_id_assignment_with_id(&self, fn_name: &str, step_id: &str) -> Stmt {
         Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
             expr: Box::new(Expr::Assign(AssignExpr {
@@ -3608,22 +3613,9 @@ impl VisitMut for StepTransform {
                         }
                     }
                     TransformMode::Client => {
-                        // In client mode, we need step function registration so that
-                        // step functions can be serialized when passed to start(workflow)
-                        // or returned from other step functions
-                        let needs_register_import = !self.registration_calls.is_empty()
-                            || !self.object_property_step_functions.is_empty()
-                            || !self.static_method_step_registrations.is_empty()
-                            || !self.instance_method_step_registrations.is_empty();
-
-                        if needs_register_import {
-                            imports_to_add.push(self.create_private_imports(
-                                needs_register_import,
-                                false, // No closure import needed in client mode
-                            ));
-                        }
-
-                        // Also need class serialization registration
+                        // In client mode, we use stepId property assignments instead of registerStepFunction
+                        // for step functions, so no need to import registerStepFunction.
+                        // Class serialization registration is still needed.
                         let needs_class_serialization =
                             !self.classes_needing_serialization.is_empty();
                         if needs_class_serialization {
@@ -3770,46 +3762,55 @@ impl VisitMut for StepTransform {
                         module.body.insert(current_insert_pos, hoisted_decl);
                         current_insert_pos += 1;
 
-                        // Create a registration call with parent workflow name in the step ID
+                        // Create a registration call or stepId assignment with parent workflow name in the step ID
                         let step_fn_name = if parent_workflow_name.is_empty() {
                             fn_name.clone()
                         } else {
                             format!("{}/{}", parent_workflow_name, fn_name)
                         };
                         let step_id = self.create_id(Some(&step_fn_name), span, false);
-                        let registration_call = Stmt::Expr(ExprStmt {
-                            span: DUMMY_SP,
-                            expr: Box::new(Expr::Call(CallExpr {
-                                span: DUMMY_SP,
-                                ctxt: SyntaxContext::empty(),
-                                callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
-                                    "registerStepFunction".into(),
-                                    DUMMY_SP,
-                                    SyntaxContext::empty(),
-                                )))),
-                                args: vec![
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                            span: DUMMY_SP,
-                                            value: step_id.into(),
-                                            raw: None,
-                                        }))),
-                                    },
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Ident(Ident::new(
-                                            hoisted_name.into(),
-                                            DUMMY_SP,
-                                            SyntaxContext::empty(),
-                                        ))),
-                                    },
-                                ],
-                                type_args: None,
-                            })),
-                        });
 
-                        self.registration_calls.push(registration_call);
+                        if self.mode == TransformMode::Client {
+                            // In client mode, use stepId property assignment instead of registerStepFunction
+                            let step_id_assignment =
+                                self.create_step_id_assignment_with_id(&hoisted_name, &step_id);
+                            self.registration_calls.push(step_id_assignment);
+                        } else {
+                            // In step mode, use registerStepFunction
+                            let registration_call = Stmt::Expr(ExprStmt {
+                                span: DUMMY_SP,
+                                expr: Box::new(Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    ctxt: SyntaxContext::empty(),
+                                    callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+                                        "registerStepFunction".into(),
+                                        DUMMY_SP,
+                                        SyntaxContext::empty(),
+                                    )))),
+                                    args: vec![
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: step_id.into(),
+                                                raw: None,
+                                            }))),
+                                        },
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Ident(Ident::new(
+                                                hoisted_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        },
+                                    ],
+                                    type_args: None,
+                                })),
+                            });
+
+                            self.registration_calls.push(registration_call);
+                        }
                     }
 
                     // Then process object property step functions (they typically appear later)
@@ -3870,40 +3871,47 @@ impl VisitMut for StepTransform {
                         module.body.insert(current_insert_pos, hoisted_decl);
                         current_insert_pos += 1;
 
-                        // Create a registration call
-                        let registration_call = Stmt::Expr(ExprStmt {
-                            span: DUMMY_SP,
-                            expr: Box::new(Expr::Call(CallExpr {
+                        if self.mode == TransformMode::Client {
+                            // In client mode, use stepId property assignment instead of registerStepFunction
+                            let step_id_assignment =
+                                self.create_step_id_assignment_with_id(&hoist_var_name, &step_id);
+                            self.registration_calls.push(step_id_assignment);
+                        } else {
+                            // In step mode, use registerStepFunction
+                            let registration_call = Stmt::Expr(ExprStmt {
                                 span: DUMMY_SP,
-                                ctxt: SyntaxContext::empty(),
-                                callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
-                                    "registerStepFunction".into(),
-                                    DUMMY_SP,
-                                    SyntaxContext::empty(),
-                                )))),
-                                args: vec![
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                            span: DUMMY_SP,
-                                            value: step_id.into(),
-                                            raw: None,
-                                        }))),
-                                    },
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Ident(Ident::new(
-                                            hoist_var_name.into(),
-                                            DUMMY_SP,
-                                            SyntaxContext::empty(),
-                                        ))),
-                                    },
-                                ],
-                                type_args: None,
-                            })),
-                        });
+                                expr: Box::new(Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    ctxt: SyntaxContext::empty(),
+                                    callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+                                        "registerStepFunction".into(),
+                                        DUMMY_SP,
+                                        SyntaxContext::empty(),
+                                    )))),
+                                    args: vec![
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: step_id.into(),
+                                                raw: None,
+                                            }))),
+                                        },
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Ident(Ident::new(
+                                                hoist_var_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        },
+                                    ],
+                                    type_args: None,
+                                })),
+                            });
 
-                        self.registration_calls.push(registration_call);
+                            self.registration_calls.push(registration_call);
+                        }
                     }
 
                     for call in self.registration_calls.drain(..) {

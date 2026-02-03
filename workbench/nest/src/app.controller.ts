@@ -18,13 +18,8 @@ import {
 import { hydrateWorkflowArguments } from 'workflow/internal/serialization';
 import { getWorld, healthCheck } from 'workflow/runtime';
 import { allWorkflows } from './_workflows.js';
-// Import step functions that can be passed as arguments for testing
-import { stepFnForStartArg } from './workflows/99_e2e.js';
-
-// Map of step function names to their references for testing step function serialization
-const stepFunctionRefs: Record<string, unknown> = {
-  stepFnForStartArg,
-};
+// Import all exports for step function lookup
+import * as stepFunctions from './workflows/98_duplicate_case.js';
 
 @Controller('api')
 export class AppController {
@@ -118,20 +113,19 @@ export class AppController {
       args = [42];
     }
     // Support passing step function references as arguments for testing
-    // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:stepFnForStartArg)
+    // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:addNumbers)
     if (stepFnArgParam) {
       const [indexStr, stepFnName] = stepFnArgParam.split(':');
       const index = parseInt(indexStr, 10);
-      const stepFn = stepFunctionRefs[stepFnName];
+      const stepFn = (stepFunctions as Record<string, unknown>)[stepFnName];
       if (stepFn) {
-        // Insert or replace the step function at the specified index
         args[index] = stepFn;
         console.log(
           `Injected step function "${stepFnName}" at args[${index}], stepId: ${(stepFn as any).stepId}`
         );
       } else {
         console.warn(
-          `Step function "${stepFnName}" not found in stepFunctionRefs`
+          `Step function "${stepFnName}" not found in stepFunctions`
         );
       }
     }

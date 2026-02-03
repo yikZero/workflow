@@ -6,13 +6,8 @@ import {
 } from 'workflow/internal/errors';
 import { hydrateWorkflowArguments } from 'workflow/internal/serialization';
 import { allWorkflows } from '$lib/_workflows.js';
-// Import step functions that can be passed as arguments for testing
-import { stepFnForStartArg } from '../../../workflows/99_e2e.js';
-
-// Map of step function names to their references for testing step function serialization
-const stepFunctionRefs: Record<string, unknown> = {
-  stepFnForStartArg,
-};
+// Import all exports for step function lookup
+import * as stepFunctions from '../../../workflows/98_duplicate_case.js';
 
 export const POST: RequestHandler = async ({ request }) => {
   const url = new URL(request.url);
@@ -71,22 +66,19 @@ export const POST: RequestHandler = async ({ request }) => {
     }
   }
   // Support passing step function references as arguments for testing
-  // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:stepFnForStartArg)
+  // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:addNumbers)
   const stepFnArgParam = url.searchParams.get('stepFnArg');
   if (stepFnArgParam) {
     const [indexStr, stepFnName] = stepFnArgParam.split(':');
     const index = parseInt(indexStr, 10);
-    const stepFn = stepFunctionRefs[stepFnName];
+    const stepFn = (stepFunctions as Record<string, unknown>)[stepFnName];
     if (stepFn) {
-      // Insert or replace the step function at the specified index
       args[index] = stepFn;
       console.log(
         `Injected step function "${stepFnName}" at args[${index}], stepId: ${(stepFn as any).stepId}`
       );
     } else {
-      console.warn(
-        `Step function "${stepFnName}" not found in stepFunctionRefs`
-      );
+      console.warn(`Step function "${stepFnName}" not found in stepFunctions`);
     }
   }
 

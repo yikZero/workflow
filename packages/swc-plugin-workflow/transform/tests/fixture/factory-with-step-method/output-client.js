@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 import fs from 'fs/promises';
 var myFactory$myStep = async ()=>{
     await fs.mkdir('test');
@@ -9,4 +8,4 @@ const myFactory = ()=>({
         }
     });
 export default myFactory;
-registerStepFunction("step//input.js//myFactory/myStep", myFactory$myStep);
+myFactory$myStep.stepId = "step//input.js//myFactory/myStep";

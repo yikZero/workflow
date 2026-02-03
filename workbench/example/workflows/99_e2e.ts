@@ -1234,16 +1234,6 @@ export async function instanceMethodStepWorkflow(initialValue: number) {
 //////////////////////////////////////////////////////////
 
 /**
- * A step function that will be passed as an argument to start().
- * This tests that step function references can be serialized across
- * the client -> workflow boundary.
- */
-async function addNumbers(a: number, b: number): Promise<number> {
-  'use step';
-  return a + b;
-}
-
-/**
  * A step function that invokes a step function reference passed to it.
  * This is called from within the workflow to execute the passed step function.
  */
@@ -1260,7 +1250,7 @@ async function invokeStepFn(
 /**
  * Workflow that receives a step function reference as an argument from start().
  * This tests that:
- * 1. Step function references can be serialized in the client bundle (via registerStepFunction)
+ * 1. Step function references can be serialized in the client bundle (via stepId property)
  * 2. The serialized step function can be deserialized in the workflow bundle
  * 3. The deserialized step function can be invoked DIRECTLY from workflow code
  * 4. The deserialized step function can also be invoked from within another step
@@ -1285,6 +1275,3 @@ export async function stepFunctionAsStartArgWorkflow(
 
   return { directResult, viaStepResult, doubled };
 }
-
-// Export the step function so it can be imported and passed to start() in the test
-export { addNumbers as stepFnForStartArg };

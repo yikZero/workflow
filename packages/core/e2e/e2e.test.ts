@@ -1530,30 +1530,32 @@ describe('e2e', () => {
     { timeout: 120_000 },
     async () => {
       // This test verifies that step function references can be:
-      // 1. Serialized in the client bundle (via registerStepFunction setting stepId)
+      // 1. Serialized in the client bundle (the SWC plugin sets stepId property on the function)
       // 2. Passed as arguments to start()
-      // 3. Deserialized in the workflow bundle
+      // 3. Deserialized in the workflow bundle (using WORKFLOW_USE_STEP from globalThis)
       // 4. Invoked from within a step function in the workflow
       //
-      // This is enabled by calling registerStepFunction in client mode, which
-      // sets the stepId property on the function for serialization.
+      // In client mode, the SWC plugin sets the `stepId` property directly on step functions
+      // (e.g., `myStepFn.stepId = "step//..."`). This allows the serialization layer to detect
+      // step functions and serialize them by their stepId.
       //
       // The test uses the trigger endpoint with stepFnArg query parameter:
       // stepFnArg=<index>:<stepFnName> injects a step function at the specified arg index
       //
-      // The workflow receives a step function reference (stepFnForStartArg) and:
-      // 1. Passes it to invokeStepFn(stepFn, 3, 5) -> stepFn(3, 5) = 8
-      // 2. Passes it again to invokeStepFn(stepFn, 8, 8) -> stepFn(8, 8) = 16
+      // The workflow receives a step function reference (add) and:
+      // 1. Calls stepFn(3, 5) directly -> 8
+      // 2. Passes it to invokeStepFn(stepFn, 3, 5) -> stepFn(3, 5) = 8
+      // 3. Calls stepFn(8, 8) -> 16
 
       // Use the trigger endpoint with stepFnArg to inject the step function at arg[0]
-      // The trigger endpoint imports stepFnForStartArg from the workflow file,
-      // which has already run registerStepFunction and set the stepId property.
+      // The trigger endpoint imports `add` from 98_duplicate_case.ts,
+      // which has the stepId property set by the SWC plugin in client mode.
       const url = new URL('/api/trigger', deploymentUrl);
       url.searchParams.set('workflowFile', 'workflows/99_e2e.ts');
       url.searchParams.set('workflowFn', 'stepFunctionAsStartArgWorkflow');
       // Format: stepFnArg=<index>:<stepFnName> - inject step function at args[0]
-      // args will be: [stepFnForStartArg, 3, 5]
-      url.searchParams.set('stepFnArg', '0:stepFnForStartArg');
+      // args will be: [add, 3, 5]
+      url.searchParams.set('stepFnArg', '0:add');
       url.searchParams.set('args', ',3,5'); // First arg will be replaced by stepFnArg
 
       const res = await fetch(url, {
@@ -1574,8 +1576,8 @@ describe('e2e', () => {
       const returnValue = await getWorkflowReturnValue(runId);
 
       // Verify the workflow result
-      // directResult: stepFn called directly from workflow code = stepFnForStartArg(3, 5) = 8
-      // viaStepResult: stepFn called via invokeStepFn = stepFnForStartArg(3, 5) = 8
+      // directResult: stepFn called directly from workflow code = add(3, 5) = 8
+      // viaStepResult: stepFn called via invokeStepFn = add(3, 5) = 8
       // doubled: stepFn(8, 8) = 16
       expect(returnValue).toEqual({
         directResult: 8,
