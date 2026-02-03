@@ -1882,6 +1882,97 @@ describe('step function serialization', () => {
     // Should return object with stepId
     expect(result).toEqual({ stepId: stepName });
   });
+
+  it('should hydrate step function from workflow arguments using WORKFLOW_USE_STEP', () => {
+    // This tests the flow: client mode serializes step function with stepId,
+    // workflow mode deserializes it using WORKFLOW_USE_STEP from vmGlobalThis
+    const stepId = 'step//workflows/test.ts//addNumbers';
+
+    // Create a VM context like the workflow runner does
+    const { context, globalThis: vmGlobalThis } = createContext({
+      seed: 'test',
+      fixedTimestamp: 1714857600000,
+    });
+
+    // Set up WORKFLOW_USE_STEP on the VM's globalThis (like workflow.ts does)
+    const mockUseStep = (id: string) => {
+      const fn = (...args: any[]) => {
+        // Return a promise that resolves with args (like useStep wrapper does)
+        return Promise.resolve({ calledWithStepId: id, args });
+      };
+      fn.stepId = id;
+      return fn;
+    };
+    (vmGlobalThis as any)[Symbol.for('WORKFLOW_USE_STEP')] = mockUseStep;
+
+    // Create a function with stepId (like SWC plugin does in client mode)
+    const clientStepFn = async (a: number, b: number) => a + b;
+    Object.defineProperty(clientStepFn, 'stepId', {
+      value: stepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+
+    // Serialize from client side using external reducers
+    const ops: Promise<void>[] = [];
+    const dehydrated = dehydrateWorkflowArguments(
+      [clientStepFn, 3, 5],
+      ops,
+      mockRunId,
+      globalThis
+    );
+
+    // Hydrate in workflow context using VM's globalThis
+    const hydrated = hydrateWorkflowArguments(dehydrated, vmGlobalThis);
+
+    // Verify the hydrated result
+    expect(Array.isArray(hydrated)).toBe(true);
+    expect(hydrated).toHaveLength(3);
+
+    const [hydratedStepFn, arg1, arg2] = hydrated;
+
+    // The step function should be a function (from useStep wrapper)
+    expect(typeof hydratedStepFn).toBe('function');
+    expect(arg1).toBe(3);
+    expect(arg2).toBe(5);
+
+    // The hydrated function should have stepId
+    expect(hydratedStepFn.stepId).toBe(stepId);
+  });
+
+  it('should throw error when WORKFLOW_USE_STEP is not set on globalThis', () => {
+    const stepId = 'step//workflows/test.ts//missingUseStep';
+
+    // Create a VM context WITHOUT setting up WORKFLOW_USE_STEP
+    const { context, globalThis: vmGlobalThis } = createContext({
+      seed: 'test',
+      fixedTimestamp: 1714857600000,
+    });
+
+    // Create a function with stepId
+    const clientStepFn = async (a: number, b: number) => a + b;
+    Object.defineProperty(clientStepFn, 'stepId', {
+      value: stepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+
+    // Serialize from client side
+    const ops: Promise<void>[] = [];
+    const dehydrated = dehydrateWorkflowArguments(
+      [clientStepFn],
+      ops,
+      mockRunId,
+      globalThis
+    );
+
+    // Hydrating should throw because WORKFLOW_USE_STEP is not set
+    expect(() => hydrateWorkflowArguments(dehydrated, vmGlobalThis)).toThrow(
+      'WORKFLOW_USE_STEP not found on global object'
+    );
+  });
 });
 
 describe('custom class serialization', () => {
