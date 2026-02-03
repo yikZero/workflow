@@ -1028,14 +1028,15 @@ impl StepTransform {
                                     return;
                                 }
                                 TransformMode::Client => {
-                                    // In client mode, just remove the directive and keep the function
+                                    // In client mode, remove directive and register for serialization
                                     self.remove_use_step_directive(&mut fn_decl.function.body);
+                                    self.create_registration_call(&fn_name, fn_decl.function.span);
                                     return;
                                 }
                             }
                         } else {
                             match self.mode {
-                                TransformMode::Step => {
+                                TransformMode::Step | TransformMode::Client => {
                                     self.remove_use_step_directive(&mut fn_decl.function.body);
                                     self.create_registration_call(&fn_name, fn_decl.function.span);
                                     stmt.visit_mut_children_with(self);
@@ -1069,10 +1070,6 @@ impl StepTransform {
                                             arg: Some(Box::new(proxy_call)),
                                         })];
                                     }
-                                }
-                                TransformMode::Client => {
-                                    self.remove_use_step_directive(&mut fn_decl.function.body);
-                                    stmt.visit_mut_children_with(self);
                                 }
                             }
                         }
@@ -3570,8 +3567,22 @@ impl VisitMut for StepTransform {
                         }
                     }
                     TransformMode::Client => {
-                        // In client mode, we still need class serialization registration
-                        // so that classes can be serialized when passed to start(workflow)
+                        // In client mode, we need step function registration so that
+                        // step functions can be serialized when passed to start(workflow)
+                        // or returned from other step functions
+                        let needs_register_import = !self.registration_calls.is_empty()
+                            || !self.object_property_step_functions.is_empty()
+                            || !self.static_method_step_registrations.is_empty()
+                            || !self.instance_method_step_registrations.is_empty();
+
+                        if needs_register_import {
+                            imports_to_add.push(self.create_private_imports(
+                                needs_register_import,
+                                false, // No closure import needed in client mode
+                            ));
+                        }
+
+                        // Also need class serialization registration
                         let needs_class_serialization =
                             !self.classes_needing_serialization.is_empty();
                         if needs_class_serialization {
@@ -3585,8 +3596,8 @@ impl VisitMut for StepTransform {
                     module.body.insert(0, import);
                 }
 
-                // Add hoisted object property functions and registration calls at the end for step mode
-                if matches!(self.mode, TransformMode::Step) {
+                // Add hoisted object property functions and registration calls at the end for step mode or client mode
+                if matches!(self.mode, TransformMode::Step | TransformMode::Client) {
                     // Calculate insertion position once before any hoisting
                     let initial_insert_pos = module
                         .body
@@ -5287,16 +5298,12 @@ impl VisitMut for StepTransform {
                 self.step_function_names.insert(fn_name.clone());
 
                 match self.mode {
-                    TransformMode::Step => {
+                    TransformMode::Step | TransformMode::Client => {
                         self.remove_use_step_directive(&mut fn_decl.function.body);
                         self.create_registration_call(&fn_name, fn_decl.function.span);
                     }
                     TransformMode::Workflow => {
                         // For workflow mode, we need to replace the entire declaration
-                        // This will be handled at a higher level
-                    }
-                    TransformMode::Client => {
-                        // Step functions are completely removed in client mode
                         // This will be handled at a higher level
                     }
                 }
@@ -5393,7 +5400,7 @@ impl VisitMut for StepTransform {
                         self.step_function_names.insert(fn_name.clone());
 
                         match self.mode {
-                            TransformMode::Step => {
+                            TransformMode::Step | TransformMode::Client => {
                                 self.remove_use_step_directive(&mut fn_decl.function.body);
                                 self.create_registration_call(&fn_name, fn_decl.function.span);
                                 export_decl.visit_mut_children_with(self);
@@ -5408,11 +5415,6 @@ impl VisitMut for StepTransform {
                                     step_id,
                                     fn_decl.function.span,
                                 ));
-                            }
-                            TransformMode::Client => {
-                                // In client mode, just remove the directive and keep the function as-is
-                                self.remove_use_step_directive(&mut fn_decl.function.body);
-                                export_decl.visit_mut_children_with(self);
                             }
                         }
                     }
@@ -5565,7 +5567,7 @@ impl VisitMut for StepTransform {
                                             self.step_function_names.insert(name.clone());
 
                                             match self.mode {
-                                                TransformMode::Step => {
+                                                TransformMode::Step | TransformMode::Client => {
                                                     self.remove_use_step_directive(
                                                         &mut fn_expr.function.body,
                                                     );
@@ -5587,12 +5589,6 @@ impl VisitMut for StepTransform {
                                                     // Replace the entire function expression with the initializer
                                                     *init = Box::new(
                                                         self.create_step_initializer(&step_id),
-                                                    );
-                                                }
-                                                TransformMode::Client => {
-                                                    // In client mode, just remove the directive and keep the function as-is
-                                                    self.remove_use_step_directive(
-                                                        &mut fn_expr.function.body,
                                                     );
                                                 }
                                             }
@@ -5729,7 +5725,7 @@ impl VisitMut for StepTransform {
                                             self.step_function_names.insert(name.clone());
 
                                             match self.mode {
-                                                TransformMode::Step => {
+                                                TransformMode::Step | TransformMode::Client => {
                                                     self.remove_use_step_directive_arrow(
                                                         &mut arrow_expr.body,
                                                     );
@@ -5751,12 +5747,6 @@ impl VisitMut for StepTransform {
                                                     // Replace the entire arrow function with the initializer
                                                     *init = Box::new(
                                                         self.create_step_initializer(&step_id),
-                                                    );
-                                                }
-                                                TransformMode::Client => {
-                                                    // In client mode, just remove the directive and keep the function as-is
-                                                    self.remove_use_step_directive_arrow(
-                                                        &mut arrow_expr.body,
                                                     );
                                                 }
                                             }
@@ -5967,7 +5957,7 @@ impl VisitMut for StepTransform {
                                     self.step_function_names.insert(name.clone());
 
                                     match self.mode {
-                                        TransformMode::Step => {
+                                        TransformMode::Step | TransformMode::Client => {
                                             self.remove_use_step_directive(
                                                 &mut fn_expr.function.body,
                                             );
@@ -6017,12 +6007,6 @@ impl VisitMut for StepTransform {
                                                     arg: Some(Box::new(proxy_call)),
                                                 })];
                                             }
-                                        }
-                                        TransformMode::Client => {
-                                            // In client mode, just remove the directive and keep the function as-is
-                                            self.remove_use_step_directive(
-                                                &mut fn_expr.function.body,
-                                            );
                                         }
                                     }
                                 }
@@ -6262,16 +6246,20 @@ impl VisitMut for StepTransform {
                                                 ));
                                             }
                                             TransformMode::Client => {
-                                                // In client mode, just remove the directive and keep the function
+                                                // In client mode, remove directive and register for serialization
                                                 self.remove_use_step_directive_arrow(
                                                     &mut arrow_expr.body,
+                                                );
+                                                self.create_registration_call(
+                                                    &name,
+                                                    arrow_expr.span,
                                                 );
                                             }
                                         }
                                     } else {
                                         // At module level - handle normally
                                         match self.mode {
-                                            TransformMode::Step => {
+                                            TransformMode::Step | TransformMode::Client => {
                                                 self.remove_use_step_directive_arrow(
                                                     &mut arrow_expr.body,
                                                 );
@@ -6317,12 +6305,6 @@ impl VisitMut for StepTransform {
                                                 arrow_expr.body = Box::new(BlockStmtOrExpr::Expr(
                                                     Box::new(proxy_call),
                                                 ));
-                                            }
-                                            TransformMode::Client => {
-                                                // In client mode, just remove the directive and keep the function as-is
-                                                self.remove_use_step_directive_arrow(
-                                                    &mut arrow_expr.body,
-                                                );
                                             }
                                         }
                                     }
@@ -7311,7 +7293,7 @@ impl VisitMut for StepTransform {
                         self.step_function_names.insert(fn_name.clone());
 
                         match self.mode {
-                            TransformMode::Step => {
+                            TransformMode::Step | TransformMode::Client => {
                                 self.remove_use_step_directive(&mut fn_expr.function.body);
                                 self.create_registration_call(&fn_name, fn_expr.function.span);
                             }
@@ -7349,10 +7331,6 @@ impl VisitMut for StepTransform {
                                         arg: Some(Box::new(proxy_call)),
                                     })];
                                 }
-                            }
-                            TransformMode::Client => {
-                                // Transform step function body to use step run call
-                                self.remove_use_step_directive(&mut fn_expr.function.body);
                             }
                         }
                     }

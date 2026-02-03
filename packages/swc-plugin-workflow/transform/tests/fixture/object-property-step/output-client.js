@@ -1,5 +1,23 @@
+import { registerStepFunction } from "workflow/internal/private";
 import * as z from 'zod';
 import { tool } from 'ai';
+var weatherTool$execute = async ({ location })=>{
+    return {
+        location,
+        temperature: 72 + Math.floor(Math.random() * 21) - 10
+    };
+};
+var timeTool$execute = async ()=>{
+    return {
+        time: new Date().toISOString()
+    };
+};
+var weatherTool2$execute = async ({ location })=>{
+    return {
+        location,
+        temperature: 72 + Math.floor(Math.random() * 21) - 10
+    };
+};
 export const weatherTool = tool({
     description: 'Get the weather in a location',
     inputSchema: z.object({
@@ -32,3 +50,6 @@ export const weatherTool2 = tool({
         };
     }
 });
+registerStepFunction("step//input.js//weatherTool/execute", weatherTool$execute);
+registerStepFunction("step//input.js//timeTool/execute", timeTool$execute);
+registerStepFunction("step//input.js//weatherTool2/execute", weatherTool2$execute);

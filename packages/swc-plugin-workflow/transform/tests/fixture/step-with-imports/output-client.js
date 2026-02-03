@@ -1,3 +1,4 @@
+import { registerStepFunction } from "workflow/internal/private";
 import { usefulHelper// do not remove
  } from './utils';
 import * as useful from './useful'; // do not remove
@@ -13,3 +14,4 @@ export function normalFunction() {
     useful.doSomething();
     return usefulHelper();
 }
+registerStepFunction("step//input.js//processData", processData);

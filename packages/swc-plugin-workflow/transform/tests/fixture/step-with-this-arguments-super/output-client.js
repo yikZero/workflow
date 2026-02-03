@@ -1,3 +1,4 @@
+import { registerStepFunction } from "workflow/internal/private";
 import { registerSerializationClass } from "workflow/internal/class-serialization";
 /**__internal_workflows{"steps":{"input.js":{"TestClass#stepMethod":{"stepId":"step//input.js//TestClass#stepMethod"},"stepWithArguments":{"stepId":"step//input.js//stepWithArguments"},"stepWithThis":{"stepId":"step//input.js//stepWithThis"}}},"classes":{"input.js":{"TestClass":{"classId":"class//input.js//TestClass"}}}}*/;
 export async function stepWithThis() {
@@ -14,4 +15,6 @@ class TestClass extends BaseClass {
         return super.method();
     }
 }
+registerStepFunction("step//input.js//stepWithThis", stepWithThis);
+registerStepFunction("step//input.js//stepWithArguments", stepWithArguments);
 registerSerializationClass("class//input.js//TestClass", TestClass);

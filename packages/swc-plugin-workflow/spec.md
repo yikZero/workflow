@@ -428,7 +428,7 @@ globalThis.__private_workflows.set("workflow//input.js//myWorkflow", myWorkflow)
 
 ## Client Mode
 
-In client mode, step function bodies are preserved as-is (allowing local testing/execution). Workflow functions throw an error and have `workflowId` attached for use with `start()`.
+In client mode, step function bodies are preserved as-is (allowing local testing/execution), but step functions are registered with `registerStepFunction` so they can be properly serialized when passed across boundaries (e.g., as arguments to `start()` or returned from other step functions). Workflow functions throw an error and have `workflowId` attached for use with `start()`.
 
 ### Step Functions
 
@@ -442,10 +442,12 @@ export async function add(a, b) {
 
 Output:
 ```javascript
+import { registerStepFunction } from "workflow/internal/private";
 /**__internal_workflows{"steps":{"input.js":{"add":{"stepId":"step//input.js//add"}}}}*/;
 export async function add(a, b) {
     return a + b;
 }
+registerStepFunction("step//input.js//add", add);
 ```
 
 ### Workflow Functions

@@ -1,3 +1,4 @@
+import { registerStepFunction } from "workflow/internal/private";
 import { unusedHelper } from './unused-helper';
 /**__internal_workflows{"steps":{"input.js":{"processData":{"stepId":"step//input.js//processData"}}}}*/;
 // This variable is exported but not used anywhere in this file
@@ -21,3 +22,4 @@ function internalHelper(value) {
 export function calculate(x) {
     return internalHelper(x);
 }
+registerStepFunction("step//input.js//processData", processData);
