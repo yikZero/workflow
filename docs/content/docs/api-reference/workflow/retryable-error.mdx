@@ -1,5 +1,6 @@
 ---
 title: RetryableError
+description: Throw to retry a step, optionally after a specified duration.
 ---
 
 When a `RetryableError` is thrown in a step, it indicates that the workflow should retry a step. Additionally, it contains a parameter `retryAfter` indicating when the step should be retried after.

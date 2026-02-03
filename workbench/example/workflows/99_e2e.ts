@@ -1077,3 +1077,154 @@ export async function customSerializationWorkflow(x: number, y: number) {
     sum: { x: sum.x, y: sum.y },
   };
 }
+
+//////////////////////////////////////////////////////////
+// Cross-Context Class Registration E2E Test
+//////////////////////////////////////////////////////////
+
+/**
+ * Import step functions that use Vector - but we do NOT import Vector directly.
+ * This tests that Vector class is registered in the workflow bundle even though
+ * the workflow code never directly references it.
+ */
+import {
+  addVectors,
+  createVector,
+  scaleVector,
+  sumVectors,
+} from './serde-steps.js';
+
+/**
+ * Workflow that tests cross-context class registration.
+ *
+ * IMPORTANT: This workflow does NOT import Vector directly. It only receives
+ * Vector instances through step return values. The cross-context class registration
+ * feature ensures Vector is registered in the workflow bundle even though
+ * the workflow code never imports it.
+ *
+ * Test flow:
+ * 1. Step creates Vector instance and returns it (step serializes)
+ * 2. Workflow receives Vector (workflow deserializes - THIS IS THE KEY TEST)
+ * 3. Workflow passes Vector to another step (workflow serializes)
+ * 4. Step receives Vector and operates on it (step deserializes)
+ * 5. Workflow returns results to client (as plain objects for simplicity)
+ *
+ * Without cross-context class registration, step 2 would fail because the
+ * workflow bundle wouldn't have Vector registered for deserialization.
+ */
+export async function crossContextSerdeWorkflow() {
+  'use workflow';
+
+  // Step 1: Create a vector in the step
+  // Tests: step creating instance -> workflow deserialization
+  // This is the KEY test - workflow must be able to deserialize Vector
+  // even though the workflow code never imports Vector
+  const v1 = await createVector(1, 2, 3);
+
+  // Step 2: Create another vector
+  const v2 = await createVector(10, 20, 30);
+
+  // Step 3: Pass the deserialized vectors back to a step
+  // Tests: workflow serializing Vector instances it received from steps
+  const sum = await addVectors(v1, v2);
+
+  // Step 4: Scale one of the vectors
+  // Tests: workflow passing a single deserialized Vector to step
+  const scaled = await scaleVector(v1, 5);
+
+  // Step 5: Sum an array of vectors
+  // Tests: array serialization with Vector instances
+  const vectors = [v1, v2, scaled];
+  const arraySum = await sumVectors(vectors);
+
+  // Return plain objects (not Vector instances) so the client doesn't need
+  // to deserialize Vector - we're testing workflow deserialization, not client
+  return {
+    v1: { x: v1.x, y: v1.y, z: v1.z },
+    v2: { x: v2.x, y: v2.y, z: v2.z },
+    sum: { x: sum.x, y: sum.y, z: sum.z },
+    scaled: { x: scaled.x, y: scaled.y, z: scaled.z },
+    arraySum: { x: arraySum.x, y: arraySum.y, z: arraySum.z },
+  };
+}
+
+//////////////////////////////////////////////////////////
+// Instance Method Step Tests
+//////////////////////////////////////////////////////////
+
+/**
+ * A class with instance methods that are marked as steps.
+ * This tests the new "use step" support for instance methods.
+ * The class uses custom serialization so the `this` value can be
+ * serialized across the workflow/step boundary.
+ */
+export class Counter {
+  constructor(public value: number) {}
+
+  /** Custom serialization - converts instance to plain object */
+  static [Symbol.for('workflow-serialize')](instance: Counter) {
+    return { value: instance.value };
+  }
+
+  /** Custom deserialization - reconstructs instance from plain object */
+  static [Symbol.for('workflow-deserialize')](data: { value: number }) {
+    return new Counter(data.value);
+  }
+
+  /**
+   * Instance method step: returns the sum of the counter's value and the given amount.
+   * The `this` context (the Counter instance) is serialized and passed
+   * to the step handler, then deserialized before the method is called.
+   */
+  async add(amount: number): Promise<number> {
+    'use step';
+    return this.value + amount;
+  }
+
+  /**
+   * Instance method step: multiplies the counter's value by the given factor.
+   */
+  async multiply(factor: number): Promise<number> {
+    'use step';
+    return this.value * factor;
+  }
+
+  /**
+   * Instance method step: returns an object with both the original and computed values.
+   * This tests that `this` is correctly preserved through the step execution.
+   */
+  async describe(label: string): Promise<{ label: string; value: number }> {
+    'use step';
+    return { label, value: this.value };
+  }
+}
+
+/**
+ * Workflow that tests instance method steps.
+ * Creates Counter instances and calls their instance methods as steps.
+ * The `this` context (the Counter instance) should be serialized and
+ * correctly restored when the step executes.
+ */
+export async function instanceMethodStepWorkflow(initialValue: number) {
+  'use workflow';
+
+  // Create a Counter instance
+  const counter = new Counter(initialValue);
+
+  // Call instance method steps
+  const added = await counter.add(10);
+  const multiplied = await counter.multiply(3);
+  const description = await counter.describe('test counter');
+
+  // Create another counter to verify different instances work
+  const counter2 = new Counter(100);
+  const added2 = await counter2.add(50);
+
+  return {
+    initialValue,
+    added, // initialValue + 10
+    multiplied, // initialValue * 3
+    description, // { label: 'test counter', value: initialValue }
+    added2, // 100 + 50 = 150
+  };
+}

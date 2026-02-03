@@ -42,6 +42,7 @@ Examples:
 - `step//src/jobs/order.ts//fetchData`
 - `step//src/jobs/order.ts//processOrder/innerStep` (nested step)
 - `step//src/jobs/order.ts//MyClass.staticMethod` (static method)
+- `step//src/jobs/order.ts//MyClass#instanceMethod` (instance method)
 - `class//src/models/Point.ts//Point` (serialization class)
 
 ---
@@ -170,6 +171,57 @@ function wrapper(multiplier) {
 }
 registerStepFunction("step//input.js//wrapper/_anonymousStep0", wrapper$_anonymousStep0);
 ```
+
+### Instance Method Step
+
+Instance methods can use `"use step"` if the class provides custom serialization methods. The `this` context is serialized when calling the step and deserialized before execution.
+
+Input:
+```javascript
+import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from '@vercel/workflow';
+
+export class Counter {
+  static [WORKFLOW_SERIALIZE](instance) {
+    return { value: instance.value };
+  }
+  static [WORKFLOW_DESERIALIZE](data) {
+    return new Counter(data.value);
+  }
+  constructor(value) {
+    this.value = value;
+  }
+  async add(amount) {
+    'use step';
+    return this.value + amount;
+  }
+}
+```
+
+Output:
+```javascript
+import { registerStepFunction } from "workflow/internal/private";
+import { registerSerializationClass } from "workflow/internal/class-serialization";
+import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from '@vercel/workflow';
+/**__internal_workflows{"steps":{"input.js":{"Counter#add":{"stepId":"step//input.js//Counter#add"}}},"classes":{"input.js":{"Counter":{"classId":"class//input.js//Counter"}}}}*/;
+export class Counter {
+    static [WORKFLOW_SERIALIZE](instance) {
+        return { value: instance.value };
+    }
+    static [WORKFLOW_DESERIALIZE](data) {
+        return new Counter(data.value);
+    }
+    constructor(value) {
+        this.value = value;
+    }
+    async add(amount) {
+        return this.value + amount;
+    }
+}
+registerStepFunction("step//input.js//Counter#add", Counter.prototype["add"]);
+registerSerializationClass("class//input.js//Counter", Counter);
+```
+
+Note: Instance methods use `#` in the step ID (e.g., `Counter#add`) and are registered via `ClassName.prototype["methodName"]`.
 
 ### Module-Level Directive
 
@@ -481,6 +533,82 @@ export class Vector {
 }
 ```
 
+### Class Expressions with Binding Names
+
+When a class expression is assigned to a variable, the plugin uses the variable name (binding name) for registration, not the internal class name. This is important because the internal class name is only accessible inside the class body.
+
+Input:
+```javascript
+import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from "@workflow/serde";
+
+var Bash = class _Bash {
+  constructor(command) {
+    this.command = command;
+  }
+
+  static [WORKFLOW_SERIALIZE](instance) {
+    return { command: instance.command };
+  }
+
+  static [WORKFLOW_DESERIALIZE](data) {
+    return new Bash(data.command);
+  }
+};
+```
+
+Output:
+```javascript
+import { registerSerializationClass } from "workflow/internal/class-serialization";
+import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from "@workflow/serde";
+/**__internal_workflows{"classes":{"input.js":{"Bash":{"classId":"class//input.js//Bash"}}}}*/;
+var Bash = class _Bash {
+    constructor(command) {
+        this.command = command;
+    }
+    static [WORKFLOW_SERIALIZE](instance) {
+        return { command: instance.command };
+    }
+    static [WORKFLOW_DESERIALIZE](data) {
+        return new Bash(data.command);
+    }
+};
+registerSerializationClass("class//input.js//Bash", Bash);
+```
+
+Note that:
+- The registration uses `Bash` (the variable name), not `_Bash` (the internal class name)
+- The `classId` in the manifest also uses `Bash`
+- This ensures the registration call references a symbol that's actually in scope at module level
+
+### File Discovery for Custom Serialization
+
+Files containing classes with custom serialization are automatically discovered for transformation, even if they don't contain `"use step"` or `"use workflow"` directives. The discovery mechanism looks for:
+
+1. **Imports from `@workflow/serde`**: Files that import `WORKFLOW_SERIALIZE` or `WORKFLOW_DESERIALIZE` from `@workflow/serde`
+2. **Direct Symbol.for usage**: Files containing `Symbol.for('workflow-serialize')` or `Symbol.for('workflow-deserialize')`
+
+This allows serialization classes to be defined in separate files (such as Next.js API routes or utility modules) and still be registered in the serialization system when the application is built.
+
+### Cross-Context Class Registration
+
+Classes with custom serialization are automatically included in **all bundle contexts** (step, workflow, client) to ensure they can be properly serialized and deserialized when crossing execution boundaries:
+
+| Boundary | Serializer | Deserializer | Example |
+|----------|------------|--------------|---------|
+| Client → Workflow | Client mode | Workflow mode | Passing a `Point` instance to `start(workflow)` |
+| Workflow → Step | Workflow mode | Step mode | Passing a `Point` instance as step argument |
+| Step → Workflow | Step mode | Workflow mode | Returning a `Point` instance from a step |
+| Workflow → Client | Workflow mode | Client mode | Returning a `Point` instance from a workflow |
+
+The build system automatically discovers all files containing serializable classes and includes them in each bundle, regardless of where the class is originally defined. This ensures the class registry has all necessary classes for any serialization boundary the data may cross.
+
+For example, if a class `Point` is defined in `models/point.ts` and only used in step code:
+- The **step bundle** includes `Point` because the step file imports it
+- The **workflow bundle** also includes `Point` so it can deserialize step return values
+- The **client bundle** also includes `Point` so it can deserialize workflow return values
+
+This cross-registration happens automatically during the build process - no manual configuration is required.
+
 ---
 
 ## Default Exports
@@ -515,7 +643,7 @@ The plugin emits errors for invalid usage:
 | Error | Description |
 |-------|-------------|
 | Non-async function | Functions with `"use step"` or `"use workflow"` must be async |
-| Instance methods | Only static methods can have directives (not instance methods) |
+| Instance methods with `"use workflow"` | Only static methods can have `"use workflow"` (not instance methods) |
 | Misplaced directive | Directive must be at top of file or start of function body |
 | Conflicting directives | Cannot have both `"use step"` and `"use workflow"` at module level |
 | Invalid exports | Module-level directive files can only export async functions |
@@ -534,6 +662,7 @@ The plugin supports various function declaration styles:
 - `const name = async function() { "use step"; }` - Function expression
 - `{ async method() { "use step"; } }` - Object method
 - `static async method() { "use step"; }` - Static class method
+- `async method() { "use step"; }` - Instance class method (requires custom serialization)
 
 ---
 

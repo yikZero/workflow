@@ -355,6 +355,10 @@ pub struct StepTransform {
     module_imports: HashSet<String>,
     // Track the current class name for static method transformations
     current_class_name: Option<String>,
+    // Track the binding name when a class expression is assigned to a variable
+    // e.g., for `var Bash = class _Bash {}`, this would be "Bash"
+    // This is needed because the internal class name (_Bash) is not in scope at module level
+    current_class_binding_name: Option<String>,
     // Track static method steps that need registration after the class declaration
     // (class_name, method_name, step_id, span)
     static_method_step_registrations: Vec<(String, String, String, swc_core::common::Span)>,
@@ -364,6 +368,12 @@ pub struct StepTransform {
     // Track static step methods to strip from class and assign as properties (workflow mode)
     // (class_name, method_name, step_id)
     static_step_methods_to_strip: Vec<(String, String, String)>,
+    // Track instance method steps that need registration after the class declaration
+    // (class_name, method_name, step_id, span)
+    instance_method_step_registrations: Vec<(String, String, String, swc_core::common::Span)>,
+    // Track instance step methods to strip from class and assign as properties (workflow mode)
+    // (class_name, method_name, step_id)
+    instance_step_methods_to_strip: Vec<(String, String, String)>,
     // Track classes that need serialization registration (for `this` serialization in static methods)
     // Set of class names that have static step/workflow methods
     classes_needing_serialization: HashSet<String>,
@@ -1231,9 +1241,12 @@ impl StepTransform {
             current_var_context: None,
             module_imports: HashSet::new(),
             current_class_name: None,
+            current_class_binding_name: None,
             static_method_step_registrations: Vec::new(),
             static_method_workflow_registrations: Vec::new(),
             static_step_methods_to_strip: Vec::new(),
+            instance_method_step_registrations: Vec::new(),
+            instance_step_methods_to_strip: Vec::new(),
             classes_needing_serialization: HashSet::new(),
             serialization_symbol_identifiers: HashMap::new(),
             classes_for_manifest: HashSet::new(),
@@ -3509,7 +3522,8 @@ impl VisitMut for StepTransform {
                         let needs_register_import = !self.registration_calls.is_empty()
                             || !self.object_property_step_functions.is_empty()
                             || !self.nested_step_functions.is_empty()
-                            || !self.static_method_step_registrations.is_empty();
+                            || !self.static_method_step_registrations.is_empty()
+                            || !self.instance_method_step_registrations.is_empty();
 
                         // Check if any nested steps have closure variables
                         let needs_closure_import = self
@@ -3871,6 +3885,65 @@ impl VisitMut for StepTransform {
                         module.body.push(ModuleItem::Stmt(registration_call));
                     }
 
+                    // Add instance method step registrations
+                    // For instance methods, we register ClassName.prototype.methodName
+                    for (class_name, method_name, step_id, _span) in
+                        self.instance_method_step_registrations.drain(..)
+                    {
+                        let registration_call = Stmt::Expr(ExprStmt {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Call(CallExpr {
+                                span: DUMMY_SP,
+                                ctxt: SyntaxContext::empty(),
+                                callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+                                    "registerStepFunction".into(),
+                                    DUMMY_SP,
+                                    SyntaxContext::empty(),
+                                )))),
+                                args: vec![
+                                    // First argument: step ID
+                                    ExprOrSpread {
+                                        spread: None,
+                                        expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                            span: DUMMY_SP,
+                                            value: step_id.into(),
+                                            raw: None,
+                                        }))),
+                                    },
+                                    // Second argument: ClassName.prototype.methodName
+                                    ExprOrSpread {
+                                        spread: None,
+                                        expr: Box::new(Expr::Member(MemberExpr {
+                                            span: DUMMY_SP,
+                                            obj: Box::new(Expr::Member(MemberExpr {
+                                                span: DUMMY_SP,
+                                                obj: Box::new(Expr::Ident(Ident::new(
+                                                    class_name.into(),
+                                                    DUMMY_SP,
+                                                    SyntaxContext::empty(),
+                                                ))),
+                                                prop: MemberProp::Ident(IdentName::new(
+                                                    "prototype".into(),
+                                                    DUMMY_SP,
+                                                )),
+                                            })),
+                                            prop: MemberProp::Computed(ComputedPropName {
+                                                span: DUMMY_SP,
+                                                expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                    span: DUMMY_SP,
+                                                    value: method_name.into(),
+                                                    raw: None,
+                                                }))),
+                                            }),
+                                        })),
+                                    },
+                                ],
+                                type_args: None,
+                            })),
+                        });
+                        module.body.push(ModuleItem::Stmt(registration_call));
+                    }
+
                     // Add class serialization registrations for step mode
                     // In step mode, we need:
                     // 1. registerSerializationClass(classId, ClassName) - for deserialization
@@ -3994,6 +4067,99 @@ impl VisitMut for StepTransform {
                                             method_name.into(),
                                             DUMMY_SP,
                                         )),
+                                    },
+                                )),
+                                op: AssignOp::Assign,
+                                right: Box::new(proxy_expr),
+                            })),
+                        });
+                        module.body.push(ModuleItem::Stmt(assignment));
+                    }
+
+                    // Add instance step method property assignments (workflow mode)
+                    // These methods were stripped from the class and need to be assigned as prototype properties
+                    for (class_name, method_name, step_id) in
+                        self.instance_step_methods_to_strip.drain(..)
+                    {
+                        // Create: ClassName.prototype.methodName = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step_id")
+                        let proxy_expr = Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            ctxt: SyntaxContext::empty(),
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident::new(
+                                    "globalThis".into(),
+                                    DUMMY_SP,
+                                    SyntaxContext::empty(),
+                                ))),
+                                prop: MemberProp::Computed(ComputedPropName {
+                                    span: DUMMY_SP,
+                                    expr: Box::new(Expr::Call(CallExpr {
+                                        span: DUMMY_SP,
+                                        ctxt: SyntaxContext::empty(),
+                                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                            span: DUMMY_SP,
+                                            obj: Box::new(Expr::Ident(Ident::new(
+                                                "Symbol".into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                            prop: MemberProp::Ident(IdentName::new(
+                                                "for".into(),
+                                                DUMMY_SP,
+                                            )),
+                                        }))),
+                                        args: vec![ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: "WORKFLOW_USE_STEP".into(),
+                                                raw: None,
+                                            }))),
+                                        }],
+                                        type_args: None,
+                                    })),
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                    span: DUMMY_SP,
+                                    value: step_id.into(),
+                                    raw: None,
+                                }))),
+                            }],
+                            type_args: None,
+                        });
+
+                        // Create: ClassName.prototype.methodName = proxy_expr
+                        let assignment = Stmt::Expr(ExprStmt {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Assign(AssignExpr {
+                                span: DUMMY_SP,
+                                left: AssignTarget::Simple(SimpleAssignTarget::Member(
+                                    MemberExpr {
+                                        span: DUMMY_SP,
+                                        obj: Box::new(Expr::Member(MemberExpr {
+                                            span: DUMMY_SP,
+                                            obj: Box::new(Expr::Ident(Ident::new(
+                                                class_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                            prop: MemberProp::Ident(IdentName::new(
+                                                "prototype".into(),
+                                                DUMMY_SP,
+                                            )),
+                                        })),
+                                        prop: MemberProp::Computed(ComputedPropName {
+                                            span: DUMMY_SP,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: method_name.into(),
+                                                raw: None,
+                                            }))),
+                                        }),
                                     },
                                 )),
                                 op: AssignOp::Assign,
@@ -6266,6 +6432,15 @@ impl VisitMut for StepTransform {
                                 }
                             }
                         }
+                        Expr::Class(_) => {
+                            // Track the binding name for class expressions like:
+                            // var Bash = class _Bash {}
+                            // The binding name (Bash) is what's accessible at module scope,
+                            // not the internal class name (_Bash)
+                            // We set the binding name here; it will be used when visit_mut_class_expr
+                            // is called during visit_mut_children_with below
+                            self.current_class_binding_name = Some(name.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -6335,22 +6510,37 @@ impl VisitMut for StepTransform {
         // Visit the class body (this populates static_step_methods_to_strip)
         class_decl.class.visit_mut_with(self);
 
-        // In workflow mode, remove static step methods from the class body
+        // In workflow mode, remove static and instance step methods from the class body
         if matches!(self.mode, TransformMode::Workflow) {
-            let methods_to_strip: Vec<_> = self
+            let static_methods_to_strip: Vec<_> = self
                 .static_step_methods_to_strip
                 .iter()
                 .filter(|(cn, _, _)| cn == &class_name)
                 .map(|(_, mn, _)| mn.clone())
                 .collect();
 
-            if !methods_to_strip.is_empty() {
+            let instance_methods_to_strip: Vec<_> = self
+                .instance_step_methods_to_strip
+                .iter()
+                .filter(|(cn, _, _)| cn == &class_name)
+                .map(|(_, mn, _)| mn.clone())
+                .collect();
+
+            if !static_methods_to_strip.is_empty() || !instance_methods_to_strip.is_empty() {
                 class_decl.class.body.retain(|member| {
                     if let ClassMember::Method(method) = member {
-                        if method.is_static {
-                            if let PropName::Ident(ident) = &method.key {
-                                let method_name = ident.sym.to_string();
-                                return !methods_to_strip.contains(&method_name);
+                        // Handle both identifier and string keys for method names
+                        let method_name = match &method.key {
+                            PropName::Ident(ident) => Some(ident.sym.to_string()),
+                            PropName::Str(s) => Some(s.value.to_string_lossy().to_string()),
+                            _ => None,
+                        };
+
+                        if let Some(method_name) = method_name {
+                            if method.is_static {
+                                return !static_methods_to_strip.contains(&method_name);
+                            } else {
+                                return !instance_methods_to_strip.contains(&method_name);
                             }
                         }
                     }
@@ -6365,39 +6555,57 @@ impl VisitMut for StepTransform {
 
     // Handle class expressions to track class name for static methods
     fn visit_mut_class_expr(&mut self, class_expr: &mut ClassExpr) {
-        let class_name = class_expr
+        // Get the internal class name (used for current_class_name tracking)
+        let internal_class_name = class_expr
             .ident
             .as_ref()
             .map(|i| i.sym.to_string())
             .unwrap_or_else(|| "AnonymousClass".to_string());
+
+        // For serialization registration, use the binding name if available
+        // e.g., for `var Bash = class _Bash {}`, use "Bash" not "_Bash"
+        // because "_Bash" is not accessible at module scope
+        let registration_name = self
+            .current_class_binding_name
+            .take()
+            .unwrap_or_else(|| internal_class_name.clone());
+
         let old_class_name = self.current_class_name.take();
-        self.current_class_name = Some(class_name.clone());
+        self.current_class_name = Some(internal_class_name.clone());
 
         // Check if class has custom serialization methods (WORKFLOW_SERIALIZE/WORKFLOW_DESERIALIZE)
         if self.has_custom_serialization_methods(&class_expr.class) {
-            self.classes_needing_serialization
-                .insert(class_name.clone());
+            self.classes_needing_serialization.insert(registration_name);
         }
 
         // Visit the class body (this populates static_step_methods_to_strip)
         class_expr.class.visit_mut_with(self);
 
-        // In workflow mode, remove static step methods from the class body
+        // In workflow mode, remove static and instance step methods from the class body
         if matches!(self.mode, TransformMode::Workflow) {
-            let methods_to_strip: Vec<_> = self
+            let static_methods_to_strip: Vec<_> = self
                 .static_step_methods_to_strip
                 .iter()
-                .filter(|(cn, _, _)| cn == &class_name)
+                .filter(|(cn, _, _)| cn == &internal_class_name)
                 .map(|(_, mn, _)| mn.clone())
                 .collect();
 
-            if !methods_to_strip.is_empty() {
+            let instance_methods_to_strip: Vec<_> = self
+                .instance_step_methods_to_strip
+                .iter()
+                .filter(|(cn, _, _)| cn == &internal_class_name)
+                .map(|(_, mn, _)| mn.clone())
+                .collect();
+
+            if !static_methods_to_strip.is_empty() || !instance_methods_to_strip.is_empty() {
                 class_expr.class.body.retain(|member| {
                     if let ClassMember::Method(method) = member {
-                        if method.is_static {
-                            if let PropName::Ident(ident) = &method.key {
-                                let method_name = ident.sym.to_string();
-                                return !methods_to_strip.contains(&method_name);
+                        if let PropName::Ident(ident) = &method.key {
+                            let method_name = ident.sym.to_string();
+                            if method.is_static {
+                                return !static_methods_to_strip.contains(&method_name);
+                            } else {
+                                return !instance_methods_to_strip.contains(&method_name);
                             }
                         }
                     }
@@ -6413,20 +6621,12 @@ impl VisitMut for StepTransform {
     // Handle class methods
     fn visit_mut_class_method(&mut self, method: &mut ClassMethod) {
         if !method.is_static {
-            // Instance methods can't be step/workflow functions
+            // Instance methods can have "use step" (but not "use workflow")
             let has_step = self.has_use_step_directive(&method.function.body);
             let has_workflow = self.has_use_workflow_directive(&method.function.body);
 
-            if has_step {
-                HANDLER.with(|handler| {
-                    handler
-                        .struct_span_err(
-                            method.span,
-                            "Instance methods cannot be marked with \"use step\". Only static methods, functions, and object methods are supported.",
-                        )
-                        .emit()
-                });
-            } else if has_workflow {
+            if has_workflow {
+                // Workflows on instance methods don't make sense (workflows are entry points)
                 HANDLER.with(|handler| {
                     handler
                         .struct_span_err(
@@ -6435,6 +6635,109 @@ impl VisitMut for StepTransform {
                         )
                         .emit()
                 });
+            } else if has_step {
+                // Instance methods with "use step" are supported
+                // Validate async
+                if !method.function.is_async {
+                    emit_error(WorkflowErrorKind::NonAsyncFunction {
+                        span: method.function.span,
+                        directive: "use step",
+                    });
+                    return;
+                }
+
+                // Get method name
+                let method_name = match &method.key {
+                    PropName::Ident(ident) => ident.sym.to_string(),
+                    PropName::Str(s) => s.value.to_string_lossy().to_string(),
+                    _ => {
+                        // Complex key - skip
+                        method.visit_mut_children_with(self);
+                        return;
+                    }
+                };
+
+                // Get class name (must be set by visit_mut_class)
+                let class_name = match &self.current_class_name {
+                    Some(name) => name.clone(),
+                    None => {
+                        // No class context - shouldn't happen, but fall back
+                        method.visit_mut_children_with(self);
+                        return;
+                    }
+                };
+
+                // Generate full qualified name using # for instance methods: ClassName#methodName
+                let full_name = format!("{}#{}", class_name, method_name);
+
+                // For nested step hoisting, use $ instead of # to produce valid JS identifiers
+                let hoisted_parent_name = format!("{}${}", class_name, method_name);
+
+                self.step_function_names.insert(full_name.clone());
+
+                // Track class for serialization (needed for `this` serialization)
+                self.classes_needing_serialization
+                    .insert(class_name.clone());
+
+                // Generate step ID
+                let step_id = self.create_id(Some(&full_name), method.function.span, false);
+
+                match self.mode {
+                    TransformMode::Step => {
+                        // Remove directive
+                        self.remove_use_step_directive(&mut method.function.body);
+
+                        // Track for registration after class (will use prototype)
+                        self.instance_method_step_registrations.push((
+                            class_name.clone(),
+                            method_name.clone(),
+                            step_id,
+                            method.function.span,
+                        ));
+
+                        // Set current_parent_function_name for nested step hoisting
+                        // This prevents self-referential aliases like `const helper = helper;`
+                        // Use $ instead of # to produce valid JS identifiers
+                        let old_parent = self.current_parent_function_name.clone();
+                        self.current_parent_function_name = Some(hoisted_parent_name.clone());
+
+                        // Visit children to process nested step functions
+                        method.visit_mut_children_with(self);
+
+                        // Restore parent function name
+                        self.current_parent_function_name = old_parent;
+                    }
+                    TransformMode::Workflow => {
+                        // Remove directive for consistency with other modes
+                        self.remove_use_step_directive(&mut method.function.body);
+
+                        // Track this method to be stripped from the class and assigned as a property
+                        self.instance_step_methods_to_strip.push((
+                            class_name.clone(),
+                            method_name.clone(),
+                            step_id,
+                        ));
+                        // Note: No need to visit children in Workflow mode since the method body
+                        // will be stripped and replaced with a proxy call
+                    }
+                    TransformMode::Client => {
+                        // Just remove directive, keep the function body
+                        self.remove_use_step_directive(&mut method.function.body);
+
+                        // Set current_parent_function_name for nested step hoisting
+                        // Use $ instead of # to produce valid JS identifiers
+                        let old_parent = self.current_parent_function_name.clone();
+                        self.current_parent_function_name = Some(hoisted_parent_name.clone());
+
+                        // Visit children to process nested step functions
+                        method.visit_mut_children_with(self);
+
+                        // Restore parent function name
+                        self.current_parent_function_name = old_parent;
+                    }
+                }
+            } else {
+                method.visit_mut_children_with(self);
             }
         } else {
             // Static methods can be step/workflow functions
@@ -6499,6 +6802,9 @@ impl VisitMut for StepTransform {
                                 step_id,
                                 method.function.span,
                             ));
+
+                            // Visit children to process nested step functions
+                            method.visit_mut_children_with(self);
                         }
                         TransformMode::Workflow => {
                             // Remove directive for consistency with other modes
@@ -6514,10 +6820,15 @@ impl VisitMut for StepTransform {
                                 method_name.clone(),
                                 step_id,
                             ));
+                            // Note: No need to visit children in Workflow mode since the method body
+                            // will be stripped and replaced with a proxy call
                         }
                         TransformMode::Client => {
                             // Just remove directive, keep the function body
                             self.remove_use_step_directive(&mut method.function.body);
+
+                            // Visit children to process nested step functions
+                            method.visit_mut_children_with(self);
                         }
                     }
                 } else if has_workflow {
@@ -6539,9 +6850,13 @@ impl VisitMut for StepTransform {
                                 workflow_id,
                                 method.function.span,
                             ));
+
+                            // Visit children to process nested step functions
+                            method.visit_mut_children_with(self);
                         }
                         TransformMode::Step | TransformMode::Client => {
                             // Remove directive and replace body with error
+                            // No need to visit children since the body is replaced
                             self.remove_use_workflow_directive(&mut method.function.body);
 
                             // Generate workflow ID

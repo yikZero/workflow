@@ -1,16 +1,55 @@
 import { relative } from 'node:path';
 import { transform } from '@swc/core';
+import {
+  detectWorkflowPatterns,
+  isGeneratedWorkflowFile,
+  isWorkflowSdkFile,
+  shouldTransformFile,
+} from '@workflow/builders';
 import { resolveModulePath } from 'exsolve';
 import type { Plugin } from 'rollup';
 
-export function workflowTransformPlugin(): Plugin {
+export interface WorkflowTransformPluginOptions {
+  /**
+   * Directories to exclude from transformation (e.g., pre-built workflow bundles).
+   * Paths should use forward slashes and will be matched as prefixes.
+   */
+  exclude?: string[];
+}
+
+export function workflowTransformPlugin(
+  options: WorkflowTransformPluginOptions = {}
+): Plugin {
+  const { exclude = [] } = options;
+
   return {
     name: 'workflow:transform',
     // This transform applies the "use workflow"/"use step"
     // client transformation
     async transform(code: string, id: string) {
-      // only apply the transform if file needs it
-      if (!code.match(/(use step|use workflow)/)) {
+      // Skip generated workflow route files to avoid re-processing them
+      if (isGeneratedWorkflowFile(id)) {
+        return null;
+      }
+
+      // Skip files in excluded directories (e.g., pre-built workflow bundles)
+      const normalizedId = id.replace(/\\/g, '/');
+      for (const excludePath of exclude) {
+        const normalizedExclude = excludePath.replace(/\\/g, '/');
+        if (normalizedId.startsWith(normalizedExclude)) {
+          return null;
+        }
+      }
+
+      const patterns = detectWorkflowPatterns(code);
+
+      // For @workflow SDK packages, only transform files with actual directives,
+      // not files that just match serde patterns (which are internal SDK implementation files)
+      if (isWorkflowSdkFile(id) && !patterns.hasDirective) {
+        return null;
+      }
+
+      if (!shouldTransformFile(id, patterns)) {
         return null;
       }
 

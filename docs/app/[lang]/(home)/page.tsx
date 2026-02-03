@@ -20,6 +20,9 @@ export const metadata: Metadata = {
   alternates: {
     canonical: '/',
   },
+  openGraph: {
+    images: ['/og'],
+  },
 };
 
 const Home = () => (

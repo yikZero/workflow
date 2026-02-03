@@ -89,11 +89,17 @@ export function withWorkflow(
         ...(supportsTurboCondition
           ? {
               condition: {
-                ...existingRules[key]?.condition,
-                any: [
-                  ...(existingRules[key]?.condition.any || []),
+                // Use 'all' to combine: must match content AND must NOT be in generated path
+                // Merge with any existing 'all' conditions from user config
+                all: [
+                  ...(existingRules[key]?.condition?.all || []),
+                  // Exclude generated workflow route files from transformation
+                  { not: { path: /[/\\]\.well-known[/\\]workflow[/\\]/ } },
+                  // Match files with workflow directives or custom serialization patterns
+                  // Uses backreferences (\2, \3) to ensure matching quote types
                   {
-                    content: /(use workflow|use step)/,
+                    content:
+                      /(use workflow|use step|from\s+(['"])@workflow\/serde\2|Symbol\.for\s*\(\s*(['"])workflow-(?:serialize|deserialize)\3\s*\))/,
                   },
                 ],
               },

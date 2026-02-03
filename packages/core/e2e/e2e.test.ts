@@ -591,7 +591,8 @@ describe('e2e', () => {
   test('promiseRaceStressTestWorkflow', { timeout: 60_000 }, async () => {
     const run = await triggerWorkflow('promiseRaceStressTestWorkflow', []);
     const returnValue = await getWorkflowReturnValue(run.runId);
-    expect(returnValue).toEqual([0, 1, 2, 3, 4]);
+    // Completion order can vary across worlds and scheduling environments.
+    expect([...returnValue].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4]);
   });
 
   // ==================== ERROR HANDLING TESTS ====================
@@ -1412,6 +1413,115 @@ describe('e2e', () => {
         scaledAgain: { x: 18, y: 24 },
         sum: { x: 9, y: 12 },
       });
+    }
+  );
+
+  test(
+    'instanceMethodStepWorkflow - instance methods with "use step" directive',
+    { timeout: 60_000 },
+    async () => {
+      // This workflow tests instance methods marked with "use step".
+      // The Counter class has custom serialization so the `this` context
+      // (the Counter instance) can be serialized across the workflow/step boundary.
+      //
+      // instanceMethodStepWorkflow(5) should:
+      // 1. Create Counter(5)
+      // 2. counter.add(10) -> 5 + 10 = 15
+      // 3. counter.multiply(3) -> 5 * 3 = 15
+      // 4. counter.describe('test counter') -> { label: 'test counter', value: 5 }
+      // 5. Create Counter(100), call counter2.add(50) -> 100 + 50 = 150
+      const run = await triggerWorkflow('instanceMethodStepWorkflow', [5]);
+      const returnValue = await getWorkflowReturnValue(run.runId);
+
+      expect(returnValue).toEqual({
+        initialValue: 5,
+        added: 15, // 5 + 10
+        multiplied: 15, // 5 * 3
+        description: { label: 'test counter', value: 5 },
+        added2: 150, // 100 + 50
+      });
+
+      // Verify the run completed successfully
+      const { json: runData } = await cliInspectJson(
+        `runs ${run.runId} --withData`
+      );
+      expect(runData.status).toBe('completed');
+      expect(runData.output).toEqual({
+        initialValue: 5,
+        added: 15,
+        multiplied: 15,
+        description: { label: 'test counter', value: 5 },
+        added2: 150,
+      });
+
+      // Verify the steps were executed (should have 4 steps: add, multiply, describe, add)
+      const { json: steps } = await cliInspectJson(
+        `steps --runId ${run.runId}`
+      );
+      // Filter to only Counter instance method steps
+      const counterSteps = steps.filter(
+        (s: any) =>
+          s.stepName.includes('Counter#add') ||
+          s.stepName.includes('Counter#multiply') ||
+          s.stepName.includes('Counter#describe')
+      );
+      expect(counterSteps.length).toBe(4); // add, multiply, describe, add (from counter2)
+      expect(counterSteps.every((s: any) => s.status === 'completed')).toBe(
+        true
+      );
+    }
+  );
+
+  test(
+    'crossContextSerdeWorkflow - classes defined in step code are deserializable in workflow context',
+    { timeout: 60_000 },
+    async () => {
+      // This is a critical test for the cross-context class registration feature.
+      //
+      // The Vector class is defined in serde-models.ts and ONLY imported by step code
+      // (serde-steps.ts). The workflow code (99_e2e.ts) does NOT import Vector directly.
+      //
+      // Without cross-context class registration, this test would fail because:
+      // - The workflow bundle wouldn't have Vector registered (never imported it)
+      // - The workflow couldn't deserialize Vector instances returned from steps
+      //
+      // With cross-context class registration:
+      // - The build system discovers serde-models.ts has serialization patterns
+      // - It includes serde-models.ts in ALL bundle contexts (step, workflow, client)
+      // - Vector is registered everywhere, enabling full round-trip serialization
+      //
+      // Test flow:
+      // 1. Step creates Vector(1, 2, 3) and returns it (step serializes)
+      // 2. Workflow receives Vector (workflow MUST deserialize - key test!)
+      // 3. Workflow passes Vector to another step (workflow serializes)
+      // 4. Step receives Vector and operates on it (step deserializes)
+      // 5. Workflow returns plain objects to client (no client deserialization needed)
+      //
+      // The critical part is step 2: the workflow code never imports Vector,
+      // so without cross-context registration it wouldn't know how to deserialize it.
+
+      const run = await triggerWorkflow('crossContextSerdeWorkflow', []);
+      const returnValue = await getWorkflowReturnValue(run.runId);
+
+      // Verify all the vector operations worked correctly
+      expect(returnValue).toEqual({
+        // v1 created in step: (1, 2, 3)
+        v1: { x: 1, y: 2, z: 3 },
+        // v2 created in step: (10, 20, 30)
+        v2: { x: 10, y: 20, z: 30 },
+        // sum of v1 + v2: (11, 22, 33)
+        sum: { x: 11, y: 22, z: 33 },
+        // v1 scaled by 5: (5, 10, 15)
+        scaled: { x: 5, y: 10, z: 15 },
+        // Array sum of v1 + v2 + scaled: (16, 32, 48)
+        arraySum: { x: 16, y: 32, z: 48 },
+      });
+
+      // Verify the run completed successfully
+      const { json: runData } = await cliInspectJson(
+        `runs ${run.runId} --withData`
+      );
+      expect(runData.status).toBe('completed');
     }
   );
 
