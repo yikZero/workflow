@@ -1525,6 +1525,72 @@ describe('e2e', () => {
     }
   );
 
+  test(
+    'stepFunctionAsStartArgWorkflow - step function reference passed as start() argument',
+    { timeout: 120_000 },
+    async () => {
+      // This test verifies that step function references can be:
+      // 1. Serialized in the client bundle (via registerStepFunction setting stepId)
+      // 2. Passed as arguments to start()
+      // 3. Deserialized in the workflow bundle
+      // 4. Invoked from within a step function in the workflow
+      //
+      // This is enabled by calling registerStepFunction in client mode, which
+      // sets the stepId property on the function for serialization.
+      //
+      // The test uses the trigger endpoint with stepFnArg query parameter:
+      // stepFnArg=<index>:<stepFnName> injects a step function at the specified arg index
+      //
+      // The workflow receives a step function reference (stepFnForStartArg) and:
+      // 1. Passes it to invokeStepFn(stepFn, 3, 5) -> stepFn(3, 5) = 8
+      // 2. Passes it again to invokeStepFn(stepFn, 8, 8) -> stepFn(8, 8) = 16
+
+      // Use the trigger endpoint with stepFnArg to inject the step function at arg[0]
+      // The trigger endpoint imports stepFnForStartArg from the workflow file,
+      // which has already run registerStepFunction and set the stepId property.
+      const url = new URL('/api/trigger', deploymentUrl);
+      url.searchParams.set('workflowFile', 'workflows/99_e2e.ts');
+      url.searchParams.set('workflowFn', 'stepFunctionAsStartArgWorkflow');
+      // Format: stepFnArg=<index>:<stepFnName> - inject step function at args[0]
+      // args will be: [stepFnForStartArg, 3, 5]
+      url.searchParams.set('stepFnArg', '0:stepFnForStartArg');
+      url.searchParams.set('args', ',3,5'); // First arg will be replaced by stepFnArg
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          ...getProtectionBypassHeaders(),
+        },
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to trigger workflow: ${res.status}: ${text}`);
+      }
+
+      const { runId } = await res.json();
+
+      // Wait for the workflow to complete
+      const returnValue = await getWorkflowReturnValue(runId);
+
+      // Verify the workflow result
+      expect(returnValue).toEqual({
+        result: 8, // stepFnForStartArg(3, 5) = 8
+        doubled: 16, // stepFnForStartArg(8, 8) = 16
+      });
+
+      // Verify the run completed successfully via CLI
+      const { json: runData } = await cliInspectJson(
+        `runs ${runId} --withData`
+      );
+      expect(runData.status).toBe('completed');
+      expect(runData.output).toEqual({
+        result: 8,
+        doubled: 16,
+      });
+    }
+  );
+
   // ==================== PAGES ROUTER TESTS ====================
   // Tests for Next.js Pages Router API endpoint (only runs for nextjs-turbopack and nextjs-webpack)
   const isNextJsApp =

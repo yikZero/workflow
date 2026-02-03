@@ -1082,9 +1082,10 @@ impl StepTransform {
                         match self.mode {
                             TransformMode::Step => {
                                 // First visit children to process nested step functions
+                                // This must happen BEFORE replacing the body so nested steps are hoisted
                                 stmt.visit_mut_children_with(self);
 
-                                // After step hoisting, re-extract fn_decl and replace workflow body with throw error
+                                // After processing nested steps, re-extract fn_decl and replace workflow body with throw error
                                 if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
                                     self.remove_use_workflow_directive(&mut fn_decl.function.body);
                                     if let Some(body) = &mut fn_decl.function.body {
@@ -1124,6 +1125,8 @@ impl StepTransform {
                                 stmt.visit_mut_children_with(self);
                             }
                             TransformMode::Client => {
+                                // In client mode, don't visit children - nested steps inside workflows
+                                // are unreachable since the workflow body is replaced with throw error
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
                                 if let Some(body) = &mut fn_decl.function.body {
                                     let error_msg = format!(
@@ -1155,7 +1158,6 @@ impl StepTransform {
                                 }
                                 self.workflow_functions_needing_id
                                     .push((fn_name.clone(), fn_span));
-                                stmt.visit_mut_children_with(self);
                             }
                         }
                     }
@@ -5439,52 +5441,47 @@ impl VisitMut for StepTransform {
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
                             }
                             TransformMode::Client => {
-                                // Only replace with throw if function has inline directive
-                                // Functions with only file-level directive keep original body
-                                let has_inline_directive =
-                                    self.has_use_workflow_directive(&fn_decl.function.body);
-
+                                // In client mode, don't visit children - nested steps inside workflows
+                                // are unreachable since the workflow body is replaced with throw error
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
-
-                                if has_inline_directive {
-                                    // Replace with error throw for inline workflow directives
-                                    if let Some(body) = &mut fn_decl.function.body {
-                                        let error_msg = format!(
-                                            "You attempted to execute workflow {} function directly. To start a workflow, use start({}) from workflow/api",
-                                            fn_name, fn_name
-                                        );
-                                        let error_expr = Expr::New(NewExpr {
-                                            span: DUMMY_SP,
-                                            ctxt: SyntaxContext::empty(),
-                                            callee: Box::new(Expr::Ident(Ident::new(
-                                                "Error".into(),
-                                                DUMMY_SP,
-                                                SyntaxContext::empty(),
-                                            ))),
-                                            args: Some(vec![ExprOrSpread {
-                                                spread: None,
-                                                expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                                    span: DUMMY_SP,
-                                                    value: error_msg.into(),
-                                                    raw: None,
-                                                }))),
-                                            }]),
-                                            type_args: None,
-                                        });
-                                        body.stmts = vec![Stmt::Throw(ThrowStmt {
-                                            span: DUMMY_SP,
-                                            arg: Box::new(error_expr),
-                                        })];
-                                    }
+                                if let Some(body) = &mut fn_decl.function.body {
+                                    let error_msg = format!(
+                                        "You attempted to execute workflow {} function directly. To start a workflow, use start({}) from workflow/api",
+                                        fn_name, fn_name
+                                    );
+                                    let error_expr = Expr::New(NewExpr {
+                                        span: DUMMY_SP,
+                                        ctxt: SyntaxContext::empty(),
+                                        callee: Box::new(Expr::Ident(Ident::new(
+                                            "Error".into(),
+                                            DUMMY_SP,
+                                            SyntaxContext::empty(),
+                                        ))),
+                                        args: Some(vec![ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: error_msg.into(),
+                                                raw: None,
+                                            }))),
+                                        }]),
+                                        type_args: None,
+                                    });
+                                    body.stmts = vec![Stmt::Throw(ThrowStmt {
+                                        span: DUMMY_SP,
+                                        arg: Box::new(error_expr),
+                                    })];
                                 }
-
                                 self.workflow_functions_needing_id
                                     .push((fn_name.clone(), fn_decl.function.span));
                             }
                         }
                     }
-                    // Visit children for workflow functions OUTSIDE the match to avoid borrow issues
-                    export_decl.visit_mut_children_with(self);
+                    // Visit children for workflow functions in Step and Workflow modes
+                    // (Client mode already handled above - no children to visit)
+                    if !matches!(self.mode, TransformMode::Client) || !is_workflow_function {
+                        export_decl.visit_mut_children_with(self);
+                    }
 
                     // After visiting, process the function again for cleanup and Step mode transformation
                     if let Decl::Fn(fn_decl) = &mut export_decl.decl {
