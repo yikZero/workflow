@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 import { usefulHelper// do not remove
  } from './utils';
 import * as useful from './useful'; // do not remove
@@ -9,9 +8,9 @@ export async function processData(data) {
     localFunction();
     return defaultExport(transformed);
 }
+processData.stepId = "step//input.js//processData";
 export function normalFunction() {
     // since this function is exported we can't remove it
     useful.doSomething();
     return usefulHelper();
 }
-registerStepFunction("step//input.js//processData", processData);

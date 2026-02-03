@@ -1,17 +1,20 @@
-import { registerStepFunction } from "workflow/internal/private";
 /**__internal_workflows{"steps":{"input.js":{"destructure":{"stepId":"step//input.js//destructure"},"multiple":{"stepId":"step//input.js//multiple"},"nested_destructure":{"stepId":"step//input.js//nested_destructure"},"process_array":{"stepId":"step//input.js//process_array"},"rest_top_level":{"stepId":"step//input.js//rest_top_level"},"with_defaults":{"stepId":"step//input.js//with_defaults"},"with_rest":{"stepId":"step//input.js//with_rest"}}}}*/;
 export async function destructure({ a, b }) {
     return a + b;
 }
+destructure.stepId = "step//input.js//destructure";
 export async function process_array([first, second]) {
     return first + second;
 }
+process_array.stepId = "step//input.js//process_array";
 export async function nested_destructure({ user: { name, age } }) {
     return `${name} is ${age} years old`;
 }
+nested_destructure.stepId = "step//input.js//nested_destructure";
 export async function with_defaults({ x = 10, y = 20 }) {
     return x + y;
 }
+with_defaults.stepId = "step//input.js//with_defaults";
 export async function with_rest({ a, b, ...rest }) {
     return {
         a,
@@ -19,6 +22,7 @@ export async function with_rest({ a, b, ...rest }) {
         rest
     };
 }
+with_rest.stepId = "step//input.js//with_rest";
 export async function multiple({ a, b }, { c, d }) {
     return {
         a,
@@ -27,6 +31,7 @@ export async function multiple({ a, b }, { c, d }) {
         d
     };
 }
+multiple.stepId = "step//input.js//multiple";
 export async function rest_top_level(a, b, ...rest) {
     return {
         a,
@@ -34,10 +39,4 @@ export async function rest_top_level(a, b, ...rest) {
         rest
     };
 }
-registerStepFunction("step//input.js//destructure", destructure);
-registerStepFunction("step//input.js//process_array", process_array);
-registerStepFunction("step//input.js//nested_destructure", nested_destructure);
-registerStepFunction("step//input.js//with_defaults", with_defaults);
-registerStepFunction("step//input.js//with_rest", with_rest);
-registerStepFunction("step//input.js//multiple", multiple);
-registerStepFunction("step//input.js//rest_top_level", rest_top_level);
+rest_top_level.stepId = "step//input.js//rest_top_level";

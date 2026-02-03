@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 /**__internal_workflows{"steps":{"input.js":{"sendRecipientEmail":{"stepId":"step//input.js//sendRecipientEmail"}}}}*/;
 export const sendRecipientEmail = async ({ recipientEmail, cardImage, cardText, rsvpReplies })=>{
     const html = generatePostcardEmailTemplate({
@@ -13,7 +12,7 @@ export const sendRecipientEmail = async ({ recipientEmail, cardImage, cardText, 
         html
     });
 };
+sendRecipientEmail.stepId = "step//input.js//sendRecipientEmail";
 export function normalFunction() {
     return 'this stays because it is exported';
 }
-registerStepFunction("step//input.js//sendRecipientEmail", sendRecipientEmail);

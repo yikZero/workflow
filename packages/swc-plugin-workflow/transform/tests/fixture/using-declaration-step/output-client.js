@@ -1,4 +1,3 @@
-import { registerStepFunction } from "workflow/internal/private";
 /**__internal_workflows{"steps":{"input.js":{"testStep":{"stepId":"step//input.js//testStep"}}}}*/;
 // This is the TypeScript-transformed output of:
 // async function testStep() {
@@ -24,4 +23,4 @@ export async function testStep() {
         env.stack.pop();
     }
 }
-registerStepFunction("step//input.js//testStep", testStep);
+testStep.stepId = "step//input.js//testStep";
