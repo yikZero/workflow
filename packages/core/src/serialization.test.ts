@@ -1688,25 +1688,58 @@ describe('step function serialization', () => {
   });
 
   it('should deserialize step function name through reviver', () => {
-    const stepName = 'testStep';
+    const stepName = 'step//test//testStep';
     const stepFn = async () => 42;
 
     // Register the step function
     registerStepFunction(stepName, stepFn);
 
-    // Get the reviver and test it directly
-    const revivers = getCommonRevivers(vmGlobalThis);
-    const result = revivers.StepFunction({ stepId: stepName });
+    // Create a function with stepId property (like registerStepFunction does)
+    const fnWithStepId = async () => 42;
+    Object.defineProperty(fnWithStepId, 'stepId', {
+      value: stepName,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
 
-    expect(result).toBe(stepFn);
+    // Serialize using workflow reducers (which handle StepFunction)
+    const dehydrated = dehydrateStepArguments([fnWithStepId], globalThis);
+
+    // Hydrate it back using step revivers
+    const ops: Promise<void>[] = [];
+    const hydrated = hydrateStepArguments(
+      dehydrated,
+      ops,
+      mockRunId,
+      globalThis
+    );
+
+    // The hydrated result should be the registered step function
+    expect(hydrated[0]).toBe(stepFn);
   });
 
   it('should throw error when reviver cannot find registered step function', () => {
-    const revivers = getCommonRevivers(vmGlobalThis);
+    // Create a function with a non-existent stepId
+    const fnWithNonExistentStepId = async () => 42;
+    Object.defineProperty(fnWithNonExistentStepId, 'stepId', {
+      value: 'nonExistentStep',
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
 
+    // Serialize the step function reference
+    const dehydrated = dehydrateStepArguments(
+      [fnWithNonExistentStepId],
+      globalThis
+    );
+
+    // Hydrating should throw an error
+    const ops: Promise<void>[] = [];
     let err: Error | undefined;
     try {
-      revivers.StepFunction({ stepId: 'nonExistentStep' });
+      hydrateStepArguments(dehydrated, ops, mockRunId, globalThis);
     } catch (err_) {
       err = err_ as Error;
     }

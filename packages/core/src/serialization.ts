@@ -892,59 +892,6 @@ export function getCommonRevivers(global: Record<string, any> = globalThis) {
       return deserialize(data);
     },
     Set: (value) => new global.Set(value),
-    StepFunction: (value) => {
-      const stepId = value.stepId;
-      const closureVars = value.closureVars;
-
-      const stepFn = getStepFunction(stepId);
-      if (!stepFn) {
-        throw new Error(
-          `Step function "${stepId}" not found. Make sure the step function is registered.`
-        );
-      }
-
-      // If closure variables were serialized, return a wrapper function
-      // that sets up AsyncLocalStorage context when invoked
-      if (closureVars) {
-        const wrappedStepFn = ((...args: any[]) => {
-          // Get the current context from AsyncLocalStorage
-          const currentContext = contextStorage.getStore();
-
-          if (!currentContext) {
-            throw new Error(
-              'Cannot call step function with closure variables outside step context'
-            );
-          }
-
-          // Create a new context with the closure variables merged in
-          const newContext = {
-            ...currentContext,
-            closureVars,
-          };
-
-          // Run the step function with the new context that includes closure vars
-          return contextStorage.run(newContext, () => stepFn(...args));
-        }) as any;
-
-        // Copy properties from original step function
-        Object.defineProperty(wrappedStepFn, 'name', {
-          value: stepFn.name,
-        });
-        Object.defineProperty(wrappedStepFn, 'stepId', {
-          value: stepId,
-          writable: false,
-          enumerable: false,
-          configurable: false,
-        });
-        if (stepFn.maxRetries !== undefined) {
-          wrappedStepFn.maxRetries = stepFn.maxRetries;
-        }
-
-        return wrappedStepFn;
-      }
-
-      return stepFn;
-    },
     URL: (value) => new global.URL(value),
     URLSearchParams: (value) =>
       new global.URLSearchParams(value === '.' ? '' : value),
@@ -982,6 +929,13 @@ export function getExternalRevivers(
 ): Revivers {
   return {
     ...getCommonRevivers(global),
+
+    // StepFunction should not be returned from workflows to clients
+    StepFunction: () => {
+      throw new Error(
+        'Step functions cannot be deserialized in client context. Step functions should not be returned from workflows.'
+      );
+    },
 
     Request: (value) => {
       return new global.Request(value.url, {
@@ -1087,7 +1041,7 @@ export function getExternalRevivers(
 export function getWorkflowRevivers(
   global: Record<string, any> = globalThis
 ): Revivers {
-  // Get the useStep function from the VM's globalThis (if running in workflow context)
+  // Get the useStep function from the VM's globalThis
   // This is set up by the workflow runner in workflow.ts
   // Use Symbol.for directly to access the symbol on the global object
   const useStep = (global as any)[Symbol.for('WORKFLOW_USE_STEP')] as
@@ -1099,73 +1053,24 @@ export function getWorkflowRevivers(
 
   return {
     ...getCommonRevivers(global),
-    // Override StepFunction reviver to return useStep wrapper when in workflow context
+    // StepFunction reviver for workflow context - returns useStep wrapper
     // This allows step functions passed as arguments to start() to be called directly
     // from workflow code, just like step functions defined in the same file
     StepFunction: (value) => {
       const stepId = value.stepId;
       const closureVars = value.closureVars;
 
-      // If we're in a workflow context (useStep is available), return the useStep wrapper
-      // This ensures the step function goes through proper scheduling when called
-      if (useStep) {
-        if (closureVars) {
-          // For step functions with closure variables, create a wrapper that provides them
-          return useStep(stepId, () => closureVars);
-        }
-        return useStep(stepId);
-      }
-
-      // Fall back to common reviver behavior (returns raw step function)
-      // This happens when deserializing outside of workflow context (e.g., in steps)
-      const stepFn = getStepFunction(stepId);
-      if (!stepFn) {
+      if (!useStep) {
         throw new Error(
-          `Step function "${stepId}" not found. Make sure the step function is registered.`
+          'WORKFLOW_USE_STEP not found on global object. Step functions cannot be deserialized outside workflow context.'
         );
       }
 
-      // If closure variables were serialized, return a wrapper function
-      // that sets up AsyncLocalStorage context when invoked
       if (closureVars) {
-        const wrappedStepFn = ((...args: any[]) => {
-          // Get the current context from AsyncLocalStorage
-          const currentContext = contextStorage.getStore();
-
-          if (!currentContext) {
-            throw new Error(
-              'Cannot call step function with closure variables outside step context'
-            );
-          }
-
-          // Create a new context with the closure variables merged in
-          const newContext = {
-            ...currentContext,
-            closureVars,
-          };
-
-          // Run the step function with the new context that includes closure vars
-          return contextStorage.run(newContext, () => stepFn(...args));
-        }) as any;
-
-        // Copy properties from original step function
-        Object.defineProperty(wrappedStepFn, 'name', {
-          value: stepFn.name,
-        });
-        Object.defineProperty(wrappedStepFn, 'stepId', {
-          value: stepId,
-          writable: false,
-          enumerable: false,
-          configurable: false,
-        });
-        if (stepFn.maxRetries !== undefined) {
-          wrappedStepFn.maxRetries = stepFn.maxRetries;
-        }
-
-        return wrappedStepFn;
+        // For step functions with closure variables, create a wrapper that provides them
+        return useStep(stepId, () => closureVars);
       }
-
-      return stepFn;
+      return useStep(stepId);
     },
     Request: (value) => {
       Object.setPrototypeOf(value, global.Request.prototype);
@@ -1236,6 +1141,62 @@ function getStepRevivers(
 ): Revivers {
   return {
     ...getCommonRevivers(global),
+
+    // StepFunction reviver for step context - returns raw step function
+    // with closure variable support via AsyncLocalStorage
+    StepFunction: (value) => {
+      const stepId = value.stepId;
+      const closureVars = value.closureVars;
+
+      const stepFn = getStepFunction(stepId);
+      if (!stepFn) {
+        throw new Error(
+          `Step function "${stepId}" not found. Make sure the step function is registered.`
+        );
+      }
+
+      // If closure variables were serialized, return a wrapper function
+      // that sets up AsyncLocalStorage context when invoked
+      if (closureVars) {
+        const wrappedStepFn = ((...args: any[]) => {
+          // Get the current context from AsyncLocalStorage
+          const currentContext = contextStorage.getStore();
+
+          if (!currentContext) {
+            throw new Error(
+              'Cannot call step function with closure variables outside step context'
+            );
+          }
+
+          // Create a new context with the closure variables merged in
+          const newContext = {
+            ...currentContext,
+            closureVars,
+          };
+
+          // Run the step function with the new context that includes closure vars
+          return contextStorage.run(newContext, () => stepFn(...args));
+        }) as any;
+
+        // Copy properties from original step function
+        Object.defineProperty(wrappedStepFn, 'name', {
+          value: stepFn.name,
+        });
+        Object.defineProperty(wrappedStepFn, 'stepId', {
+          value: stepId,
+          writable: false,
+          enumerable: false,
+          configurable: false,
+        });
+        if (stepFn.maxRetries !== undefined) {
+          wrappedStepFn.maxRetries = stepFn.maxRetries;
+        }
+
+        return wrappedStepFn;
+      }
+
+      return stepFn;
+    },
 
     Request: (value) => {
       const responseWritable = value.responseWritable;
