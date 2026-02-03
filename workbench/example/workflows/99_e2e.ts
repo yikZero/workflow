@@ -1262,22 +1262,28 @@ async function invokeStepFn(
  * This tests that:
  * 1. Step function references can be serialized in the client bundle (via registerStepFunction)
  * 2. The serialized step function can be deserialized in the workflow bundle
- * 3. The deserialized step function can be invoked from within a step
+ * 3. The deserialized step function can be invoked DIRECTLY from workflow code
+ * 4. The deserialized step function can also be invoked from within another step
  */
 export async function stepFunctionAsStartArgWorkflow(
   stepFn: (a: number, b: number) => Promise<number>,
   x: number,
   y: number
-): Promise<{ result: number; doubled: number }> {
+): Promise<{ directResult: number; viaStepResult: number; doubled: number }> {
   'use workflow';
 
-  // Invoke the passed step function reference from within a step
-  const result = await invokeStepFn(stepFn, x, y);
+  // CRITICAL TEST: Call the passed step function DIRECTLY from workflow code
+  // This tests that the deserialized step function has the useStep wrapper,
+  // allowing it to be scheduled as a proper step (not executed inline)
+  const directResult = await stepFn(x, y);
+
+  // Also test invoking via another step (this already worked before)
+  const viaStepResult = await invokeStepFn(stepFn, x, y);
 
   // Do another operation to verify the workflow continues normally
-  const doubled = await invokeStepFn(stepFn, result, result);
+  const doubled = await stepFn(directResult, directResult);
 
-  return { result, doubled };
+  return { directResult, viaStepResult, doubled };
 }
 
 // Export the step function so it can be imported and passed to start() in the test

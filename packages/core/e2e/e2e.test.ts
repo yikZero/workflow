@@ -1574,9 +1574,13 @@ describe('e2e', () => {
       const returnValue = await getWorkflowReturnValue(runId);
 
       // Verify the workflow result
+      // directResult: stepFn called directly from workflow code = stepFnForStartArg(3, 5) = 8
+      // viaStepResult: stepFn called via invokeStepFn = stepFnForStartArg(3, 5) = 8
+      // doubled: stepFn(8, 8) = 16
       expect(returnValue).toEqual({
-        result: 8, // stepFnForStartArg(3, 5) = 8
-        doubled: 16, // stepFnForStartArg(8, 8) = 16
+        directResult: 8,
+        viaStepResult: 8,
+        doubled: 16,
       });
 
       // Verify the run completed successfully via CLI
@@ -1585,7 +1589,8 @@ describe('e2e', () => {
       );
       expect(runData.status).toBe('completed');
       expect(runData.output).toEqual({
-        result: 8,
+        directResult: 8,
+        viaStepResult: 8,
         doubled: 16,
       });
     }
