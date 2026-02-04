@@ -1,11 +1,10 @@
 import fs from 'fs/promises';
-var myFactory$myStep = async ()=>{
+/**__internal_workflows{"steps":{"input.js":{"myFactory/myStep":{"stepId":"step//input.js//myFactory/myStep"}}}}*/;
+var myFactory$myStep = async function() {
     await fs.mkdir('test');
 };
 const myFactory = ()=>({
-        myStep: async ()=>{
-            await fs.mkdir('test');
-        }
+        myStep: myFactory$myStep
     });
 export default myFactory;
 myFactory$myStep.stepId = "step//input.js//myFactory/myStep";

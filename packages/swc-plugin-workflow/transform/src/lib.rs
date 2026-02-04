@@ -1742,7 +1742,39 @@ impl StepTransform {
                                         ));
                                     }
                                     TransformMode::Client => {
-                                        // In client mode, just remove the directive (already done above)
+                                        // In client mode, replace method with key-value property referencing the hoisted variable
+                                        // (same as step mode) so the stepId property is accessible
+                                        let safe_parent_name = parent_var_name.replace('/', "$");
+                                        let hoist_var_name = if let Some(ref workflow_name) =
+                                            self.current_workflow_function_name
+                                        {
+                                            format!(
+                                                "{}${}${}",
+                                                workflow_name, safe_parent_name, prop_key
+                                            )
+                                        } else {
+                                            format!("{}${}", safe_parent_name, prop_key)
+                                        };
+                                        let step_id = self.create_object_property_id(
+                                            parent_var_name,
+                                            &prop_key,
+                                            false,
+                                            self.current_workflow_function_name.as_deref(),
+                                        );
+                                        // Replace the method with a key-value property referencing the hoisted function
+                                        *boxed_prop = Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: method_prop.key.clone(),
+                                            value: Box::new(Expr::Ident(Ident::new(
+                                                hoist_var_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        }));
+                                        self.object_property_workflow_conversions.push((
+                                            parent_var_name.to_string(),
+                                            prop_key,
+                                            step_id,
+                                        ));
                                     }
                                 }
                             }
@@ -1802,7 +1834,26 @@ impl StepTransform {
                 ));
             }
             TransformMode::Client => {
-                // In client mode, just remove the directive
+                // In client mode, replace with reference to hoisted variable
+                // (same as step mode) so the stepId property is accessible
+                let safe_parent_name = parent_var_name.replace('/', "$");
+                let hoist_var_name =
+                    if let Some(ref workflow_name) = self.current_workflow_function_name {
+                        format!("{}${}${}", workflow_name, safe_parent_name, prop_key)
+                    } else {
+                        format!("{}${}", safe_parent_name, prop_key)
+                    };
+                *kv_prop.value = Expr::Ident(Ident::new(
+                    hoist_var_name.into(),
+                    DUMMY_SP,
+                    SyntaxContext::empty(),
+                ));
+                // Track for metadata
+                self.object_property_workflow_conversions.push((
+                    parent_var_name.to_string(),
+                    prop_key.to_string(),
+                    step_id,
+                ));
             }
         }
     }
@@ -3214,11 +3265,28 @@ impl StepTransform {
             used_identifiers: &mut used_identifiers,
             step_function_names: &self.step_function_names,
             current_function: None,
+            mode: self.mode.clone(),
         };
 
         // Visit the module directly (not clones) to analyze the already-transformed code
         let mut module_clone = module.clone();
         module_clone.visit_mut_with(&mut visitor);
+
+        // In client mode, also analyze object property step functions that will be hoisted
+        // These functions contain code that uses imports, but they're not in the module yet.
+        // In workflow mode, step function bodies are replaced so we don't need their imports.
+        if matches!(self.mode, TransformMode::Client | TransformMode::Step) {
+            for (_, _, fn_expr, _, _, _) in &self.object_property_step_functions {
+                let mut fn_clone = fn_expr.clone();
+                fn_clone.visit_mut_with(&mut visitor);
+            }
+
+            // Also analyze nested step functions that will be hoisted
+            for (_, fn_expr, _, _, _, _) in &self.nested_step_functions {
+                let mut fn_clone = fn_expr.clone();
+                fn_clone.visit_mut_with(&mut visitor);
+            }
+        }
 
         used_identifiers
     }
@@ -3431,6 +3499,7 @@ struct ComprehensiveUsageCollector<'a> {
     used_identifiers: &'a mut HashSet<String>,
     step_function_names: &'a HashSet<String>,
     current_function: Option<String>,
+    mode: TransformMode,
 }
 
 impl<'a> VisitMut for ComprehensiveUsageCollector<'a> {
@@ -3459,8 +3528,9 @@ impl<'a> VisitMut for ComprehensiveUsageCollector<'a> {
         let fn_name = fn_decl.ident.sym.to_string();
         let is_step_function = self.step_function_names.contains(&fn_name);
 
-        if is_step_function {
-            // Step functions have their bodies replaced, so don't analyze their original content
+        // In workflow mode, step function bodies are replaced, so don't analyze them.
+        // In client mode, step function bodies are preserved, so we need to analyze them.
+        if is_step_function && !matches!(self.mode, TransformMode::Client) {
             return;
         }
 
@@ -3512,8 +3582,11 @@ impl<'a> VisitMut for ComprehensiveUsageCollector<'a> {
         match &mut export_decl.decl {
             Decl::Fn(fn_decl) => {
                 let fn_name = fn_decl.ident.sym.to_string();
-                if self.step_function_names.contains(&fn_name) {
-                    // Step functions have their bodies replaced
+                // In workflow mode, step function bodies are replaced, so don't analyze them.
+                // In client mode, step function bodies are preserved, so we need to analyze them.
+                if self.step_function_names.contains(&fn_name)
+                    && !matches!(self.mode, TransformMode::Client)
+                {
                     return;
                 }
 
@@ -3543,8 +3616,9 @@ impl<'a> VisitMut for ComprehensiveUsageCollector<'a> {
                     _ => false,
                 };
 
-                if is_step_fn {
-                    // Don't visit the initializer if it's a step function
+                // In workflow mode, step function bodies are replaced, so don't analyze them.
+                // In client mode, step function bodies are preserved, so we need to analyze them.
+                if is_step_fn && !matches!(self.mode, TransformMode::Client) {
                     return;
                 }
             }
