@@ -4,9 +4,12 @@ import {
   WorkflowRunNotCompletedError,
 } from 'workflow/internal/errors';
 import { hydrateWorkflowArguments } from 'workflow/internal/serialization';
-import workflowManifest from '../manifest.js';
+import manifest from '../manifest.js';
 // Import all exports for step function lookup
 import * as stepFunctions from '../workflows/98_duplicate_case.js';
+
+// Step file used for testing step function serialization
+const STEP_FILE = 'workflows/98_duplicate_case.ts';
 
 export async function POST(req: Request) {
   const url = new URL(req.url);
@@ -41,6 +44,13 @@ export async function POST(req: Request) {
     const index = parseInt(indexStr, 10);
     const stepFn = (stepFunctions as Record<string, unknown>)[stepFnName];
     if (stepFn) {
+      // Look up the stepId from the manifest (since client mode transformation
+      // doesn't happen in the example workbench - it uses server-side build only)
+      const stepManifest = manifest.steps[STEP_FILE];
+      const stepInfo = stepManifest?.[stepFnName as keyof typeof stepManifest];
+      if (stepInfo) {
+        (stepFn as any).stepId = stepInfo.stepId;
+      }
       args[index] = stepFn;
       console.log(
         `Injected step function "${stepFnName}" at args[${index}], stepId: ${(stepFn as any).stepId}`
@@ -55,10 +65,9 @@ export async function POST(req: Request) {
   );
 
   try {
-    const workflowFileItems =
-      workflowManifest.workflows[
-        workflowFile as keyof typeof workflowManifest.workflows
-      ];
+    const workflowFileItems = manifest.workflows[
+      workflowFile as keyof typeof manifest.workflows
+    ];
     const run = await start(
       workflowFileItems[workflowFn as keyof typeof workflowFileItems],
       args

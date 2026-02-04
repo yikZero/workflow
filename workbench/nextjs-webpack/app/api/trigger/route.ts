@@ -5,8 +5,9 @@ import {
 } from 'workflow/internal/errors';
 import { hydrateWorkflowArguments } from 'workflow/internal/serialization';
 import { allWorkflows } from '@/_workflows';
-// Import all exports for step function lookup
-import * as stepFunctions from '../../../workflows/98_duplicate_case';
+
+// Step file used for testing step function serialization
+const STEP_FILE = 'workflows/98_duplicate_case.ts';
 
 export async function POST(req: Request) {
   const url = new URL(req.url);
@@ -36,19 +37,21 @@ export async function POST(req: Request) {
   }
 
   // Support passing step function references as arguments for testing
-  // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:addNumbers)
+  // Format: stepFnArg=<index>:<stepFnName> (e.g., stepFnArg=0:add)
+  // Uses allWorkflows registry which imports through proper paths for transformation
   const stepFnArgParam = url.searchParams.get('stepFnArg');
   if (stepFnArgParam) {
     const [indexStr, stepFnName] = stepFnArgParam.split(':');
     const index = parseInt(indexStr, 10);
-    const stepFn = (stepFunctions as Record<string, unknown>)[stepFnName];
+    const stepFunctions = allWorkflows[STEP_FILE] as Record<string, unknown>;
+    const stepFn = stepFunctions?.[stepFnName];
     if (stepFn) {
       args[index] = stepFn;
       console.log(
         `Injected step function "${stepFnName}" at args[${index}], stepId: ${(stepFn as any).stepId}`
       );
     } else {
-      console.warn(`Step function "${stepFnName}" not found in stepFunctions`);
+      console.warn(`Step function "${stepFnName}" not found in ${STEP_FILE}`);
     }
   }
 
