@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next';
+import path from 'path';
 import semver from 'semver';
 import { getNextBuilder } from './builder.js';
+import { maybeInvalidateCacheOnSwcChange } from './swc-cache.js';
 
 /**
  * Default directories to scan for workflows and steps.
@@ -136,6 +138,13 @@ export function withWorkflow(
       !process.env.WORKFLOW_NEXT_PRIVATE_BUILT &&
       phase !== 'phase-production-server'
     ) {
+      // Check swc-plugin build hash and invalidate cache if changed
+      const distDir = path.resolve(
+        process.cwd(),
+        nextConfig.distDir || '.next'
+      );
+      maybeInvalidateCacheOnSwcChange(distDir);
+
       const shouldWatch = process.env.NODE_ENV === 'development';
       const NextBuilder = await getNextBuilder();
       const workflowBuilder = new NextBuilder({
