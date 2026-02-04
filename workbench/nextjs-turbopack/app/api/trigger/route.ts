@@ -76,9 +76,18 @@ export async function POST(req: Request) {
     const stepFunctions = allWorkflows[STEP_FILE] as Record<string, unknown>;
     const stepFn = stepFunctions?.[stepFnName];
     if (stepFn) {
+      const stepId = (stepFn as any).stepId;
+      if (!stepId) {
+        return Response.json(
+          {
+            error: `Step function "${stepFnName}" from ${STEP_FILE} does not have a stepId property. This means the SWC client-mode transformation did not run.`,
+          },
+          { status: 500 }
+        );
+      }
       args[index] = stepFn;
       console.log(
-        `Injected step function "${stepFnName}" at args[${index}], stepId: ${(stepFn as any).stepId}`
+        `Injected step function "${stepFnName}" at args[${index}], stepId: ${stepId}`
       );
     } else {
       console.warn(`Step function "${stepFnName}" not found in ${STEP_FILE}`);
