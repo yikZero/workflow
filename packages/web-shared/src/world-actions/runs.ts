@@ -17,6 +17,13 @@ export interface StopSleepResult {
   stoppedCount: number;
 }
 
+export interface ReadStreamOptions {
+  /**
+   * The index to start reading from. Defaults to 0.
+   */
+  startIndex?: number;
+}
+
 export interface StopSleepOptions {
   /**
    * Optional list of specific correlation IDs to target.
@@ -154,4 +161,26 @@ export async function wakeUpRun(
   }
 
   return { stoppedCount: pendingWaits.length };
+}
+
+/**
+ * Read from a stream by stream ID.
+ * Returns a ReadableStream of Uint8Array chunks.
+ */
+export async function readStream(
+  world: World,
+  streamId: string,
+  options?: ReadStreamOptions
+): Promise<ReadableStream<Uint8Array>> {
+  return world.readFromStream(streamId, options?.startIndex);
+}
+
+/**
+ * List all stream IDs for a workflow run.
+ */
+export async function listStreams(
+  world: World,
+  runId: string
+): Promise<string[]> {
+  return world.listStreamsByRunId(runId);
 }
