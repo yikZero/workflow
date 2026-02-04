@@ -1,9 +1,4 @@
-import {
-  defineEventHandler,
-  getRequestURL,
-  readRawBody,
-  toWebRequest,
-} from 'h3';
+import { defineEventHandler, getRequestURL, toWebRequest } from 'h3';
 import { start } from 'workflow/api';
 import { hydrateWorkflowArguments } from 'workflow/internal/serialization';
 import { allWorkflows } from '../../_workflows.js';
