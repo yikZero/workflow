@@ -3,8 +3,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { hydrateResourceIO } from '@workflow/core/observability';
-import { createWorld } from '@workflow/core/runtime';
-import * as workflowRunHelpers from '@workflow/core/runtime';
+import {
+  cancelRun as cancelRunHelper,
+  createWorld,
+  recreateRunFromExisting as recreateRunFromExistingHelper,
+  reenqueueRun as reenqueueRunHelper,
+  wakeUpRun as wakeUpRunHelper,
+} from '@workflow/core/runtime';
 import {
   type HealthCheckEndpoint,
   type HealthCheckResult,
@@ -828,7 +833,7 @@ export async function cancelRun(
 ): Promise<ServerActionResult<void>> {
   try {
     const world = await getWorldFromEnv(worldEnv);
-    await workflowRunHelpers.cancelRun(world, runId);
+    await cancelRunHelper(world, runId);
     return createResponse(undefined);
   } catch (error) {
     return createServerActionError<void>(error, 'world.events.create', {
@@ -849,13 +854,9 @@ export async function recreateRun(
 ): Promise<ServerActionResult<string>> {
   try {
     const world = await getWorldFromEnv({ ...worldEnv });
-    const newRunId = await workflowRunHelpers.recreateRunFromExisting(
-      world,
-      runId,
-      {
-        deploymentId,
-      }
-    );
+    const newRunId = await recreateRunFromExistingHelper(world, runId, {
+      deploymentId,
+    });
     return createResponse(newRunId);
   } catch (error) {
     return createServerActionError<string>(error, 'recreateRun', { runId });
@@ -874,7 +875,7 @@ export async function reenqueueRun(
 ): Promise<ServerActionResult<void>> {
   try {
     const world = await getWorldFromEnv({ ...worldEnv });
-    await workflowRunHelpers.reenqueueRun(world, runId);
+    await reenqueueRunHelper(world, runId);
     return createResponse(undefined);
   } catch (error) {
     return createServerActionError<void>(error, 'reenqueueRun', { runId });
@@ -912,7 +913,7 @@ export async function wakeUpRun(
 ): Promise<ServerActionResult<StopSleepResult>> {
   try {
     const world = await getWorldFromEnv({ ...worldEnv });
-    const result = await workflowRunHelpers.wakeUpRun(world, runId, options);
+    const result = await wakeUpRunHelper(world, runId, options);
     return createResponse(result);
   } catch (error) {
     return createServerActionError<StopSleepResult>(error, 'wakeUpRun', {
