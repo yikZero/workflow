@@ -1,11 +1,11 @@
-import { start } from '@workflow/core/runtime/start';
-import { hydrateWorkflowArguments } from '@workflow/core/serialization';
+import { hydrateWorkflowArguments } from '../serialization.js';
 import {
   type Event,
   isLegacySpecVersion,
   SPEC_VERSION_LEGACY,
   type World,
 } from '@workflow/world';
+import { start } from './start.js';
 
 export interface RecreateRunOptions {
   deploymentId?: string;

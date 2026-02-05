@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { hydrateResourceIO } from '@workflow/core/observability';
 import { createWorld } from '@workflow/core/runtime';
+import * as workflowRunHelpers from '@workflow/core/runtime';
 import {
   type HealthCheckEndpoint,
   type HealthCheckResult,
@@ -30,7 +31,6 @@ import {
   createStorage,
   createStreamer,
 } from '@workflow/world-vercel';
-import * as workflowRunHelpers from '@workflow/web-shared/world-actions/runs';
 
 /**
  * Environment variable map for world configuration.

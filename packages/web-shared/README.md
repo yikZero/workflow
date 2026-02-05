@@ -1,28 +1,16 @@
 # @workflow/web-shared
 
-Workflow Observability UI primitives and World helpers. See [Workflow DevKit](https://useworkflow.dev/docs/observability) for more information.
+Workflow Observability UI primitives. See [Workflow DevKit](https://useworkflow.dev/docs/observability) for more information.
 
 ## Usage
 
 This package contains:
 - pre-styled, prop-driven UI components (no data fetching)
-- helper functions that operate on a `World` instance
 
 If you want a full observability experience with server actions already wired, take a look at
 [`@workflow/web`](../web/README.md) instead.
 
-You can use the helpers to build your own data layer:
-
-```tsx
-import { cancelRun } from '@workflow/web-shared/world-actions/runs';
-import type { World } from '@workflow/world';
-
-export async function cancelLatestRun(world: World, runId: string) {
-  await cancelRun(world, runId);
-}
-```
-
-It also comes with pre-styled UI components that accept data + callbacks:
+It comes with pre-styled UI components that accept data + callbacks:
 
 ```tsx
 import { WorkflowTraceViewer } from '@workflow/web-shared';
@@ -47,7 +35,7 @@ export default function MyRunDetailView({
 ```
 
 Server actions and data fetching are intentionally **not** part of `web-shared`. Implement those in your app
-and pass data + callbacks into these components.
+and pass data + callbacks into these components. If you need world run helpers, use `@workflow/core/runtime`.
 
 ## Styling
 
