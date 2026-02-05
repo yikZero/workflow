@@ -163,13 +163,17 @@ describe('e2e', () => {
       input: [123],
       output: 133,
     });
-    // In local vs. vercel backends, the workflow name is different, so we check for either,
-    // since this test runs against both. Also different workbenches have different directory structures.
-    expect(json.workflowName).toBeOneOf([
-      `workflow//example/${workflow.workflowFile}//${workflow.workflowFn}`,
-      `workflow//${workflow.workflowFile}//${workflow.workflowFn}`,
-      `workflow//src/${workflow.workflowFile}//${workflow.workflowFn}`,
-    ]);
+    // Workflow ID format: workflow//./{path-without-extension}//{functionName}
+    // Different workbenches have different directory structures:
+    // - workflows/ (standard)
+    // - src/workflows/ (some frameworks)
+    // - example/workflows/ (example app)
+    const fileWithoutExt = workflow.workflowFile.replace(/\.tsx?$/, '');
+    expect(json.workflowName).toMatch(
+      new RegExp(
+        `^workflow//\\./(?:src/|example/)?${fileWithoutExt}//${workflow.workflowFn}$`
+      )
+    );
   });
 
   const isNext = process.env.APP_NAME?.includes('nextjs');

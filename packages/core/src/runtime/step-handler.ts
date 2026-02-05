@@ -8,7 +8,7 @@ import {
 import { pluralize } from '@workflow/utils';
 import { getPort } from '@workflow/utils/get-port';
 import { SPEC_VERSION_CURRENT, StepInvokePayloadSchema } from '@workflow/world';
-import { runtimeLogger } from '../logger.js';
+import { runtimeLogger, stepLogger } from '../logger.js';
 import { getStepFunction } from '../private.js';
 import {
   dehydrateStepReturnValue,
@@ -67,14 +67,17 @@ const stepHandler = getWorldHandlers().createQueueHandler(
       const port = await getPort();
 
       return trace(
-        `STEP ${stepName}`,
+        `step ${stepName}`,
         { kind: await getSpanKind('CONSUMER'), links: spanLinks },
         async (span) => {
           span?.setAttributes({
             ...Attribute.StepName(stepName),
             ...Attribute.StepAttempt(metadata.attempt),
-            ...Attribute.QueueName(metadata.queueName),
-            ...Attribute.QueueMessageId(metadata.messageId),
+            // Standard OTEL messaging conventions
+            ...Attribute.MessagingSystem('vercel-queue'),
+            ...Attribute.MessagingDestinationName(metadata.queueName),
+            ...Attribute.MessagingMessageId(metadata.messageId),
+            ...Attribute.MessagingOperationType('process'),
             ...getQueueOverhead({ requestedAt }),
           });
 
@@ -143,7 +146,11 @@ const stepHandler = getWorldHandlers().createQueueHandler(
           if (step.attempt > maxRetries + 1) {
             const retryCount = step.attempt - 1;
             const errorMessage = `Step "${stepName}" exceeded max retries (${retryCount} ${pluralize('retry', 'retries', retryCount)})`;
-            console.error(`[Workflows] "${workflowRunId}" - ${errorMessage}`);
+            stepLogger.error('Step exceeded max retries', {
+              workflowRunId,
+              stepName,
+              retryCount,
+            });
             // Fail the step via event (event-sourced architecture)
             await world.events.create(workflowRunId, {
               eventType: 'step_failed',
@@ -161,11 +168,18 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             });
 
             // Re-invoke the workflow to handle the failed step
-            await queueMessage(world, `__wkf_workflow_${workflowName}`, {
-              runId: workflowRunId,
-              traceCarrier: await serializeTraceCarrier(),
-              requestedAt: new Date(),
-            });
+            await queueMessage(
+              world,
+              `__wkf_workflow_${workflowName}`,
+              {
+                runId: workflowRunId,
+                traceCarrier: await serializeTraceCarrier(),
+                requestedAt: new Date(),
+              },
+              {
+                headers: { 'x-workflow-run-id': workflowRunId },
+              }
+            );
             return;
           }
 
@@ -175,9 +189,12 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               // a) pending - initial state, or state set on re-try
               // b) running - if a step fails mid-execution, like a function timeout
               // otherwise, the step has been invoked erroneously
-              console.error(
-                `[Workflows] "${workflowRunId}" - Step invoked erroneously, expected status "pending" or "running", got "${step.status}" instead, skipping execution`
-              );
+              stepLogger.warn('Step invoked erroneously, skipping execution', {
+                workflowRunId,
+                stepName,
+                expectedStatus: ['pending', 'running'],
+                actualStatus: step.status,
+              });
               span?.setAttributes({
                 ...Attribute.StepSkipped(true),
                 ...Attribute.StepSkipReason(step.status),
@@ -198,11 +215,18 @@ const stepHandler = getWorldHandlers().createQueueHandler(
                 'cancelled',
               ].includes(step.status);
               if (isTerminalStep) {
-                await queueMessage(world, `__wkf_workflow_${workflowName}`, {
-                  runId: workflowRunId,
-                  traceCarrier: await serializeTraceCarrier(),
-                  requestedAt: new Date(),
-                });
+                await queueMessage(
+                  world,
+                  `__wkf_workflow_${workflowName}`,
+                  {
+                    runId: workflowRunId,
+                    traceCarrier: await serializeTraceCarrier(),
+                    requestedAt: new Date(),
+                  },
+                  {
+                    headers: { 'x-workflow-run-id': workflowRunId },
+                  }
+                );
               }
               return;
             }
@@ -232,20 +256,29 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               );
             }
             // Hydrate the step input arguments, closure variables, and thisVal
+            // Track deserialization time for observability
+            // NOTE: This captures only the synchronous portion of hydration. Any async
+            // operations (e.g., stream loading) are added to `ops` and executed later
+            // via Promise.all(ops) - their timing is not included in this measurement.
+            const deserializeStartTime = Date.now();
             const ops: Promise<void>[] = [];
             const hydratedInput = hydrateStepArguments(
               step.input,
               ops,
               workflowRunId
             );
+            const deserializeTimeMs = Date.now() - deserializeStartTime;
 
             const args = hydratedInput.args;
             const thisVal = hydratedInput.thisVal ?? null;
 
             span?.setAttributes({
               ...Attribute.StepArgumentsCount(args.length),
+              ...Attribute.QueueDeserializeTimeMs(deserializeTimeMs),
             });
 
+            // Track execution time for observability
+            const executionStartTime = Date.now();
             result = await contextStorage.run(
               {
                 stepMetadata: {
@@ -267,11 +300,23 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               },
               () => stepFn.apply(thisVal, args)
             );
+            const executionTimeMs = Date.now() - executionStartTime;
+
+            span?.setAttributes({
+              ...Attribute.QueueExecutionTimeMs(executionTimeMs),
+            });
 
             // NOTE: None of the code from this point is guaranteed to run
             // Since the step might fail or cause a function timeout and the process might be SIGKILL'd
             // The workflow runtime must be resilient to the below code not executing on a failed step
+            // Track serialization time for observability
+            const serializeStartTime = Date.now();
             result = dehydrateStepReturnValue(result, ops, workflowRunId);
+            const serializeTimeMs = Date.now() - serializeStartTime;
+
+            span?.setAttributes({
+              ...Attribute.QueueSerializeTimeMs(serializeTimeMs),
+            });
 
             waitUntil(
               Promise.all(ops).catch((err) => {
@@ -307,8 +352,13 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             if (WorkflowAPIError.is(err)) {
               if (err.status === 410) {
                 // Workflow has already completed, so no-op
-                console.warn(
-                  `Workflow run "${workflowRunId}" has already completed, skipping step "${stepId}": ${err.message}`
+                stepLogger.info(
+                  'Workflow run already completed, skipping step',
+                  {
+                    workflowRunId,
+                    stepId,
+                    message: err.message,
+                  }
                 );
                 return;
               }
@@ -316,9 +366,13 @@ const stepHandler = getWorldHandlers().createQueueHandler(
 
             if (FatalError.is(err)) {
               const errorStack = getErrorStack(err);
-              const stackLines = errorStack.split('\n').slice(0, 4);
-              console.error(
-                `[Workflows] "${workflowRunId}" - Encountered \`FatalError\` while executing step "${stepName}":\n  > ${stackLines.join('\n    > ')}\n\nBubbling up error to parent workflow`
+              stepLogger.error(
+                'Encountered FatalError while executing step, bubbling up to parent workflow',
+                {
+                  workflowRunId,
+                  stepName,
+                  errorStack,
+                }
               );
               // Fail the step via event (event-sourced architecture)
               await world.events.create(workflowRunId, {
@@ -349,10 +403,16 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               if (currentAttempt >= maxRetries + 1) {
                 // Max retries reached
                 const errorStack = getErrorStack(err);
-                const stackLines = errorStack.split('\n').slice(0, 4);
                 const retryCount = step.attempt - 1;
-                console.error(
-                  `[Workflows] "${workflowRunId}" - Encountered \`Error\` while executing step "${stepName}" (attempt ${step.attempt}, ${retryCount} ${pluralize('retry', 'retries', retryCount)}):\n  > ${stackLines.join('\n    > ')}\n\n  Max retries reached\n  Bubbling error to parent workflow`
+                stepLogger.error(
+                  'Max retries reached, bubbling error to parent workflow',
+                  {
+                    workflowRunId,
+                    stepName,
+                    attempt: step.attempt,
+                    retryCount,
+                    errorStack,
+                  }
                 );
                 const errorMessage = `Step "${stepName}" failed after ${maxRetries} ${pluralize('retry', 'retries', maxRetries)}: ${String(err)}`;
                 // Fail the step via event (event-sourced architecture)
@@ -373,14 +433,23 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               } else {
                 // Not at max retries yet - log as a retryable error
                 if (RetryableError.is(err)) {
-                  console.warn(
-                    `[Workflows] "${workflowRunId}" - Encountered \`RetryableError\` while executing step "${stepName}" (attempt ${currentAttempt}):\n  > ${String(err.message)}\n\n  This step has failed but will be retried`
+                  stepLogger.warn(
+                    'Encountered RetryableError, step will be retried',
+                    {
+                      workflowRunId,
+                      stepName,
+                      attempt: currentAttempt,
+                      message: err.message,
+                    }
                   );
                 } else {
-                  const stackLines = getErrorStack(err).split('\n').slice(0, 4);
-                  console.error(
-                    `[Workflows] "${workflowRunId}" - Encountered \`Error\` while executing step "${stepName}" (attempt ${currentAttempt}):\n  > ${stackLines.join('\n    > ')}\n\n  This step has failed but will be retried`
-                  );
+                  const errorStack = getErrorStack(err);
+                  stepLogger.warn('Encountered Error, step will be retried', {
+                    workflowRunId,
+                    stepName,
+                    attempt: currentAttempt,
+                    errorStack,
+                  });
                 }
                 // Set step to pending for retry via event (event-sourced architecture)
                 // step_retrying records the error and sets status to pending
@@ -417,11 +486,18 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             }
           }
 
-          await queueMessage(world, `__wkf_workflow_${workflowName}`, {
-            runId: workflowRunId,
-            traceCarrier: await serializeTraceCarrier(),
-            requestedAt: new Date(),
-          });
+          await queueMessage(
+            world,
+            `__wkf_workflow_${workflowName}`,
+            {
+              runId: workflowRunId,
+              traceCarrier: await serializeTraceCarrier(),
+              requestedAt: new Date(),
+            },
+            {
+              headers: { 'x-workflow-run-id': workflowRunId },
+            }
+          );
         }
       );
     });

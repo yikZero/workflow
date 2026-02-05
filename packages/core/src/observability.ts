@@ -6,6 +6,7 @@
 import { inspect } from 'node:util';
 import { parseClassName } from '@workflow/utils/parse-name';
 import { unflatten } from 'devalue';
+import { runtimeLogger } from './logger.js';
 import {
   getCommonRevivers,
   hydrateStepArguments,
@@ -65,9 +66,9 @@ export class ClassInstanceRef {
   ): string {
     const dataStr = inspect(this.data, { ...options, depth: options.depth });
     const parsed = parseClassName(this.classId);
-    const filePath = parsed?.path ?? this.classId;
-    // Extract just the filename from the path
-    const fileName = filePath.split('/').pop() ?? filePath;
+    const moduleSpecifier = parsed?.moduleSpecifier ?? this.classId;
+    // Extract just the module name from the specifier
+    const fileName = moduleSpecifier.split('/').pop() ?? moduleSpecifier;
     // Style the @filename portion gray using the 'undefined' style
     const styledFileName = options.stylize
       ? options.stylize(`@${fileName}`, 'undefined')
@@ -360,7 +361,7 @@ const hydrateEventData = <
       }
     }
   } catch (error) {
-    console.error('Error hydrating event data', error);
+    runtimeLogger.error('Error hydrating event data', { error });
   }
   return {
     ...event,
