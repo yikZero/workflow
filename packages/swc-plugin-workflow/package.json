@@ -6,7 +6,8 @@
   "type": "module",
   "main": "swc_plugin_workflow.wasm",
   "files": [
-    "swc_plugin_workflow.wasm"
+    "swc_plugin_workflow.wasm",
+    "build-hash.json"
   ],
   "publishConfig": {
     "access": "public"
@@ -17,7 +18,9 @@
     "directory": "packages/swc-plugin-workflow"
   },
   "exports": {
-    ".": "./swc_plugin_workflow.wasm"
+    ".": "./swc_plugin_workflow.wasm",
+    "./package.json": "./package.json",
+    "./build-hash.json": "./build-hash.json"
   },
   "peerDependencies": {
     "@swc/core": "catalog:"

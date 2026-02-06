@@ -9,6 +9,7 @@ import {
   pollReadableLock,
   pollWritableLock,
 } from './flushable-stream.js';
+import { runtimeLogger } from './logger.js';
 import { getStepFunction } from './private.js';
 import { getWorld } from './runtime/world.js';
 import { contextStorage } from './step/context-storage.js';
@@ -157,12 +158,12 @@ function formatSerializationError(context: string, error: unknown): string {
   }
   message += `. Ensure you're ${verb} serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`;
 
-  // Log the problematic value to console for debugging
+  // Log the problematic value for debugging
   if (error instanceof DevalueError && error.value !== undefined) {
-    console.error(
-      `[Workflows] Serialization failed for ${context}. Problematic value:`
-    );
-    console.error(error.value);
+    runtimeLogger.error('Serialization failed', {
+      context,
+      problematicValue: error.value,
+    });
   }
 
   return message;
@@ -272,6 +273,12 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
   }
 }
 
+/**
+ * Default flush interval in milliseconds for buffered stream writes.
+ * Chunks are accumulated and flushed together to reduce network overhead.
+ */
+const STREAM_FLUSH_INTERVAL_MS = 10;
+
 export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
   constructor(name: string, runId: string | Promise<string>) {
     // runId can be a promise, because we need a runID to write to a stream,
@@ -287,14 +294,84 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
       throw new Error(`"name" is required, got "${name}"`);
     }
     const world = getWorld();
+
+    // Buffering state for batched writes
+    let buffer: Uint8Array[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushPromise: Promise<void> | null = null;
+
+    const flush = async (): Promise<void> => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+
+      if (buffer.length === 0) return;
+
+      // Copy chunks to flush, but don't clear buffer until write succeeds
+      // This prevents data loss if the write operation fails
+      const chunksToFlush = buffer.slice();
+
+      const _runId = await runId;
+
+      // Use writeToStreamMulti if available for batch writes
+      if (
+        typeof world.writeToStreamMulti === 'function' &&
+        chunksToFlush.length > 1
+      ) {
+        await world.writeToStreamMulti(name, _runId, chunksToFlush);
+      } else {
+        // Fall back to sequential writes
+        for (const chunk of chunksToFlush) {
+          await world.writeToStream(name, _runId, chunk);
+        }
+      }
+
+      // Only clear buffer after successful write to prevent data loss
+      buffer = [];
+    };
+
+    const scheduleFlush = (): void => {
+      if (flushTimer) return; // Already scheduled
+
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        flushPromise = flush();
+      }, STREAM_FLUSH_INTERVAL_MS);
+    };
+
     super({
       async write(chunk) {
-        const _runId = await runId;
-        await world.writeToStream(name, _runId, chunk);
+        // Wait for any in-progress flush to complete before adding to buffer
+        if (flushPromise) {
+          await flushPromise;
+          flushPromise = null;
+        }
+
+        buffer.push(chunk);
+        scheduleFlush();
       },
       async close() {
+        // Wait for any in-progress flush to complete
+        if (flushPromise) {
+          await flushPromise;
+          flushPromise = null;
+        }
+
+        // Flush any remaining buffered chunks
+        await flush();
+
         const _runId = await runId;
         await world.closeStream(name, _runId);
+      },
+      abort() {
+        // Clean up timer to prevent leaks
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        // Discard buffered chunks - they won't be written
+        buffer = [];
       },
     });
   }
@@ -474,25 +551,25 @@ function getCommonReducers(global: Record<string, any> = globalThis) {
     Instance: (value) => {
       // Check if this is an instance of a class with custom serialization
       if (value === null || typeof value !== 'object') return false;
-      const ctor = value.constructor;
-      if (!ctor || typeof ctor !== 'function') return false;
+      const cls = value.constructor;
+      if (!cls || typeof cls !== 'function') return false;
 
       // Check if the class has a static WORKFLOW_SERIALIZE method
-      const serialize = ctor[WORKFLOW_SERIALIZE];
+      const serialize = cls[WORKFLOW_SERIALIZE];
       if (typeof serialize !== 'function') {
         return false;
       }
 
       // Get the classId from the static class property (set by SWC plugin)
-      const classId = ctor.classId;
+      const classId = cls.classId;
       if (typeof classId !== 'string') {
         throw new Error(
-          `Class "${ctor.name}" with ${String(WORKFLOW_SERIALIZE)} must have a static "classId" property.`
+          `Class "${cls.name}" with ${String(WORKFLOW_SERIALIZE)} must have a static "classId" property.`
         );
       }
 
       // Serialize the instance using the custom serializer
-      const data = serialize(value);
+      const data = serialize.call(cls, value);
       return { classId, data };
     },
     Set: (value) => value instanceof global.Set && Array.from(value),
@@ -813,7 +890,7 @@ export function getCommonRevivers(global: Record<string, any> = globalThis) {
       }
 
       // Deserialize the instance using the custom deserializer
-      return deserialize(data);
+      return deserialize.call(cls, data);
     },
     Set: (value) => new global.Set(value),
     StepFunction: (value) => {

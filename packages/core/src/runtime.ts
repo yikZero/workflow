@@ -37,6 +37,11 @@ export {
   resumeHook,
   resumeWebhook,
 } from './runtime/resume-hook.js';
+export {
+  getRun,
+  Run,
+  type WorkflowReadableStreamOptions,
+} from './runtime/run.js';
 export { type StartOptions, start } from './runtime/start.js';
 export { stepEntrypoint } from './runtime/step-handler.js';
 export {
@@ -45,11 +50,6 @@ export {
   getWorldHandlers,
   setWorld,
 } from './runtime/world.js';
-export {
-  getRun,
-  Run,
-  type WorkflowReadableStreamOptions,
-} from './runtime/run.js';
 
 /**
  * Function that creates a single route which handles any workflow execution
@@ -94,8 +94,11 @@ export function workflowEntrypoint(
             span?.setAttributes({
               ...Attribute.WorkflowName(workflowName),
               ...Attribute.WorkflowOperation('execute'),
-              ...Attribute.QueueName(metadata.queueName),
-              ...Attribute.QueueMessageId(metadata.messageId),
+              // Standard OTEL messaging conventions
+              ...Attribute.MessagingSystem('vercel-queue'),
+              ...Attribute.MessagingDestinationName(metadata.queueName),
+              ...Attribute.MessagingMessageId(metadata.messageId),
+              ...Attribute.MessagingOperationType('process'),
               ...getQueueOverhead({ requestedAt }),
             });
 
@@ -119,7 +122,7 @@ export function workflowEntrypoint(
                 // Use the run entity from the event response (no extra get call needed)
                 if (!result.run) {
                   throw new WorkflowRuntimeError(
-                    `Event creation for 'run_started' did not return the run entity for run \"${runId}\"`
+                    `Event creation for 'run_started' did not return the run entity for run "${runId}"`
                   );
                 }
                 workflowRun = result.run;
@@ -141,8 +144,12 @@ export function workflowEntrypoint(
 
               if (workflowRun.status !== 'running') {
                 // Workflow has already completed or failed, so we can skip it
-                console.warn(
-                  `Workflow "${runId}" has status "${workflowRun.status}", skipping`
+                runtimeLogger.info(
+                  'Workflow already completed or failed, skipping',
+                  {
+                    workflowRunId: runId,
+                    status: workflowRun.status,
+                  }
                 );
 
                 // TODO: for `cancel`, we actually want to propagate a WorkflowCancelled event
@@ -245,7 +252,7 @@ export function workflowEntrypoint(
                 // Remap error stack using source maps to show original source locations
                 if (errorStack) {
                   const parsedName = parseWorkflowName(workflowName);
-                  const filename = parsedName?.path || workflowName;
+                  const filename = parsedName?.moduleSpecifier || workflowName;
                   errorStack = remapErrorStack(
                     errorStack,
                     filename,
@@ -253,9 +260,11 @@ export function workflowEntrypoint(
                   );
                 }
 
-                console.error(
-                  `${errorName} while running "${runId}" workflow:\n\n${errorStack}`
-                );
+                runtimeLogger.error('Error while running workflow', {
+                  workflowRunId: runId,
+                  errorName,
+                  errorStack,
+                });
                 // Fail the workflow run via event (event-sourced architecture)
                 await world.events.create(runId, {
                   eventType: 'run_failed',

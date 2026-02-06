@@ -249,29 +249,42 @@ export async function healthCheck(
  * Events must be in chronological order (ascending) for proper workflow replay.
  */
 export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
-  const allEvents: Event[] = [];
-  let cursor: string | null = null;
-  let hasMore = true;
-
-  const world = getWorld();
-  while (hasMore) {
-    // TODO: we're currently loading all the data with resolveRef behaviour. We need to update this
-    // to lazyload the data from the world instead so that we can optimize and make the event log loading
-    // much faster and memory efficient
-    const response = await world.events.list({
-      runId,
-      pagination: {
-        sortOrder: 'asc', // Required: events must be in chronological order for replay
-        cursor: cursor ?? undefined,
-      },
+  return trace('workflow.loadEvents', async (span) => {
+    span?.setAttributes({
+      ...Attribute.WorkflowRunId(runId),
     });
 
-    allEvents.push(...response.data);
-    hasMore = response.hasMore;
-    cursor = response.cursor;
-  }
+    const allEvents: Event[] = [];
+    let cursor: string | null = null;
+    let hasMore = true;
+    let pagesLoaded = 0;
 
-  return allEvents;
+    const world = getWorld();
+    while (hasMore) {
+      // TODO: we're currently loading all the data with resolveRef behaviour. We need to update this
+      // to lazyload the data from the world instead so that we can optimize and make the event log loading
+      // much faster and memory efficient
+      const response = await world.events.list({
+        runId,
+        pagination: {
+          sortOrder: 'asc', // Required: events must be in chronological order for replay
+          cursor: cursor ?? undefined,
+        },
+      });
+
+      allEvents.push(...response.data);
+      hasMore = response.hasMore;
+      cursor = response.cursor;
+      pagesLoaded++;
+    }
+
+    span?.setAttributes({
+      ...Attribute.WorkflowEventsCount(allEvents.length),
+      ...Attribute.WorkflowEventsPagesLoaded(pagesLoaded),
+    });
+
+    return allEvents;
+  });
 }
 
 /**
@@ -328,12 +341,17 @@ export async function queueMessage(
   await trace(
     'queueMessage',
     {
-      attributes: Attribute.QueueName(queueName),
+      // Standard OTEL messaging conventions
+      attributes: {
+        ...Attribute.MessagingSystem('vercel-queue'),
+        ...Attribute.MessagingDestinationName(queueName),
+        ...Attribute.MessagingOperationType('publish'),
+      },
       kind: await getSpanKind('PRODUCER'),
     },
     async (span) => {
       const { messageId } = await world.queue(...args);
-      span?.setAttributes(Attribute.QueueMessageId(messageId));
+      span?.setAttributes(Attribute.MessagingMessageId(messageId));
     }
   );
 }

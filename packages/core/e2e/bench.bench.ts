@@ -52,8 +52,11 @@ async function triggerWorkflow(
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: getProtectionBypassHeaders(),
-    body: JSON.stringify(dehydratedArgs),
+    headers: {
+      ...getProtectionBypassHeaders(),
+      'Content-Type': 'application/octet-stream',
+    },
+    body: dehydratedArgs.buffer as BodyInit,
   });
   if (!res.ok) {
     throw new Error(
@@ -303,15 +306,33 @@ describe('Workflow Performance Benchmarks', () => {
     { time: 5000, warmupIterations: 1, teardown }
   );
 
-  bench(
-    'workflow with 10 sequential steps',
-    async () => {
-      const { runId } = await triggerWorkflow('tenSequentialStepsWorkflow', []);
-      const { run } = await getWorkflowReturnValue(runId);
-      stageTiming('workflow with 10 sequential steps', run);
-    },
-    { time: 5000, iterations: 5, warmupIterations: 1, teardown }
-  );
+  // Sequential step benchmarks at various scales
+  // Set BENCHMARK_FULL_SUITE=true to run the long benchmarks (100+, 500+ steps)
+  const fullSuite = process.env.BENCHMARK_FULL_SUITE === 'true';
+  const sequentialStepCounts = [
+    { count: 10, skip: false, time: 30000 },
+    { count: 25, skip: false, time: 60000 },
+    { count: 50, skip: false, time: 90000 },
+    { count: 100, skip: !fullSuite, time: 150000 },
+    { count: 500, skip: !fullSuite, time: 600000 },
+  ] as const;
+
+  for (const { count, skip, time } of sequentialStepCounts) {
+    const name = `workflow with ${count} sequential steps`;
+    const benchFn = skip ? bench.skip : bench;
+
+    benchFn(
+      name,
+      async () => {
+        const { runId } = await triggerWorkflow('sequentialStepsWorkflow', [
+          count,
+        ]);
+        const { run } = await getWorkflowReturnValue(runId);
+        stageTiming(name, run);
+      },
+      { time, iterations: 1, warmupIterations: 0, teardown }
+    );
+  }
 
   bench(
     'workflow with stream',
@@ -352,12 +373,14 @@ describe('Workflow Performance Benchmarks', () => {
   );
 
   // Concurrent step benchmarks for Promise.all/Promise.race at various scales
+  // Set BENCHMARK_FULL_SUITE=true to run the long benchmarks (100+, 500+, 1000 steps)
   const concurrentStepCounts = [
     { count: 10, skip: false, time: 30000 },
     { count: 25, skip: false, time: 30000 },
-    { count: 100, skip: true, time: 60000 },
-    { count: 500, skip: true, time: 120000 },
-    { count: 1000, skip: true, time: 180000 },
+    { count: 50, skip: false, time: 30000 },
+    { count: 100, skip: !fullSuite, time: 60000 },
+    { count: 500, skip: !fullSuite, time: 120000 },
+    { count: 1000, skip: true, time: 180000 }, // Always skip 1000 - too slow
   ] as const;
 
   const concurrentStepTypes = [

@@ -2,6 +2,7 @@ import type * as api from '@opentelemetry/api';
 import type { Span, SpanKind, SpanOptions } from '@opentelemetry/api';
 import { once } from '@workflow/utils';
 import { WorkflowSuspension } from './global.js';
+import { runtimeLogger } from './logger.js';
 import * as Attr from './telemetry/semantic-conventions.js';
 
 // ============================================================
@@ -64,7 +65,7 @@ const OtelApi = once(async () => {
   try {
     return await import('@opentelemetry/api');
   } catch {
-    console.warn('OpenTelemetry not available, tracing will be disabled');
+    runtimeLogger.info('OpenTelemetry not available, tracing will be disabled');
     return null;
   }
 });
@@ -147,6 +148,12 @@ export async function getActiveSpan() {
   return await withOtel((otel) => otel.trace.getActiveSpan());
 }
 
+/**
+ * Wraps all methods of an object with tracing spans.
+ * @param prefix - Prefix for span names (e.g., "WORLD.runs")
+ * @param o - Object with methods to instrument
+ * @returns Instrumented object with same interface
+ */
 export function instrumentObject<T extends object>(prefix: string, o: T): T {
   const handlers = {} as T;
   for (const key of Object.keys(o) as (keyof T)[]) {
