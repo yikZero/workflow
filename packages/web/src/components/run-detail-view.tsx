@@ -51,6 +51,7 @@ import {
   cancelRun,
   recreateRun,
   resumeHook,
+  unwrapServerActionResult,
   useWorkflowResourceData,
   useWorkflowStreams,
   useWorkflowTraceViewerData,
@@ -244,23 +245,17 @@ export function RunDetailView({
       if (!event.correlationId) {
         return null;
       }
-      const result = await fetchEventsByCorrelationId(
-        env,
-        event.correlationId,
-        {
+      const { error, result } = await unwrapServerActionResult(
+        fetchEventsByCorrelationId(env, event.correlationId, {
           sortOrder: 'asc',
           limit: 100,
           withData: true,
-        }
+        })
       );
-      if (!result.success) {
-        throw new Error(
-          result.error?.message || 'Failed to load event details'
-        );
+      if (error) {
+        throw error;
       }
-      const fullEvent = result.data.data.find(
-        (e) => e.eventId === event.eventId
-      );
+      const fullEvent = result.data.find((e) => e.eventId === event.eventId);
       if (fullEvent && 'eventData' in fullEvent) {
         return fullEvent.eventData;
       }
