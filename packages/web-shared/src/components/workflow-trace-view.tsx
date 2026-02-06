@@ -7,7 +7,7 @@ import { ErrorBoundary } from './error-boundary';
 import {
   EntityDetailPanel,
   type SpanSelectionInfo,
-} from './sidebar/entity-detail-panel.js';
+} from './sidebar/entity-detail-panel';
 import {
   TraceViewerContextProvider,
   TraceViewerTimeline,
