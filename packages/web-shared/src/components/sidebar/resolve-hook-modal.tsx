@@ -114,15 +114,23 @@ export function ResolveHookModal({
       <div
         className={clsx(
           'relative z-10 w-full max-w-lg mx-4',
-          'bg-background text-foreground rounded-lg shadow-xl',
-          'border border-border'
+          'rounded-lg shadow-xl',
+          'border border-gray-alpha-400'
         )}
+        style={{
+          background: 'var(--ds-background-100)',
+          color: 'var(--ds-gray-1000)',
+        }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div
+          className="flex items-center justify-between px-4 py-3"
+          style={{ borderBottom: '1px solid var(--ds-gray-alpha-400)' }}
+        >
           <h2
             id="resolve-hook-modal-title"
-            className="text-lg font-semibold text-foreground"
+            className="text-lg font-semibold"
+            style={{ color: 'var(--ds-gray-1000)' }}
           >
             Resolve Hook
           </h2>
@@ -132,10 +140,10 @@ export function ResolveHookModal({
             disabled={isSubmitting}
             className={clsx(
               'p-1 rounded-md transition-colors',
-              'text-muted-foreground hover:text-foreground',
-              'hover:bg-muted',
+              'hover:bg-gray-alpha-200',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
+            style={{ color: 'var(--ds-gray-900)' }}
             aria-label="Close modal"
           >
             <X className="h-5 w-5" />
@@ -147,13 +155,16 @@ export function ResolveHookModal({
           <div className="px-4 py-4">
             <label
               htmlFor="json-payload"
-              className="block text-sm font-medium text-foreground mb-2"
+              className="block text-sm font-medium mb-2"
+              style={{ color: 'var(--ds-gray-1000)' }}
             >
               JSON Payload
             </label>
-            <p className="text-xs text-muted-foreground mb-3">
+            <p className="text-xs mb-3" style={{ color: 'var(--ds-gray-900)' }}>
               Enter a JSON value to send to the hook. Leave empty to send{' '}
-              <code className="px-1 py-0.5 bg-muted rounded text-xs">null</code>
+              <code className="px-1 py-0.5 bg-gray-alpha-100 rounded text-xs">
+                null
+              </code>
               .
             </p>
             <textarea
@@ -169,32 +180,41 @@ export function ResolveHookModal({
               placeholder='{"key": "value"}'
               className={clsx(
                 'w-full h-40 px-3 py-2 font-mono text-sm',
-                'text-foreground',
-                'bg-background',
                 'border rounded-md',
-                'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background',
+                'focus:outline-none focus:ring-2 focus:ring-blue-700 focus:ring-offset-2',
                 'disabled:opacity-50 disabled:cursor-not-allowed',
-                'placeholder:text-muted-foreground',
-                parseError ? 'border-destructive' : 'border-input'
+                parseError ? 'border-red-700' : 'border-gray-alpha-400'
               )}
+              style={{
+                color: 'var(--ds-gray-1000)',
+                background: 'var(--ds-background-100)',
+              }}
             />
             {parseError && (
-              <p className="mt-2 text-sm text-destructive">{parseError}</p>
+              <p
+                className="mt-2 text-sm"
+                style={{ color: 'var(--ds-red-900)' }}
+              >
+                {parseError}
+              </p>
             )}
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border">
+          <div
+            className="flex items-center justify-end gap-2 px-4 py-3"
+            style={{ borderTop: '1px solid var(--ds-gray-alpha-400)' }}
+          >
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
               className={clsx(
                 'px-4 py-2 text-sm font-medium rounded-md transition-colors',
-                'bg-secondary text-secondary-foreground',
-                'hover:bg-secondary/80',
+                'bg-gray-alpha-100 hover:bg-gray-alpha-200',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
+              style={{ color: 'var(--ds-gray-1000)' }}
             >
               Cancel
             </button>
@@ -204,7 +224,7 @@ export function ResolveHookModal({
               disabled={isSubmitting}
               className={clsx(
                 'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors',
-                'bg-primary text-primary-foreground hover:bg-primary/90',
+                'bg-gray-1000 text-white hover:opacity-90',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
             >

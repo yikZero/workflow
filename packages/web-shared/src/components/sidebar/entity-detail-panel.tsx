@@ -301,7 +301,7 @@ export function EntityDetailPanel({
             disabled={resolvingHook}
             className={clsx(
               'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md w-full',
-              'bg-primary text-primary-foreground hover:bg-primary/90',
+              'bg-gray-1000 text-white hover:opacity-90',
               'disabled:opacity-50 disabled:cursor-not-allowed',
               'transition-colors',
               resolvingHook ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
