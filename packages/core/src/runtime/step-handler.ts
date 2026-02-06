@@ -26,6 +26,7 @@ import {
 import { getErrorName, getErrorStack } from '../types.js';
 import {
   getQueueOverhead,
+  getWorkflowQueueName,
   handleHealthCheckMessage,
   parseHealthCheckPayload,
   queueMessage,
@@ -170,7 +171,7 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             // Re-invoke the workflow to handle the failed step
             await queueMessage(
               world,
-              `__wkf_workflow_${workflowName}`,
+              getWorkflowQueueName(workflowName),
               {
                 runId: workflowRunId,
                 traceCarrier: await serializeTraceCarrier(),
@@ -217,7 +218,7 @@ const stepHandler = getWorldHandlers().createQueueHandler(
               if (isTerminalStep) {
                 await queueMessage(
                   world,
-                  `__wkf_workflow_${workflowName}`,
+                  getWorkflowQueueName(workflowName),
                   {
                     runId: workflowRunId,
                     traceCarrier: await serializeTraceCarrier(),
@@ -488,7 +489,7 @@ const stepHandler = getWorldHandlers().createQueueHandler(
 
           await queueMessage(
             world,
-            `__wkf_workflow_${workflowName}`,
+            getWorkflowQueueName(workflowName),
             {
               runId: workflowRunId,
               traceCarrier: await serializeTraceCarrier(),

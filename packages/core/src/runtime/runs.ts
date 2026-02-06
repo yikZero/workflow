@@ -5,6 +5,7 @@ import {
   SPEC_VERSION_LEGACY,
   type World,
 } from '@workflow/world';
+import { getWorkflowQueueName } from './helpers.js';
 import { start } from './start.js';
 
 export interface RecreateRunOptions {
@@ -45,54 +46,75 @@ export async function recreateRunFromExisting(
   runId: string,
   options: RecreateRunOptions = {}
 ): Promise<string> {
-  const run = await world.runs.get(runId, { resolveData: 'all' });
-  const workflowArgs = normalizeWorkflowArgs(
-    hydrateWorkflowArguments(run.input, globalThis)
-  );
-  const specVersion =
-    options.specVersion ?? run.specVersion ?? SPEC_VERSION_LEGACY;
-  const deploymentId = options.deploymentId ?? run.deploymentId;
+  try {
+    const run = await world.runs.get(runId, { resolveData: 'all' });
+    const workflowArgs = normalizeWorkflowArgs(
+      hydrateWorkflowArguments(run.input, globalThis)
+    );
+    const specVersion =
+      options.specVersion ?? run.specVersion ?? SPEC_VERSION_LEGACY;
+    const deploymentId = options.deploymentId ?? run.deploymentId;
 
-  const newRun = await start(
-    { workflowId: run.workflowName },
-    workflowArgs as unknown[],
-    {
-      deploymentId,
-      world,
-      specVersion,
-    }
-  );
-  return newRun.runId;
+    const newRun = await start(
+      { workflowId: run.workflowName },
+      workflowArgs as unknown[],
+      {
+        deploymentId,
+        world,
+        specVersion,
+      }
+    );
+    return newRun.runId;
+  } catch (err) {
+    throw new Error(
+      `Failed to recreate run from ${runId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
 }
 
 /**
  * Cancel a workflow run.
  */
 export async function cancelRun(world: World, runId: string): Promise<void> {
-  const run = await world.runs.get(runId, { resolveData: 'none' });
-  const specVersion = run.specVersion ?? SPEC_VERSION_LEGACY;
-  const compatMode = isLegacySpecVersion(specVersion);
-  const eventData = {
-    eventType: 'run_cancelled' as const,
-    specVersion,
-  };
-  await world.events.create(runId, eventData, { v1Compat: compatMode });
+  try {
+    const run = await world.runs.get(runId, { resolveData: 'none' });
+    const specVersion = run.specVersion ?? SPEC_VERSION_LEGACY;
+    const compatMode = isLegacySpecVersion(specVersion);
+    const eventData = {
+      eventType: 'run_cancelled' as const,
+      specVersion,
+    };
+    await world.events.create(runId, eventData, { v1Compat: compatMode });
+  } catch (err) {
+    throw new Error(
+      `Failed to cancel run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
 }
 
 /**
  * Re-enqueue a workflow run.
  */
 export async function reenqueueRun(world: World, runId: string): Promise<void> {
-  const run = await world.runs.get(runId, { resolveData: 'none' });
-  await world.queue(
-    `__wkf_workflow_${run.workflowName}`,
-    {
-      runId,
-    },
-    {
-      deploymentId: run.deploymentId,
-    }
-  );
+  try {
+    const run = await world.runs.get(runId, { resolveData: 'none' });
+    await world.queue(
+      getWorkflowQueueName(run.workflowName),
+      {
+        runId,
+      },
+      {
+        deploymentId: run.deploymentId,
+      }
+    );
+  } catch (err) {
+    throw new Error(
+      `Failed to re-enqueue run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
 }
 
 /**
@@ -103,64 +125,97 @@ export async function wakeUpRun(
   runId: string,
   options?: StopSleepOptions
 ): Promise<StopSleepResult> {
-  const run = await world.runs.get(runId, { resolveData: 'none' });
-  const compatMode = isLegacySpecVersion(run.specVersion);
+  try {
+    const run = await world.runs.get(runId, { resolveData: 'none' });
+    const compatMode = isLegacySpecVersion(run.specVersion);
 
-  const eventsResult = await world.events.list({
-    runId,
-    pagination: { limit: 1000 },
-    resolveData: 'none',
-  });
-
-  const waitCreatedEvents = eventsResult.data.filter(
-    (event: Event) => event.eventType === 'wait_created'
-  );
-  const waitCompletedCorrelationIds = new Set(
-    eventsResult.data
-      .filter((event: Event) => event.eventType === 'wait_completed')
-      .map((event: Event) => event.correlationId)
-  );
-
-  let pendingWaits = waitCreatedEvents.filter(
-    (event: Event) => !waitCompletedCorrelationIds.has(event.correlationId)
-  );
-
-  if (options?.correlationIds && options.correlationIds.length > 0) {
-    const targetCorrelationIds = new Set(options.correlationIds);
-    pendingWaits = pendingWaits.filter(
-      (event: Event) =>
-        event.correlationId && targetCorrelationIds.has(event.correlationId)
-    );
-  }
-
-  for (const waitEvent of pendingWaits) {
-    if (!waitEvent.correlationId) continue;
-    const eventData = compatMode
-      ? {
-          eventType: 'wait_completed' as const,
-          correlationId: waitEvent.correlationId,
-        }
-      : {
-          eventType: 'wait_completed' as const,
-          correlationId: waitEvent.correlationId,
-          specVersion: run.specVersion,
-        };
-    await world.events.create(runId, eventData, { v1Compat: compatMode });
-  }
-
-  if (pendingWaits.length > 0) {
-    await world.queue(
-      `__wkf_workflow_${run.workflowName}`,
-      {
+    // Paginate through all events to ensure we don't miss any sleeps
+    // in long-running workflows with more than 1000 events.
+    const allEvents: Event[] = [];
+    let cursor: string | null = null;
+    do {
+      const eventsResult = await world.events.list({
         runId,
-      },
-      {
-        deploymentId: run.deploymentId,
+        pagination: { limit: 1000, ...(cursor ? { cursor } : {}) },
+        resolveData: 'none',
+      });
+      allEvents.push(...eventsResult.data);
+      cursor = eventsResult.hasMore ? eventsResult.cursor : null;
+    } while (cursor);
+
+    const waitCreatedEvents = allEvents.filter(
+      (event: Event) => event.eventType === 'wait_created'
+    );
+    const waitCompletedCorrelationIds = new Set(
+      allEvents
+        .filter((event: Event) => event.eventType === 'wait_completed')
+        .map((event: Event) => event.correlationId)
+    );
+
+    let pendingWaits = waitCreatedEvents.filter(
+      (event: Event) => !waitCompletedCorrelationIds.has(event.correlationId)
+    );
+
+    if (options?.correlationIds && options.correlationIds.length > 0) {
+      const targetCorrelationIds = new Set(options.correlationIds);
+      pendingWaits = pendingWaits.filter(
+        (event: Event) =>
+          event.correlationId && targetCorrelationIds.has(event.correlationId)
+      );
+    }
+
+    const errors: Error[] = [];
+    let stoppedCount = 0;
+
+    for (const waitEvent of pendingWaits) {
+      if (!waitEvent.correlationId) continue;
+      const eventData = compatMode
+        ? {
+            eventType: 'wait_completed' as const,
+            correlationId: waitEvent.correlationId,
+          }
+        : {
+            eventType: 'wait_completed' as const,
+            correlationId: waitEvent.correlationId,
+            specVersion: run.specVersion,
+          };
+      try {
+        await world.events.create(runId, eventData, { v1Compat: compatMode });
+        stoppedCount++;
+      } catch (err) {
+        errors.push(err instanceof Error ? err : new Error(String(err)));
       }
+    }
+
+    if (stoppedCount > 0) {
+      await world.queue(
+        getWorkflowQueueName(run.workflowName),
+        {
+          runId,
+        },
+        {
+          deploymentId: run.deploymentId,
+        }
+      );
+    }
+
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Failed to complete ${errors.length}/${pendingWaits.length} pending wait(s) for run ${runId}`
+      );
+    }
+
+    return { stoppedCount };
+  } catch (err) {
+    if (err instanceof AggregateError) {
+      throw err;
+    }
+    throw new Error(
+      `Failed to wake up run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
     );
   }
-
-  return { stoppedCount: pendingWaits.length };
 }
 
 /**
@@ -172,7 +227,14 @@ export async function readStream(
   streamId: string,
   options?: ReadStreamOptions
 ): Promise<ReadableStream<Uint8Array>> {
-  return world.readFromStream(streamId, options?.startIndex);
+  try {
+    return await world.readFromStream(streamId, options?.startIndex);
+  } catch (err) {
+    throw new Error(
+      `Failed to read stream ${streamId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
 }
 
 /**
@@ -182,5 +244,12 @@ export async function listStreams(
   world: World,
   runId: string
 ): Promise<string[]> {
-  return world.listStreamsByRunId(runId);
+  try {
+    return await world.listStreamsByRunId(runId);
+  } catch (err) {
+    throw new Error(
+      `Failed to list streams for run ${runId}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
 }

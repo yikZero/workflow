@@ -3,12 +3,25 @@
 import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
 import clsx from 'clsx';
 import { Send, Zap } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useTraceViewer } from '../trace-viewer';
 import { AttributePanel } from './attribute-panel';
 import { EventsList } from './events-list';
 import { ResolveHookModal } from './resolve-hook-modal';
+
+// Type guards for runtime validation of span attribute data
+function isStep(data: unknown): data is Step {
+  return data !== null && typeof data === 'object' && 'stepId' in data;
+}
+
+function isWorkflowRun(data: unknown): data is WorkflowRun {
+  return data !== null && typeof data === 'object' && 'runId' in data;
+}
+
+function isHook(data: unknown): data is Hook {
+  return data !== null && typeof data === 'object' && 'hookId' in data;
+}
 
 /**
  * Info about the currently selected span
@@ -61,24 +74,25 @@ export function EntityDetailPanel({
   const [showResolveHookModal, setShowResolveHookModal] = useState(false);
   const [resolvingHook, setResolvingHook] = useState(false);
 
-  const data = selected?.span.attributes?.data as
-    | Step
-    | WorkflowRun
-    | Hook
-    | Event;
+  const data = selected?.span.attributes?.data;
+
+  // Stable ref for onSpanSelect to avoid re-render loops when parent
+  // doesn't memoize the callback with useCallback.
+  const onSpanSelectRef = useRef(onSpanSelect);
+  useEffect(() => {
+    onSpanSelectRef.current = onSpanSelect;
+  });
 
   // Determine resource ID and runId (needed for steps)
+  // Uses type guards to validate the data shape matches the expected resource type
   const { resource, resourceId, runId } = useMemo(() => {
     const resource = selected?.span.attributes?.resource;
-    if (resource === 'step') {
-      const step = data as Step;
-      return { resource: 'step', resourceId: step.stepId, runId: step.runId };
-    } else if (resource === 'run') {
-      const run = data as WorkflowRun;
-      return { resource: 'run', resourceId: run.runId, runId: undefined };
-    } else if (resource === 'hook') {
-      const hook = data as Hook;
-      return { resource: 'hook', resourceId: hook.hookId, runId: undefined };
+    if (resource === 'step' && isStep(data)) {
+      return { resource: 'step', resourceId: data.stepId, runId: data.runId };
+    } else if (resource === 'run' && isWorkflowRun(data)) {
+      return { resource: 'run', resourceId: data.runId, runId: undefined };
+    } else if (resource === 'hook' && isHook(data)) {
+      return { resource: 'hook', resourceId: data.hookId, runId: undefined };
     } else if (resource === 'sleep') {
       return {
         resource: 'sleep',
@@ -96,13 +110,13 @@ export function EntityDetailPanel({
       resourceId &&
       ['run', 'step', 'hook', 'sleep'].includes(resource)
     ) {
-      onSpanSelect({
+      onSpanSelectRef.current({
         resource: resource as 'run' | 'step' | 'hook' | 'sleep',
         resourceId,
         runId,
       });
     }
-  }, [onSpanSelect, resource, resourceId, runId]);
+  }, [resource, resourceId, runId]);
 
   // Check if this sleep is still pending and can be woken up
   // Requirements: no wait_completed event, resumeAt is in the future, run is not terminal
@@ -157,8 +171,8 @@ export function EntityDetailPanel({
   // Get the hook token for resolving (prefer fetched data when available)
   const hookToken = useMemo(() => {
     if (resource !== 'hook') return undefined;
-    const hook = (spanDetailData ?? data) as Hook | undefined;
-    return hook?.token;
+    const candidate = spanDetailData ?? data;
+    return isHook(candidate) ? candidate.token : undefined;
   }, [resource, spanDetailData, data]);
 
   useEffect(() => {
@@ -221,7 +235,8 @@ export function EntityDetailPanel({
 
       try {
         setResolvingHook(true);
-        const hook = (spanDetailData ?? data) as Hook | undefined;
+        const candidate = spanDetailData ?? data;
+        const hook = isHook(candidate) ? candidate : undefined;
         await onResolveHook(hookToken, payload, hook);
         toast.success('Hook resolved', {
           description: 'The payload has been sent and the hook resolved.',
