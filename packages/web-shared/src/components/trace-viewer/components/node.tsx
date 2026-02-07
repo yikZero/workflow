@@ -15,6 +15,12 @@ import type {
 } from '../types';
 import { MARKER_HEIGHT, ROW_HEIGHT, ROW_PADDING } from '../util/constants';
 import { formatDuration } from '../util/timing';
+import { SpanContent } from './span-content';
+import {
+  type SpanLayout,
+  getResourceType,
+  getSpanLayout,
+} from './span-strategies';
 
 const isSpanSmall = (node: VisibleSpan, scale: number): boolean =>
   node.duration * scale < 64;
@@ -40,14 +46,6 @@ export const getSpanClassName = (node: VisibleSpan, scale: number): string => {
     node.isHighlighted ? styles.colorHighlight : getSpanColorClassName(node),
     node.isHighlighted === false && styles.unlit
   );
-};
-
-const getDuration = (node: SpanNode): string => {
-  if (node.isInstrumentationHint) {
-    return 'Get Started';
-  }
-
-  return formatDuration(node.duration);
 };
 
 export const SpanNodes = memo(function SpanNodes({
@@ -82,6 +80,40 @@ export const SpanNodes = memo(function SpanNodes({
   ));
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// Compute inline styles from a SpanLayout
+// ──────────────────────────────────────────────────────────────────────────
+
+function getSpanStyle(
+  layout: SpanLayout,
+  node: VisibleSpan,
+  root: RootNode,
+  scale: number
+): CSSProperties {
+  return {
+    // Use actualWidth for CSS variable so hover expansion is accurate
+    '--span-width': `${Math.max(layout.actualWidth, 1)}px`,
+    minWidth: layout.isHovered ? layout.width : undefined,
+    width: layout.isHovered ? undefined : layout.width,
+    height: layout.height,
+    maxWidth:
+      layout.isHovered && !layout.isNearRightSide
+        ? (root.endTime - node.startTime) * scale
+        : undefined,
+    containIntrinsicWidth: layout.isHovered ? undefined : layout.width,
+    containIntrinsicHeight: layout.height,
+    left: layout.isNearRightSide ? undefined : layout.left,
+    right: layout.isNearRightSide
+      ? (root.endTime - node.endTime) * scale
+      : undefined,
+    top: layout.top,
+  } as CSSProperties;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SpanComponent
+// ──────────────────────────────────────────────────────────────────────────
+
 export const SpanComponent = memo(function SpanComponent({
   node,
   root,
@@ -102,34 +134,18 @@ export const SpanComponent = memo(function SpanComponent({
   node.ref = ref;
 
   const { span } = node;
-  const duration = getDuration(node);
+  const resourceType = getResourceType(node);
+  const layout = getSpanLayout(
+    resourceType,
+    node,
+    root,
+    scale,
+    scrollSnapshotRef
+  );
 
-  const left = (node.startTime - root.startTime) * scale;
-  let top = MARKER_HEIGHT + (ROW_HEIGHT + ROW_PADDING) * node.row;
-  const actualWidth = node.duration * scale;
-  // Enforce minimum width so very short spans are always visible
-  const MIN_SPAN_WIDTH = 4;
-  const width = Math.max(actualWidth, MIN_SPAN_WIDTH);
-  let height = ROW_HEIGHT;
-  const isHuge = isSpanHuge(node, scale);
-  // Check if span is small based on actual width, not minimum width
-  const isSmall = actualWidth < 64;
-  const isHovered = node.isHovered && !isHuge && node.isHighlighted !== false;
-  if (isSmall && !isHovered) {
-    height *= 0.4;
-    top += (ROW_HEIGHT - height) * 0.5;
-  }
-
-  let isNearRightSide = false;
-  if (isHovered) {
-    let { duration: visibleDuration, endTime: visibleEndTime } = root;
-    const snapshot = scrollSnapshotRef.current;
-    if (snapshot) {
-      visibleDuration = snapshot.endTime - snapshot.startTime;
-      visibleEndTime = snapshot.endTime;
-    }
-    isNearRightSide = visibleEndTime - node.startTime < 0.25 * visibleDuration;
-  }
+  const duration = node.isInstrumentationHint
+    ? 'Get Started'
+    : formatDuration(node.duration);
 
   // Get custom class name from callback if provided
   const customClassName = customSpanClassNameFunc
@@ -143,41 +159,14 @@ export const SpanComponent = memo(function SpanComponent({
         className={clsx(getSpanClassName(node, scale), customClassName)}
         data-span-id={span.spanId}
         data-start-time={node.startTime - root.startTime}
-        data-right-side={isNearRightSide}
+        data-right-side={layout.isNearRightSide}
         ref={ref}
-        style={
-          {
-            // Use actualWidth for CSS variable so hover expansion is accurate
-            '--span-width': `${Math.max(actualWidth, 1)}px`,
-            minWidth: isHovered ? width : undefined,
-            width: isHovered ? undefined : width,
-            height,
-            maxWidth:
-              isHovered && !isNearRightSide
-                ? (root.endTime - node.startTime) * scale
-                : undefined,
-            containIntrinsicWidth: isHovered ? undefined : width,
-            containIntrinsicHeight: height,
-            left: isNearRightSide ? undefined : left,
-            right: isNearRightSide
-              ? (root.endTime - node.endTime) * scale
-              : undefined,
-            top,
-          } as CSSProperties
-        }
+        style={getSpanStyle(layout, node, root, scale)}
         type="button"
       >
-        {isSmall && !isHovered ? null : (
-          <>
-            <span className={styles.spanName}>{node.label || span.name}</span>
-            {isHuge ? <span className={styles.spanSpacer} /> : null}
-            {isHovered || width > 128 ? (
-              <span className={styles.spanDuration}>{duration}</span>
-            ) : null}
-          </>
-        )}
+        <SpanContent resourceType={resourceType} node={node} layout={layout} />
       </button>
-      {node.events && !isSmall
+      {node.events && !layout.isSmall
         ? node.events.map((x) => (
             <SpanEventComponent
               customSpanEventClassNameFunc={customSpanEventClassNameFunc}
@@ -192,6 +181,10 @@ export const SpanComponent = memo(function SpanComponent({
     </>
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// SpanEventComponent
+// ──────────────────────────────────────────────────────────────────────────
 
 export const SpanEventComponent = memo(function SpanEventComponent({
   event,
