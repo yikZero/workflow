@@ -41,7 +41,6 @@ export const getSpanClassName = (node: VisibleSpan, scale: number): string => {
     styles.spanNode,
     isHuge && styles.huge,
     isSpanSmall(node, scale) && styles.small,
-    node.isSelected && styles.selected,
     isHovered && styles.xHover,
     node.isHighlighted ? styles.colorHighlight : getSpanColorClassName(node),
     node.isHighlighted === false && styles.unlit
@@ -168,6 +167,7 @@ export const SpanComponent = memo(function SpanComponent({
         data-span-id={span.spanId}
         data-start-time={node.startTime - root.startTime}
         data-right-side={layout.isNearRightSide}
+        {...(node.isSelected ? { 'data-selected': '' } : {})}
         ref={ref}
         style={getSpanStyle(layout, node, root, scale)}
         type="button"

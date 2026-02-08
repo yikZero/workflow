@@ -63,7 +63,6 @@ import { useStreamReader } from '@/lib/hooks/use-stream-reader';
 import { useServerConfig } from '@/lib/world-config-context';
 
 import { CopyableText } from './display-utils/copyable-text';
-import { LiveStatus } from './display-utils/live-status';
 import { RelativeTime } from './display-utils/relative-time';
 import { StatusBadge } from './display-utils/status-badge';
 import { WorkflowGraphExecutionViewer } from './flow-graph/workflow-graph-execution-viewer';
@@ -394,11 +393,6 @@ export function RunDetailView({
 
   const workflowName = parseWorkflowName(run.workflowName)?.shortName;
 
-  // At this point, we've already returned if there was an error
-  // So hasError is always false here
-  const hasError = false;
-  const errorMessage = '';
-
   return (
     <>
       {/* Cancel Confirmation Dialog */}
@@ -444,7 +438,7 @@ export function RunDetailView({
       </AlertDialog>
 
       <div className="flex flex-col h-[calc(100vh-97px)]">
-        <div className="flex-none space-y-4">
+        <div className="flex-none space-y-2">
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -453,6 +447,16 @@ export function RunDetailView({
                 </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
+              {workflowName && (
+                <>
+                  <BreadcrumbItem>
+                    <BreadcrumbPage className="text-sm font-medium">
+                      {workflowName}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator />
+                </>
+              )}
               <BreadcrumbItem>
                 <BreadcrumbPage className="font-mono text-xs">
                   {runId}
@@ -461,179 +465,158 @@ export function RunDetailView({
             </BreadcrumbList>
           </Breadcrumb>
 
-          {/* Run Overview Header */}
-          <div className="space-y-4 p-6 border rounded-lg">
-            {/* Title Row */}
-            <div className="flex items-start justify-between">
-              <div className="mb-4">
-                <h1 className="text-xl font-semibold">
-                  {workflowName ? (
-                    workflowName
-                  ) : (
-                    <Skeleton className="w-[260px] h-[28px]" />
-                  )}
-                </h1>
-              </div>
+          {/* Compact Run Info Bar */}
+          <div className="flex items-center gap-4 px-3 py-2 text-xs">
+            {/* Status */}
+            {run.status ? (
+              <StatusBadge status={run.status} context={run} />
+            ) : (
+              <Skeleton className="w-[55px] h-[16px]" />
+            )}
 
-              <div className="flex items-center justify-between gap-2">
-                {/* Right side controls */}
-                <LiveStatus hasError={hasError} errorMessage={errorMessage} />
-                <RunActionsButtons
-                  env={env}
-                  runId={runId}
-                  runStatus={run.status}
-                  events={allEvents}
-                  eventsLoading={auxiliaryDataLoading}
-                  loading={loading}
-                  onRerunClick={handleRerunClick}
-                  onCancelClick={handleCancelClick}
-                  callbacks={{ onSuccess: update }}
-                />
-              </div>
-            </div>
+            <span className="text-border">|</span>
 
-            {/* Status and Timeline Row */}
-            <div className="flex items-start gap-8">
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Status</div>
-                {run.status ? (
-                  <StatusBadge status={run.status} context={run} />
+            {/* Duration */}
+            <span className="text-muted-foreground">
+              {run.runId ? (
+                run.startedAt ? (
+                  (() => {
+                    const ms =
+                      (run.completedAt
+                        ? new Date(run.completedAt).getTime()
+                        : Date.now()) - new Date(run.startedAt).getTime();
+                    const seconds = Math.floor(ms / 1000);
+                    if (seconds < 60) return `${seconds}s`;
+                    const minutes = Math.floor(seconds / 60);
+                    const remainingSeconds = seconds % 60;
+                    if (minutes < 60) {
+                      return remainingSeconds > 0
+                        ? `${minutes}m ${remainingSeconds}s`
+                        : `${minutes}m`;
+                    }
+                    const hours = Math.floor(minutes / 60);
+                    const remainingMinutes = minutes % 60;
+                    return remainingMinutes > 0
+                      ? `${hours}h ${remainingMinutes}m`
+                      : `${hours}h`;
+                  })()
                 ) : (
-                  <Skeleton className="w-[55px] h-[24px]" />
-                )}
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Duration</div>
-                <div className="text-xs">
-                  {run.runId ? (
-                    run.startedAt ? (
-                      (() => {
-                        const ms =
-                          (run.completedAt
-                            ? new Date(run.completedAt).getTime()
-                            : Date.now()) - new Date(run.startedAt).getTime();
-                        const seconds = Math.floor(ms / 1000);
-                        if (seconds < 60) return `${seconds}s`;
-                        const minutes = Math.floor(seconds / 60);
-                        const remainingSeconds = seconds % 60;
-                        if (minutes < 60) {
-                          return remainingSeconds > 0
-                            ? `${minutes}m ${remainingSeconds}s`
-                            : `${minutes}m`;
-                        }
-                        const hours = Math.floor(minutes / 60);
-                        const remainingMinutes = minutes % 60;
-                        return remainingMinutes > 0
-                          ? `${hours}h ${remainingMinutes}m`
-                          : `${hours}h`;
-                      })()
-                    ) : (
-                      '-'
-                    )
-                  ) : (
-                    <Skeleton className="w-[60px] h-[20px]" />
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Run ID</div>
-                {run.runId ? (
-                  <CopyableText text={run.runId}>
-                    <div className="text-xs mt-0.5 font-mono">{run.runId}</div>
-                  </CopyableText>
-                ) : (
-                  <Skeleton className="w-[280px] h-[20px]" />
-                )}
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Queued</div>
+                  '-'
+                )
+              ) : (
+                <Skeleton className="w-[40px] h-[16px] inline-block" />
+              )}
+            </span>
+
+            <span className="text-border">|</span>
+
+            {/* Run ID */}
+            {run.runId ? (
+              <CopyableText text={run.runId}>
+                <span className="font-mono text-muted-foreground">
+                  {run.runId}
+                </span>
+              </CopyableText>
+            ) : (
+              <Skeleton className="w-[220px] h-[16px]" />
+            )}
+
+            <span className="text-border">|</span>
+
+            {/* Timestamps */}
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="text-muted-foreground/60">Queued</span>
                 {run.createdAt ? (
-                  <div className="text-xs">
-                    <RelativeTime date={run.createdAt} />
-                  </div>
+                  <RelativeTime date={run.createdAt} />
                 ) : (
-                  <Skeleton className="w-[110px] h-[20px]" />
+                  <Skeleton className="w-[80px] h-[16px] inline-block" />
                 )}
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Started</div>
-                <div className="text-xs">
-                  {run.runId ? (
-                    run.startedAt ? (
-                      <RelativeTime date={run.startedAt} />
-                    ) : (
-                      '-'
-                    )
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="text-muted-foreground/60">Started</span>
+                {run.runId ? (
+                  run.startedAt ? (
+                    <RelativeTime date={run.startedAt} />
                   ) : (
-                    <Skeleton className="w-[110px] h-[20px]" />
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="text-xs text-muted-foreground">Completed</div>
-                <div className="text-xs">
-                  {run.runId ? (
-                    run.completedAt ? (
-                      <RelativeTime date={run.completedAt} />
-                    ) : (
-                      '-'
-                    )
+                    '-'
+                  )
+                ) : (
+                  <Skeleton className="w-[80px] h-[16px] inline-block" />
+                )}
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="text-muted-foreground/60">Completed</span>
+                {run.runId ? (
+                  run.completedAt ? (
+                    <RelativeTime date={run.completedAt} />
                   ) : (
-                    <Skeleton className="w-[110px] h-[20px]" />
-                  )}
-                </div>
-              </div>
+                    '-'
+                  )
+                ) : (
+                  <Skeleton className="w-[80px] h-[16px] inline-block" />
+                )}
+              </span>
               {run.expiredAt != null && (
-                <div className="flex flex-col gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-xs text-muted-foreground cursor-help flex items-center gap-1">
-                        Expired
-                        <HelpCircle className="w-3 h-3" />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>
-                        The storage data for this run has expired and is no
-                        longer available.
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <div className="text-xs">
-                    <RelativeTime date={run.expiredAt} />
-                  </div>
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="flex items-center gap-1 cursor-help">
+                      <span className="text-muted-foreground/60">Expired</span>
+                      <RelativeTime date={run.expiredAt} />
+                      <HelpCircle className="w-3 h-3" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>
+                      The storage data for this run has expired and is no longer
+                      available.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
           </div>
         </div>
 
-        <div className="mt-4 flex-1 flex flex-col min-h-0">
+        <div className="mt-2 flex-1 flex flex-col min-h-0">
           <Tabs
             value={activeTab}
             onValueChange={(v) => setActiveTab(v as Tab)}
             className="flex-1 flex flex-col min-h-0"
           >
-            <TabsList className="mb-4 flex-none">
-              <TabsTrigger value="trace" className="gap-2">
-                <List className="h-4 w-4" />
-                Trace
-              </TabsTrigger>
-              <TabsTrigger value="events" className="gap-2">
-                <List className="h-4 w-4" />
-                Events
-              </TabsTrigger>
-              {isLocalBackend && (
-                <TabsTrigger value="graph" className="gap-2">
-                  <GitBranch className="h-4 w-4" />
-                  Graph
+            <div className="flex items-center justify-between mb-2 flex-none">
+              <TabsList>
+                <TabsTrigger value="trace" className="gap-2">
+                  <List className="h-4 w-4" />
+                  Trace
                 </TabsTrigger>
-              )}
-              <TabsTrigger value="streams" className="gap-2">
-                <List className="h-4 w-4" />
-                Streams
-              </TabsTrigger>
-            </TabsList>
+                <TabsTrigger value="events" className="gap-2">
+                  <List className="h-4 w-4" />
+                  Events
+                </TabsTrigger>
+                {isLocalBackend && (
+                  <TabsTrigger value="graph" className="gap-2">
+                    <GitBranch className="h-4 w-4" />
+                    Graph
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="streams" className="gap-2">
+                  <List className="h-4 w-4" />
+                  Streams
+                </TabsTrigger>
+              </TabsList>
+              <RunActionsButtons
+                env={env}
+                runId={runId}
+                runStatus={run.status}
+                events={allEvents}
+                eventsLoading={auxiliaryDataLoading}
+                loading={loading}
+                onRerunClick={handleRerunClick}
+                onCancelClick={handleCancelClick}
+                callbacks={{ onSuccess: update }}
+              />
+            </div>
 
             <TabsContent value="trace" className="mt-0 flex-1 min-h-0">
               <ErrorBoundary title="Failed to load trace viewer">

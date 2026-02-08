@@ -63,7 +63,7 @@
     top: -7px;
   }
 
-  &:hover:not(.selected) {
+  &:hover:not([data-selected]) {
     filter: brightness(0.95);
   }
 
@@ -103,7 +103,7 @@
     border-radius: 4px;
   }
 
-  &.selected {
+  &[data-selected] {
     border-width: 2px;
     outline: 2px solid var(--span-border);
     outline-offset: -1px;
@@ -271,11 +271,11 @@
     }
   }
 
-  & .spanNode:hover:not(.selected) {
+  & .spanNode:hover:not([data-selected]) {
     filter: brightness(1.05);
   }
 
-  & .spanNode.selected:hover {
+  & .spanNode[data-selected]:hover {
     filter: brightness(1.05);
   }
 }
@@ -295,11 +295,11 @@
       }
     }
 
-    & .spanNode:hover:not(.selected) {
+    & .spanNode:hover:not([data-selected]) {
       filter: brightness(1.05);
     }
 
-    & .spanNode.selected:hover {
+    & .spanNode[data-selected]:hover {
       filter: brightness(1.05);
     }
   }
