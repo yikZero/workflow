@@ -7,7 +7,7 @@ import type {
   MutableRefObject,
   ReactNode,
 } from 'react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { type TraceViewerAction, useTraceViewer } from '../context';
 import styles from '../trace-viewer.module.css';
 import type {
@@ -33,10 +33,33 @@ import { useTrackpadZoom } from '../util/use-trackpad-zoom';
 
 const DIVISORS = [1, 2, 4, 5, 8, 10];
 
-export function Markers({ scale }: { scale: number }): ReactNode {
+export function Markers({
+  scale,
+  isLive = false,
+}: {
+  scale: number;
+  isLive?: boolean;
+}): ReactNode {
   const {
     state: { root },
   } = useTraceViewer();
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isLive) return;
+
+    let rafId = 0;
+    let lastUpdate = 0;
+    const tick = (now: number): void => {
+      if (now - lastUpdate >= 100) {
+        lastUpdate = now;
+        setTick((value) => value + 1);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isLive]);
 
   const fullDuration = root.duration;
   const logFull = Math.floor(Math.log10(fullDuration));

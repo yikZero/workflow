@@ -118,6 +118,7 @@ export const SpanComponent = memo(function SpanComponent({
   root,
   scale,
   scrollSnapshotRef,
+  cacheKey,
   customSpanClassNameFunc,
   customSpanEventClassNameFunc,
 }: {
@@ -155,6 +156,15 @@ export const SpanComponent = memo(function SpanComponent({
   // Generic OTEL spans use diamond event markers
   const isWorkflowSpan = resourceType !== 'default';
 
+  // Determine if this span is still active (live) for CSS transition animation
+  const data = span.attributes?.data as Record<string, unknown> | undefined;
+  const isLive =
+    isWorkflowSpan && data
+      ? resourceType === 'hook'
+        ? !data.disposedAt
+        : !data.completedAt
+      : false;
+
   return (
     <>
       <button
@@ -167,7 +177,9 @@ export const SpanComponent = memo(function SpanComponent({
         data-span-id={span.spanId}
         data-start-time={node.startTime - root.startTime}
         data-right-side={layout.isNearRightSide}
+        data-cache-key={cacheKey ? '1' : undefined}
         {...(node.isSelected ? { 'data-selected': '' } : {})}
+        {...(isLive ? { 'data-live': '' } : {})}
         ref={ref}
         style={getSpanStyle(layout, node, root, scale)}
         type="button"

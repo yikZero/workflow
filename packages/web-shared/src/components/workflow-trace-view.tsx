@@ -31,7 +31,104 @@ import {
 } from './workflow-traces/trace-span-construction';
 import { otelTimeToMs } from './workflow-traces/trace-time-utils';
 
-const RE_RENDER_INTERVAL_MS = 2000;
+/**
+ * rAF-driven live tick that imperatively grows active span widths at 60fps.
+ * Queries [data-live] elements, computes width from wall clock, and also
+ * extends the scrollable area so growing spans remain visible.
+ */
+function useLiveTick(isLive: boolean): void {
+  const { state } = useTraceViewer();
+  // Always hold the latest state so every frame reads fresh values
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useEffect(() => {
+    if (!isLive) return;
+
+    let rafId = 0;
+
+    const tick = (): void => {
+      const { root, spanMap, timelineRef, scale } = stateRef.current;
+      const $timeline = timelineRef.current;
+
+      if (scale <= 0 || !root.startTime || !$timeline) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
+      const nowMs = Date.now();
+
+      // Find all active span elements and grow their widths
+      const $liveSpans = $timeline.querySelectorAll<HTMLElement>('[data-live]');
+      for (const $el of $liveSpans) {
+        const spanId = $el.dataset.spanId;
+        if (!spanId) continue;
+
+        const spanNode = spanMap[spanId];
+        if (!spanNode) continue;
+
+        // Check if the span has since completed (data updated in-place by
+        // structural comparison). If so, remove data-live and set final width.
+        const data = spanNode.span.attributes?.data as
+          | Record<string, unknown>
+          | undefined;
+        const resource = spanNode.span.attributes?.resource;
+        const isActive =
+          resource === 'run' || resource === 'step' || resource === 'sleep'
+            ? !data?.completedAt
+            : resource === 'hook'
+              ? !data?.disposedAt
+              : false;
+
+        if (!isActive) {
+          $el.removeAttribute('data-live');
+          const finalWidth = Math.max(spanNode.duration * scale, 2);
+          $el.style.width = `${finalWidth}px`;
+          $el.style.setProperty('--span-width', `${finalWidth}px`);
+          continue;
+        }
+
+        // Compute width from wall clock — no data mutation, no React re-render
+        const currentDuration = nowMs - spanNode.startTime;
+        const width = Math.max(currentDuration * scale, 2);
+
+        $el.style.width = `${width}px`;
+        $el.style.setProperty('--span-width', `${width}px`);
+      }
+
+      // Extend the scrollable area if the run has grown past the root's endTime
+      if (nowMs > root.endTime) {
+        root.endTime = nowMs;
+        root.duration = root.endTime - root.startTime;
+
+        const scrollWidth = Math.round(root.duration * scale);
+
+        // Update the traceNode width (timeline > inner wrapper > traceNode)
+        const $traceNode = $timeline.firstElementChild
+          ?.firstElementChild as HTMLElement | null;
+        if ($traceNode) {
+          $traceNode.style.width = `${scrollWidth}px`;
+        }
+
+        // Update the --timeline-scroll-width on the traceViewer container
+        // (traceViewer > traceViewerContent > timeline)
+        const $traceViewer = $timeline.parentElement
+          ?.parentElement as HTMLElement | null;
+        if ($traceViewer) {
+          $traceViewer.style.setProperty(
+            '--timeline-scroll-width',
+            `${scrollWidth}px`
+          );
+        }
+      }
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isLive]);
+}
 
 type GroupedEvents = {
   eventsByStepId: Map<string, Event[]>;
@@ -314,12 +411,14 @@ function SpanContextMenu({
 function TraceViewerWithContextMenu({
   trace,
   run,
+  isLive,
   onWakeUpSleep,
   onCancelRun,
   children,
 }: {
   trace: { spans: Span[] };
   run: WorkflowRun;
+  isLive: boolean;
   onWakeUpSleep?: (
     runId: string,
     correlationId: string
@@ -328,6 +427,9 @@ function TraceViewerWithContextMenu({
   children: ReactNode;
 }): ReactNode {
   const { dispatch } = useTraceViewer();
+
+  // Drive active span widths at 60fps without React re-renders
+  useLiveTick(isLive);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   // Build a lookup map: spanId → span
@@ -520,24 +622,17 @@ export const WorkflowTraceViewer = ({
   /** Callback when a span is selected. */
   onSpanSelect?: (info: SpanSelectionInfo) => void;
 }) => {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    if (!run?.completedAt) {
-      const interval = setInterval(() => {
-        setNow(new Date());
-      }, RE_RENDER_INTERVAL_MS);
-      return () => clearInterval(interval);
-    }
-    return undefined;
-  }, [run?.completedAt]);
-
+  // Build trace only when actual data changes — no timer-driven rebuilds.
+  // Active span widths are animated imperatively by useLiveTick at 60fps.
   const trace = useMemo(() => {
     if (!run) {
       return undefined;
     }
-    return buildTrace(run, steps, hooks, events, now);
-  }, [run, steps, hooks, events, now]);
+    return buildTrace(run, steps, hooks, events, new Date());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `new Date()` is intentionally not a dep; useLiveTick handles live growth
+  }, [run, steps, hooks, events]);
+
+  const isLive = Boolean(run && !run.completedAt);
 
   useEffect(() => {
     if (error && !isLoading) {
@@ -600,10 +695,17 @@ export const WorkflowTraceViewer = ({
         <TraceViewerWithContextMenu
           trace={trace}
           run={run}
+          isLive={isLive}
           onWakeUpSleep={onWakeUpSleep}
           onCancelRun={onCancelRun}
         >
-          <TraceViewerTimeline height="100%" trace={trace} withPanel />
+          <TraceViewerTimeline
+            eagerRender
+            height="100%"
+            isLive={isLive}
+            trace={trace}
+            withPanel
+          />
         </TraceViewerWithContextMenu>
       </TraceViewerContextProvider>
     </div>

@@ -101,7 +101,7 @@ function sortedEvents(events: SpanNodeEvent[]): SpanNodeEvent[] {
  *
  * Timeline: [queued] → [attempt₁ (fail)] → [retry wait] → [attempt₂ (fail)] → ... → [attemptₙ (success)]
  *
- * Events used: step_started, step_retrying, step_failed
+ * Events used: step_started, step_retrying, step_failed, step_completed
  * The final segment is 'succeeded' if no trailing step_retrying/step_failed.
  */
 function computeStepSegments(node: SpanNode): Segment[] {
@@ -118,7 +118,12 @@ function computeStepSegments(node: SpanNode): Segment[] {
   }
   const marks: EventMark[] = events
     .filter((e) =>
-      ['step_started', 'step_retrying', 'step_failed'].includes(e.event.name)
+      [
+        'step_started',
+        'step_retrying',
+        'step_failed',
+        'step_completed',
+      ].includes(e.event.name)
     )
     .map((e) => ({ time: e.timestamp, type: e.event.name }));
 
@@ -165,7 +170,9 @@ function computeStepSegments(node: SpanNode): Segment[] {
         const attemptStatus: SegmentStatus =
           nextType === 'step_retrying' || nextType === 'step_failed'
             ? 'failed'
-            : 'running';
+            : nextType === 'step_completed'
+              ? 'succeeded'
+              : 'running';
         segments.push({
           startFraction: markFraction,
           endFraction: nextFraction,
@@ -188,6 +195,9 @@ function computeStepSegments(node: SpanNode): Segment[] {
           status: 'failed',
         });
       }
+    } else if (mark.type === 'step_completed') {
+      // Terminal success: do nothing here since the preceding step_started
+      // segment already terminates at this marker.
     }
   }
 
@@ -332,6 +342,7 @@ function computeRunSegments(node: SpanNode): Segment[] {
   if (duration <= 0) return segments;
 
   const failedEvent = events.find((e) => e.event.name === 'run_failed');
+  const completedEvent = events.find((e) => e.event.name === 'run_completed');
 
   // Queued period (from span start to activeStartTime)
   let cursor = 0;
@@ -365,6 +376,24 @@ function computeRunSegments(node: SpanNode): Segment[] {
       startFraction: failedFraction,
       endFraction: 1,
       status: 'failed',
+    });
+  } else if (completedEvent) {
+    const completedFraction = timeToFraction(
+      completedEvent.timestamp,
+      startTime,
+      duration
+    );
+    if (completedFraction > cursor + 0.001) {
+      segments.push({
+        startFraction: cursor,
+        endFraction: completedFraction,
+        status: 'running',
+      });
+    }
+    segments.push({
+      startFraction: completedFraction,
+      endFraction: 1,
+      status: 'succeeded',
     });
   } else {
     // Running to completion

@@ -215,6 +215,13 @@ export type TraceViewerAction =
     }
   | {
       type: 'forceRender';
+    }
+  | {
+      /** Like setRoot but preserves scroll position and memo cache (for incremental data updates) */
+      type: 'updateRoot';
+      root: RootNode;
+      spanMap: Record<string, SpanNode>;
+      resources: Resource[];
     };
 
 export interface TraceViewerContextProps {
@@ -561,6 +568,23 @@ const reducer: Reducer<TraceViewerState, TraceViewerAction> = (
       return {
         ...state,
       };
+    case 'updateRoot':
+      // Incremental update: preserve scroll snapshot and only invalidate
+      // memo cache for spans whose data may have changed
+      state.memoCacheRef.current.set('', {});
+      return reducer(
+        {
+          ...state,
+          root: action.root,
+          spanMap: action.spanMap,
+          resourceMap: Object.fromEntries(
+            action.resources.map(({ name, attributes }) => [name, attributes])
+          ),
+        },
+        {
+          type: 'detectBaseScale',
+        }
+      );
   }
 };
 

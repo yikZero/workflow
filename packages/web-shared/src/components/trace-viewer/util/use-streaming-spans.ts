@@ -30,7 +30,8 @@ function emptyArrayInit<T>(): T[] {
 }
 
 export const useStreamingSpans = (
-  highlightedSpans?: string[]
+  highlightedSpans?: string[],
+  eagerRender = false
 ): {
   rows: VisibleSpan[][];
   spans: VisibleSpan[];
@@ -164,6 +165,24 @@ export const useStreamingSpans = (
 
   useEffect(() => {
     if (!rows.length) return;
+
+    if (eagerRender) {
+      const visible: VisibleSpan[] = [];
+      const events: VisibleSpanEvent[] = [];
+      for (const row of rows) {
+        for (const span of row) {
+          if (!adjustSpanVisibility(span, scale)) continue;
+          visible.push(span);
+          if (span.events) {
+            events.push(...span.events);
+          }
+        }
+      }
+      setVisibleSpans(visible);
+      setVisibleEvents(events);
+      setResultScale(scale);
+      return;
+    }
 
     const $timeline = timelineRef.current;
     let snapshot = scrollSnapshotRef.current;
@@ -339,6 +358,7 @@ export const useStreamingSpans = (
     timelineRef,
     timelineWidth,
     timelineHeight,
+    eagerRender,
   ]);
 
   useEffect(() => {
