@@ -5,7 +5,7 @@ import type { Event, Step, WorkflowRun } from '@workflow/world';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, Copy, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deserializeByteObjects, formatDuration } from '../lib/utils';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -268,8 +268,10 @@ function TreeGutter({
 
   // Root line never dims
   const rootColor = ROOT_LINE_COLOR;
-  const laneColor = (laneIdx: number): string =>
-    hasSelection && laneIdx !== selectedLane ? LINE_COLOR_DIM : LINE_COLOR;
+  const laneColor = (laneIdx: number): string => {
+    if (!hasSelection) return LINE_COLOR;
+    return laneIdx === selectedLane ? ROOT_LINE_COLOR : LINE_COLOR_DIM;
+  };
   const thisLaneColor = node.lane >= 0 ? laneColor(node.lane) : LINE_COLOR;
 
   return (
@@ -305,7 +307,7 @@ function TreeGutter({
                 transform: 'translateY(-50%)',
                 width: 8,
                 height: 8,
-                zIndex: 1,
+                zIndex: 2,
               }}
             >
               {pulse && (
@@ -330,6 +332,7 @@ function TreeGutter({
                 height: 2,
                 backgroundColor: thisLaneColor,
                 transition: 'background-color 150ms',
+                zIndex: hasSelection && node.lane === selectedLane ? 1 : 0,
               }}
             />
           )}
@@ -345,6 +348,7 @@ function TreeGutter({
                 height: 2,
                 backgroundColor: thisLaneColor,
                 transition: 'background-color 150ms',
+                zIndex: hasSelection && node.lane === selectedLane ? 1 : 0,
               }}
             />
           )}
@@ -359,7 +363,9 @@ function TreeGutter({
                 transform: 'translateY(-50%)',
                 width: 6,
                 height: 6,
-                zIndex: 1,
+                zIndex: 2,
+                opacity: hasSelection && node.lane !== selectedLane ? 0.3 : 1,
+                transition: 'opacity 150ms',
               }}
             >
               {pulse && (
@@ -400,6 +406,7 @@ function TreeGutter({
             }
           }
 
+          const isSelected = hasSelection && laneIdx === selectedLane;
           return (
             <div
               key={laneIdx}
@@ -411,6 +418,7 @@ function TreeGutter({
                 width: 2,
                 backgroundColor: laneColor(laneIdx),
                 transition: 'background-color 150ms',
+                zIndex: isSelected ? 1 : 0,
               }}
             />
           );
@@ -469,6 +477,89 @@ function CopyableCell({
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Payload block — formats JSON cleanly with a copy button
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Recursively parse stringified JSON values so escaped slashes / quotes are cleaned up */
+function deepParseJson(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+      (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    ) {
+      try {
+        return deepParseJson(JSON.parse(trimmed));
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(deepParseJson);
+  }
+  if (value !== null && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      result[k] = deepParseJson(v);
+    }
+    return result;
+  }
+  return value;
+}
+
+function PayloadBlock({ data }: { data: unknown }): ReactNode {
+  const [copied, setCopied] = useState(false);
+
+  const formatted = useMemo(() => {
+    const cleaned = deepParseJson(deserializeByteObjects(data));
+    return JSON.stringify(cleaned, null, 2);
+  }, [data]);
+
+  const handleCopy = useCallback(
+    (e: ReactMouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(formatted).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    },
+    [formatted]
+  );
+
+  return (
+    <div className="relative group/payload">
+      <pre
+        className="text-[11px] overflow-x-auto p-2"
+        style={{ color: 'var(--ds-gray-1000)' }}
+      >
+        <code>{formatted}</code>
+      </pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="absolute bottom-2 right-2 opacity-0 group-hover/payload:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-[var(--ds-gray-alpha-200)]"
+        aria-label="Copy payload"
+      >
+        {copied ? (
+          <>
+            <Check className="h-3 w-3 text-green-500" />
+            <span className="text-green-500">Copied</span>
+          </>
+        ) : (
+          <>
+            <Copy className="h-3 w-3" />
+            <span>Copy</span>
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Event row
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -517,6 +608,13 @@ function EventRow({
   const [isLoading, setIsLoading] = useState(false);
   const [loadedEventData, setLoadedEventData] = useState<unknown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Collapse when a different lane gets selected
+  useEffect(() => {
+    if (selectedLane !== undefined && selectedLane !== node.lane) {
+      setIsExpanded(false);
+    }
+  }, [selectedLane, node.lane]);
 
   const statusDotClass = getStatusDotClass(event.eventType);
   const createdAt = new Date(event.createdAt);
@@ -598,6 +696,7 @@ function EventRow({
 
   return (
     <div
+      data-event-id={event.eventId}
       onMouseEnter={() => onHoverLane(node.lane)}
       onMouseLeave={() => onHoverLane(undefined)}
     >
@@ -744,22 +843,12 @@ function EventRow({
             )}
 
             {!isLoading && !loadError && eventData != null && (
-              <pre
-                className="text-[11px] overflow-x-auto p-2"
-                style={{ color: 'var(--ds-gray-1000)' }}
-              >
-                <code>
-                  {JSON.stringify(deserializeByteObjects(eventData), null, 2)}
-                </code>
-              </pre>
+              <PayloadBlock data={eventData} />
             )}
 
-            {!isLoading &&
-              !loadError &&
-              eventData == null &&
-              durationMs === undefined && (
-                <div className="p-2 text-xs text-muted-foreground">No data</div>
-              )}
+            {!isLoading && !loadError && eventData == null && (
+              <div className="p-2 text-xs text-muted-foreground">No data</div>
+            )}
           </div>
         </div>
       )}
@@ -822,6 +911,49 @@ export function EventListView({
   // Active lane: locked selection takes priority, otherwise hover.
   const activeLane = selectedLane ?? hoveredLane;
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Build a search index: only event ID and correlation ID
+  const searchIndex = useMemo(() => {
+    const entries: { text: string; lane: number; eventId: string }[] = [];
+    for (const node of treeNodes) {
+      const ev = node.event;
+      entries.push({
+        text: [ev.eventId, ev.correlationId ?? ''].join(' ').toLowerCase(),
+        lane: node.lane,
+        eventId: ev.eventId,
+      });
+    }
+    return entries;
+  }, [treeNodes]);
+
+  // When search query changes, find the first match, select its lane, and scroll to it.
+  useEffect(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) {
+      setSelectedLane(undefined);
+      return;
+    }
+    const match = searchIndex.find((entry) => entry.text.includes(q));
+    if (match) {
+      setSelectedLane(match.lane);
+      // Defer scroll to next frame so the DOM has updated after lane selection
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        if (container) {
+          const el = container.querySelector(
+            `[data-event-id="${CSS.escape(match.eventId)}"]`
+          );
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      });
+    }
+  }, [searchQuery, searchIndex]);
+
   if (!events || events.length === 0) {
     return (
       <div
@@ -834,10 +966,77 @@ export function EventListView({
   }
 
   return (
-    <div className="h-full overflow-auto">
+    <div className="h-full overflow-auto" ref={scrollContainerRef}>
+      {/* Search bar */}
+      <div className="sticky top-0 z-20 bg-background" style={{ padding: 6 }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 6,
+            boxShadow: '0 0 0 1px var(--ds-gray-alpha-400)',
+            background: 'var(--ds-background-100)',
+            height: 40,
+          }}
+        >
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--ds-gray-800)',
+              flexShrink: 0,
+            }}
+          >
+            <svg
+              width={16}
+              height={16}
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <circle
+                cx="7"
+                cy="7"
+                r="4.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M11.5 11.5L14 14"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+          <input
+            type="search"
+            placeholder="Search by event ID or correlation ID…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              marginLeft: -16,
+              paddingInline: 12,
+              fontFamily: 'inherit',
+              fontSize: 14,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              height: 40,
+              width: '100%',
+            }}
+          />
+        </label>
+      </div>
+
       {/* Header */}
       <div
-        className="flex items-center gap-0 text-sm font-medium text-muted-foreground sticky top-0 z-10 h-10 border-b bg-background"
+        className="flex items-center gap-0 text-sm font-medium text-muted-foreground sticky top-[52px] z-10 h-10 border-b bg-background"
         style={{
           borderColor: 'var(--ds-gray-alpha-200)',
         }}
