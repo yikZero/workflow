@@ -23,7 +23,11 @@ import {
   ROW_PADDING,
   TIMELINE_PADDING,
 } from '../util/constants';
-import { formatDurationForTimeline, formatTimeSelection } from '../util/timing';
+import {
+  formatDurationForTimeline,
+  formatTimeSelection,
+  formatWallClockTime,
+} from '../util/timing';
 import { useImmediateStyle } from '../util/use-immediate-style';
 import { useTrackpadZoom } from '../util/use-trackpad-zoom';
 
@@ -77,6 +81,9 @@ export function Markers({ scale }: { scale: number }): ReactNode {
               {hasLabel ? (
                 <span className={styles.markerLabel}>
                   {formatDurationForTimeline(markerDuration * i)}
+                  <span className={styles.markerClockTime}>
+                    {formatWallClockTime(root.startTime + markerDuration * i)}
+                  </span>
                 </span>
               ) : null}
             </span>
@@ -327,13 +334,20 @@ export function CursorMarker({
           cache.set(span.span.spanId, {});
         }
 
-        // Event Hover
+        // Event Hover — only show the nearest event when multiple overlap
         const eventSpreadPx = 12;
         const eventSpreadMs = eventSpreadPx / scale;
+        let closestEvent: (typeof eventsRef.current)[number] | null = null;
+        let closestDist = Infinity;
         for (const event of eventsRef.current) {
-          const isHovered =
-            t >= event.timestamp - eventSpreadMs &&
-            t <= event.timestamp + eventSpreadMs;
+          const dist = Math.abs(event.timestamp - t);
+          if (dist <= eventSpreadMs && dist < closestDist) {
+            closestDist = dist;
+            closestEvent = event;
+          }
+        }
+        for (const event of eventsRef.current) {
+          const isHovered = event === closestEvent;
           if (event.isHovered === isHovered) continue;
           event.isHovered = isHovered;
           const $event = event.ref?.current;

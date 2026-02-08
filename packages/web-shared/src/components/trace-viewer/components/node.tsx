@@ -152,11 +152,19 @@ export const SpanComponent = memo(function SpanComponent({
     ? customSpanClassNameFunc(node)
     : '';
 
+  // Workflow span types use colored segments + boundary line markers
+  // Generic OTEL spans use diamond event markers
+  const isWorkflowSpan = resourceType !== 'default';
+
   return (
     <>
       <button
         aria-label={`${span.name} - ${duration}`}
-        className={clsx(getSpanClassName(node, scale), customClassName)}
+        className={clsx(
+          getSpanClassName(node, scale),
+          customClassName,
+          isWorkflowSpan && styles.hasSegments
+        )}
         data-span-id={span.spanId}
         data-start-time={node.startTime - root.startTime}
         data-right-side={layout.isNearRightSide}
@@ -175,6 +183,7 @@ export const SpanComponent = memo(function SpanComponent({
               node={node}
               root={root}
               scale={scale}
+              asBoundary={isWorkflowSpan}
             />
           ))
         : null}
@@ -186,18 +195,36 @@ export const SpanComponent = memo(function SpanComponent({
 // SpanEventComponent
 // ──────────────────────────────────────────────────────────────────────────
 
+/** Human-readable labels for workflow event types */
+const BOUNDARY_LABELS: Record<string, string> = {
+  step_started: 'Started',
+  step_retrying: 'Retrying',
+  step_failed: 'Failed',
+  hook_created: 'Created',
+  hook_received: 'Received',
+  hook_disposed: 'Resolved',
+  wait_created: 'Sleep started',
+  wait_completed: 'Sleep completed',
+  run_started: 'Started',
+  run_completed: 'Completed',
+  run_failed: 'Run failed',
+  step_completed: 'Completed',
+};
+
 export const SpanEventComponent = memo(function SpanEventComponent({
   event,
   node,
   root,
   scale,
   customSpanEventClassNameFunc,
+  asBoundary = false,
 }: {
   event: VisibleSpanEvent;
   node: VisibleSpan;
   root: RootNode;
   scale: number;
   customSpanEventClassNameFunc?: (event: VisibleSpanEvent) => string;
+  asBoundary?: boolean;
 }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   event.ref = ref;
@@ -206,6 +233,48 @@ export const SpanEventComponent = memo(function SpanEventComponent({
     event: { name },
   } = event;
   const timestamp = formatDuration(event.timestamp - root.startTime);
+  const displayLabel = asBoundary ? (BOUNDARY_LABELS[name] ?? name) : name;
+
+  // For boundary events, compute the duration of the phase.
+  // "Forward" events (started, retrying) measure until the next event.
+  // "Terminal" events (completed) measure from the previous started event.
+  const isForwardEvent =
+    asBoundary &&
+    (name === 'step_started' ||
+      name === 'run_started' ||
+      name === 'step_retrying');
+  const isTerminalEvent =
+    asBoundary && (name === 'step_completed' || name === 'run_completed');
+
+  let phaseDuration: string | null = null;
+  let phaseLabel: string | null = null;
+  if ((isForwardEvent || isTerminalEvent) && node.events) {
+    const sortedNodeEvents = [...node.events].sort(
+      (a, b) => a.timestamp - b.timestamp
+    );
+    const currentIdx = sortedNodeEvents.findIndex((e) => e.key === event.key);
+
+    if (isTerminalEvent) {
+      // Look backward to find the last step_started
+      let prevStartTime: number | null = null;
+      for (let i = currentIdx - 1; i >= 0; i--) {
+        if (sortedNodeEvents[i].event.name === 'step_started') {
+          prevStartTime = sortedNodeEvents[i].timestamp;
+          break;
+        }
+      }
+      if (prevStartTime !== null) {
+        phaseDuration = formatDuration(event.timestamp - prevStartTime);
+        phaseLabel = 'Executed';
+      }
+    } else {
+      // Look forward to the next event
+      const nextEvent = sortedNodeEvents[currentIdx + 1];
+      const endTime = nextEvent ? nextEvent.timestamp : node.endTime;
+      phaseDuration = formatDuration(endTime - event.timestamp);
+      phaseLabel = name === 'step_retrying' ? 'Waited' : 'Executed';
+    }
+  }
 
   const left = (event.timestamp - root.startTime) * scale;
   const top = MARKER_HEIGHT + (ROW_HEIGHT + ROW_PADDING) * node.row;
@@ -217,10 +286,15 @@ export const SpanEventComponent = memo(function SpanEventComponent({
 
   return (
     <div
-      title={`${name} at ${timestamp}`}
+      title={
+        phaseDuration
+          ? `${displayLabel} ${timestamp}\n${phaseLabel} ${phaseDuration}`
+          : `${displayLabel} ${timestamp}`
+      }
       className={clsx(
         styles.spanNodeEvent,
         customClassName,
+        asBoundary && styles.boundaryMarker,
         node.isHighlighted
           ? styles.colorHighlight
           : getSpanColorClassName(node),
@@ -243,10 +317,29 @@ export const SpanEventComponent = memo(function SpanEventComponent({
             : styles.alignEnd
         )}
       >
-        <span className={styles.eventName}>{name}</span>
-        <span className={styles.eventTimestamp}>{timestamp}</span>
+        {asBoundary ? (
+          <>
+            <span className={styles.eventName}>{displayLabel}</span>
+            <span className={styles.eventTimestamp}>{timestamp}</span>
+            {phaseDuration ? (
+              <>
+                <span className={styles.eventName}>{phaseLabel}</span>
+                <span className={styles.eventTimestamp}>{phaseDuration}</span>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <span className={styles.eventName}>{name}</span>
+            <span className={styles.eventTimestamp}>{timestamp}</span>
+          </>
+        )}
       </div>
-      <div className={styles.eventDiamond} />
+      {asBoundary ? (
+        <div className={styles.boundaryLine} />
+      ) : (
+        <div className={styles.eventDiamond} />
+      )}
     </div>
   );
 });

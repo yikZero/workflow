@@ -4,7 +4,7 @@ import { analyzeEvents } from '@workflow/web-shared';
 import type { Event, WorkflowRunStatus } from '@workflow/world';
 import {
   AlarmClockOff,
-  MoreHorizontal,
+  ChevronDown,
   RotateCw,
   XCircle,
   Zap,
@@ -285,7 +285,7 @@ export function RunActionsDropdownItems({
         </TooltipContent>
       </Tooltip>
 
-      {/* Cancel Active Sleeps - disabled if no active sleeps */}
+      {/* Wake Up Sleeps - disabled if no active sleeps */}
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuItem
@@ -293,7 +293,7 @@ export function RunActionsDropdownItems({
             disabled={eventsLoading || !hasPendingSleeps || wakingUp}
           >
             <AlarmClockOff className="h-4 w-4 mr-2" />
-            {wakingUp ? 'Cancelling sleeps...' : 'Cancel Active Sleeps'}
+            {wakingUp ? 'Waking up...' : 'Wake Up Sleeps'}
           </DropdownMenuItem>
         </TooltipTrigger>
         <TooltipContent side="left" className="max-w-xs">
@@ -313,7 +313,7 @@ export function RunActionsDropdownItems({
 }
 
 // ============================================================================
-// Buttons (for run-detail-view)
+// Actions Dropdown (for run-detail-view)
 // ============================================================================
 
 export interface RunActionsButtonsProps extends RunActionsBaseProps {
@@ -336,137 +336,79 @@ export function RunActionsButtons({
   onRerunClick,
 }: RunActionsButtonsProps) {
   const {
+    rerunning,
     reenqueuing,
     wakingUp,
+    cancelling,
     hasPendingSleeps,
+    handleReplay,
     handleReenqueue,
     handleWakeUp,
+    handleCancel,
   } = useRunActions({ env, runId, runStatus, events, callbacks });
 
   const isRunActive = runStatus === 'pending' || runStatus === 'running';
-  const canCancel = isRunActive;
-
-  // Rerun button logic
-  const canRerun = !loading && !isRunActive;
-  const rerunDisabledReason = loading
-    ? 'Loading run data...'
-    : isRunActive
-      ? 'Cannot re-run while workflow is still running'
-      : '';
-
-  // Cancel button logic
-  const cancelDisabledReason =
-    runStatus === 'completed'
-      ? 'Run has already completed'
-      : runStatus === 'failed'
-        ? 'Run has already failed'
-        : runStatus === 'cancelled'
-          ? 'Run has already been cancelled'
-          : '';
 
   return (
-    <>
-      {/* Rerun Button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRerunClick}
-              disabled={!canRerun}
-            >
-              <RotateCw className="h-4 w-4" />
-              Replay
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          {rerunDisabledReason ? (
-            <p>{rerunDisabledReason}</p>
-          ) : (
-            <p>
-              This will start a new copy of the current run using the same
-              deployment, environment, and inputs. It will not affect the
-              current run.
-            </p>
-          )}
-        </TooltipContent>
-      </Tooltip>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm">
+          Actions
+          <ChevronDown className="h-3.5 w-3.5 ml-1" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={() => (onRerunClick ? onRerunClick() : handleReplay())}
+          disabled={loading || rerunning}
+        >
+          <RotateCw className="h-4 w-4 mr-2" />
+          {rerunning ? 'Replaying...' : 'Replay Run'}
+        </DropdownMenuItem>
 
-      {/* Cancel Button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onCancelClick}
-              disabled={!canCancel}
-            >
-              <XCircle className="h-4 w-4" />
-              Cancel
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          {cancelDisabledReason ? (
-            <p>{cancelDisabledReason}</p>
-          ) : (
-            <p>Cancel the workflow run</p>
-          )}
-        </TooltipContent>
-      </Tooltip>
-
-      {/* More Actions Menu */}
-      <DropdownMenu>
+        {/* Re-enqueue */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
+            <DropdownMenuItem
+              onClick={handleReenqueue}
+              disabled={loading || eventsLoading || reenqueuing}
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              {reenqueuing ? 'Re-enqueuing...' : 'Re-enqueue'}
+            </DropdownMenuItem>
           </TooltipTrigger>
-          <TooltipContent>More actions</TooltipContent>
+          <TooltipContent side="left" className="max-w-xs">
+            <ReenqueueTooltipContent />
+          </TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end">
-          {/* Re-enqueue - always shown */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuItem
-                onClick={handleReenqueue}
-                disabled={loading || eventsLoading || reenqueuing}
-              >
-                <Zap className="h-4 w-4 mr-2" />
-                {reenqueuing ? 'Re-enqueuing...' : 'Re-enqueue'}
-              </DropdownMenuItem>
-            </TooltipTrigger>
-            <TooltipContent side="left" className="max-w-xs">
-              <ReenqueueTooltipContent />
-            </TooltipContent>
-          </Tooltip>
 
-          {/* Cancel Active Sleeps - disabled if no active sleeps */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuItem
-                onClick={handleWakeUp}
-                disabled={
-                  loading || eventsLoading || !hasPendingSleeps || wakingUp
-                }
-              >
-                <AlarmClockOff className="h-4 w-4 mr-2" />
-                {wakingUp ? 'Cancelling sleeps...' : 'Cancel Active Sleeps'}
-              </DropdownMenuItem>
-            </TooltipTrigger>
-            <TooltipContent side="left" className="max-w-xs">
-              <CancelSleepsTooltipContent hasPendingSleeps={hasPendingSleeps} />
-            </TooltipContent>
-          </Tooltip>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
+        {/* Wake Up Sleeps */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuItem
+              onClick={handleWakeUp}
+              disabled={
+                loading || eventsLoading || !hasPendingSleeps || wakingUp
+              }
+            >
+              <AlarmClockOff className="h-4 w-4 mr-2" />
+              {wakingUp ? 'Waking up...' : 'Wake Up Sleeps'}
+            </DropdownMenuItem>
+          </TooltipTrigger>
+          <TooltipContent side="left" className="max-w-xs">
+            <CancelSleepsTooltipContent hasPendingSleeps={hasPendingSleeps} />
+          </TooltipContent>
+        </Tooltip>
+
+        <DropdownMenuItem
+          onClick={() => (onCancelClick ? onCancelClick() : handleCancel())}
+          disabled={!isRunActive || cancelling}
+        >
+          <XCircle className="h-4 w-4 mr-2" />
+          {cancelling ? 'Cancelling...' : 'Cancel'}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

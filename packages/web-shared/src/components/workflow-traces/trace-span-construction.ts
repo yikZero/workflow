@@ -23,7 +23,9 @@ const MARKER_EVENT_TYPES: Set<Event['eventType']> = new Set([
   'step_started',
   'step_retrying',
   'step_failed',
+  'step_completed',
   'run_failed',
+  'run_completed',
   'wait_created',
   'wait_completed',
 ]);
@@ -275,6 +277,17 @@ export function runToSpan(
 
   // Convert run-level events to span events
   const events = convertEventsToSpanEvents(runEvents);
+
+  // If there's a meaningful queued period, inject a synthetic run_started event
+  // at the activeStartTime so a tooltip appears when hovering the boundary
+  if (activeStartTime && activeStartTime.getTime() > spanStartTime.getTime()) {
+    events.push({
+      name: 'run_started',
+      timestamp: dateToOtelTime(activeStartTime),
+      attributes: {},
+      showVerticalLine: false,
+    });
+  }
 
   return {
     spanId: String(run.runId),
