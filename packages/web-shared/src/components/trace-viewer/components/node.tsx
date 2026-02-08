@@ -2,7 +2,7 @@
 
 import { clsx } from 'clsx';
 import type { CSSProperties, MutableRefObject, ReactNode } from 'react';
-import { memo, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import styles from '../trace-viewer.module.css';
 import type {
   MemoCache,
@@ -156,7 +156,7 @@ export const SpanComponent = memo(function SpanComponent({
   // Generic OTEL spans use diamond event markers
   const isWorkflowSpan = resourceType !== 'default';
 
-  // Determine if this span is still active (live) for CSS transition animation
+  // Determine if this span is still active (live)
   const data = span.attributes?.data as Record<string, unknown> | undefined;
   const isLive =
     isWorkflowSpan && data
@@ -164,6 +164,24 @@ export const SpanComponent = memo(function SpanComponent({
         ? !data.disposedAt
         : !data.completedAt
       : false;
+
+  // Smoothly grow active span width at 60fps using wall clock time
+  useEffect(() => {
+    if (!isLive || !ref.current) return;
+
+    let rafId = 0;
+    const tick = (): void => {
+      const $el = ref.current;
+      if (!$el) return;
+      const elapsed = Date.now() - node.startTime;
+      const w = Math.max(elapsed * scale, 2);
+      $el.style.width = `${w}px`;
+      $el.style.setProperty('--span-width', `${w}px`);
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isLive, node.startTime, scale]);
 
   return (
     <>

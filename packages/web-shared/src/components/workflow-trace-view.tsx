@@ -32,102 +32,58 @@ import {
 import { otelTimeToMs } from './workflow-traces/trace-time-utils';
 
 /**
- * rAF-driven live tick that imperatively grows active span widths at 60fps.
- * Queries [data-live] elements, computes width from wall clock, and also
- * extends the scrollable area so growing spans remain visible.
+ * While a run is live, continuously grow root.duration and rescale so the
+ * trace always fits within the viewport. Individual span widths are grown
+ * by each SpanComponent's own useEffect (see node.tsx).
  */
 function useLiveTick(isLive: boolean): void {
-  const { state } = useTraceViewer();
-  // Always hold the latest state so every frame reads fresh values
+  const { state, dispatch } = useTraceViewer();
   const stateRef = useRef(state);
   stateRef.current = state;
 
   useEffect(() => {
     if (!isLive) return;
 
+    // Grow root.duration on every frame so span rAFs see the latest time
     let rafId = 0;
-
     const tick = (): void => {
-      const { root, spanMap, timelineRef, scale } = stateRef.current;
-      const $timeline = timelineRef.current;
-
-      if (scale <= 0 || !root.startTime || !$timeline) {
-        rafId = requestAnimationFrame(tick);
-        return;
-      }
-
-      const nowMs = Date.now();
-
-      // Find all active span elements and grow their widths
-      const $liveSpans = $timeline.querySelectorAll<HTMLElement>('[data-live]');
-      for (const $el of $liveSpans) {
-        const spanId = $el.dataset.spanId;
-        if (!spanId) continue;
-
-        const spanNode = spanMap[spanId];
-        if (!spanNode) continue;
-
-        // Check if the span has since completed (data updated in-place by
-        // structural comparison). If so, remove data-live and set final width.
-        const data = spanNode.span.attributes?.data as
-          | Record<string, unknown>
-          | undefined;
-        const resource = spanNode.span.attributes?.resource;
-        const isActive =
-          resource === 'run' || resource === 'step' || resource === 'sleep'
-            ? !data?.completedAt
-            : resource === 'hook'
-              ? !data?.disposedAt
-              : false;
-
-        if (!isActive) {
-          $el.removeAttribute('data-live');
-          const finalWidth = Math.max(spanNode.duration * scale, 2);
-          $el.style.width = `${finalWidth}px`;
-          $el.style.setProperty('--span-width', `${finalWidth}px`);
-          continue;
-        }
-
-        // Compute width from wall clock — no data mutation, no React re-render
-        const currentDuration = nowMs - spanNode.startTime;
-        const width = Math.max(currentDuration * scale, 2);
-
-        $el.style.width = `${width}px`;
-        $el.style.setProperty('--span-width', `${width}px`);
-      }
-
-      // Extend the scrollable area if the run has grown past the root's endTime
-      if (nowMs > root.endTime) {
-        root.endTime = nowMs;
-        root.duration = root.endTime - root.startTime;
-
-        const scrollWidth = Math.round(root.duration * scale);
-
-        // Update the traceNode width (timeline > inner wrapper > traceNode)
-        const $traceNode = $timeline.firstElementChild
-          ?.firstElementChild as HTMLElement | null;
-        if ($traceNode) {
-          $traceNode.style.width = `${scrollWidth}px`;
-        }
-
-        // Update the --timeline-scroll-width on the traceViewer container
-        // (traceViewer > traceViewerContent > timeline)
-        const $traceViewer = $timeline.parentElement
-          ?.parentElement as HTMLElement | null;
-        if ($traceViewer) {
-          $traceViewer.style.setProperty(
-            '--timeline-scroll-width',
-            `${scrollWidth}px`
-          );
+      const { root } = stateRef.current;
+      if (root.startTime) {
+        const nowMs = Date.now();
+        if (nowMs > root.endTime) {
+          root.endTime = nowMs;
+          root.duration = root.endTime - root.startTime;
         }
       }
-
       rafId = requestAnimationFrame(tick);
     };
-
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [isLive]);
+
+    // Re-scale smoothly so the trace fits the viewport as it grows.
+    // We dispatch detectBaseScale only when the computed baseScale has
+    // changed enough to matter visually (>0.1% shift), avoiding
+    // unnecessary React re-renders while keeping things smooth.
+    let scaleRafId = 0;
+    let lastBaseScale = 0;
+    const scaleTick = (): void => {
+      const s = stateRef.current;
+      if (s.root.duration > 0) {
+        const newBaseScale = (s.width - s.scrollbarWidth) / s.root.duration;
+        const delta = Math.abs(newBaseScale - lastBaseScale);
+        if (delta > lastBaseScale * 0.001 || lastBaseScale === 0) {
+          lastBaseScale = newBaseScale;
+          dispatch({ type: 'detectBaseScale' });
+        }
+      }
+      scaleRafId = requestAnimationFrame(scaleTick);
+    };
+    scaleRafId = requestAnimationFrame(scaleTick);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      cancelAnimationFrame(scaleRafId);
+    };
+  }, [isLive, dispatch]);
 }
 
 type GroupedEvents = {
