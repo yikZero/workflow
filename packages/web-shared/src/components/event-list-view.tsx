@@ -633,6 +633,7 @@ function EventRow({
   const [isLoading, setIsLoading] = useState(false);
   const [loadedEventData, setLoadedEventData] = useState<unknown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
 
   // Collapse when a different lane gets selected
   useEffect(() => {
@@ -684,6 +685,7 @@ function EventRow({
       );
     } finally {
       setIsLoading(false);
+      setHasAttemptedLoad(true);
     }
   }, [
     event.correlationId,
@@ -805,10 +807,7 @@ function EventRow({
           />
 
           {/* Event ID */}
-          <CopyableCell
-            value={event.eventId}
-            className="font-mono text-xs text-muted-foreground"
-          />
+          <CopyableCell value={event.eventId} className="font-mono text-xs" />
         </div>
       </div>
 
@@ -859,15 +858,9 @@ function EventRow({
             )}
 
             {/* Payload */}
-            {isLoading && (
-              <div className="flex flex-col gap-2 p-3">
-                <Skeleton className="h-3" style={{ width: '75%' }} />
-                <Skeleton className="h-3" style={{ width: '50%' }} />
-                <Skeleton className="h-3" style={{ width: '60%' }} />
-              </div>
-            )}
-
-            {loadError && !isLoading && (
+            {eventData != null ? (
+              <PayloadBlock data={eventData} />
+            ) : loadError ? (
               <div
                 className="rounded-md border p-3 text-xs"
                 style={{
@@ -878,13 +871,16 @@ function EventRow({
               >
                 {loadError}
               </div>
-            )}
-
-            {!isLoading && !loadError && eventData != null && (
-              <PayloadBlock data={eventData} />
-            )}
-
-            {!isLoading && !loadError && eventData == null && (
+            ) : isLoading ||
+              (!hasExistingEventData &&
+                !hasAttemptedLoad &&
+                event.correlationId) ? (
+              <div className="flex flex-col gap-2 p-3">
+                <Skeleton className="h-3" style={{ width: '75%' }} />
+                <Skeleton className="h-3" style={{ width: '50%' }} />
+                <Skeleton className="h-3" style={{ width: '60%' }} />
+              </div>
+            ) : (
               <div className="p-2 text-xs text-muted-foreground">No data</div>
             )}
           </div>
