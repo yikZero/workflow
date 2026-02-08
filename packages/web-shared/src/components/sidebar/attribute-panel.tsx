@@ -7,7 +7,11 @@ import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo, useState } from 'react';
 import { ErrorCard } from '../ui/error-card';
 import { useDarkMode } from '../../hooks/use-dark-mode';
-import { extractConversation, isDoStreamStep } from '../../lib/utils';
+import {
+  deserializeByteObjects,
+  extractConversation,
+  isDoStreamStep,
+} from '../../lib/utils';
 import { ConversationView } from './conversation-view';
 import { DetailCard } from './detail-card';
 
@@ -279,7 +283,7 @@ const ClassInstanceRefDisplay = ({
         className="px-2 py-1.5 overflow-x-auto whitespace-pre-wrap"
         style={{ color: colors.text }}
       >
-        {JSON.stringify(classInstanceRef.data, null, 2)}
+        {JSON.stringify(deserializeByteObjects(classInstanceRef.data), null, 2)}
       </pre>
     </div>
   );
@@ -382,8 +386,9 @@ const transformValueForDisplay = (
 };
 
 const JsonBlock = (value: unknown) => {
-  const { json, streamRefs, classInstanceRefs } =
-    transformValueForDisplay(value);
+  const { json, streamRefs, classInstanceRefs } = transformValueForDisplay(
+    deserializeByteObjects(value)
+  );
 
   // If no special refs, just render plain JSON
   if (streamRefs.size === 0 && classInstanceRefs.size === 0) {

@@ -164,3 +164,65 @@ export function identifyStreamSteps(steps: Step[]): StreamStep[] {
       };
     });
 }
+
+/**
+ * Detect if a value looks like a serialized byte array (e.g. { "0": 100, "1": 101, ... })
+ * and convert it to its UTF-8 string representation.
+ */
+function isByteObject(value: unknown): value is Record<string, number> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  if (keys.length === 0) return false;
+  // All keys must be sequential integers 0..n-1 and all values must be numbers (0-255)
+  for (let i = 0; i < keys.length; i++) {
+    if (!(String(i) in (value as Record<string, unknown>))) return false;
+    const v = (value as Record<string, unknown>)[String(i)];
+    if (typeof v !== 'number' || v < 0 || v > 255 || v !== Math.floor(v)) {
+      return false;
+    }
+  }
+  return keys.length === Object.keys(value).length;
+}
+
+function byteObjectToString(value: Record<string, number>): string {
+  const bytes = new Uint8Array(Object.keys(value).length);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = value[String(i)];
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Recursively walk a value and convert any byte-array-like objects to strings.
+ * Returns a new object (or the original if nothing changed).
+ */
+export function deserializeByteObjects(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+
+  if (Array.isArray(value)) {
+    return value.map(deserializeByteObjects);
+  }
+
+  if (isByteObject(value)) {
+    try {
+      const str = byteObjectToString(value);
+      // Try to parse as JSON in case the bytes encode a JSON string
+      try {
+        return JSON.parse(str);
+      } catch {
+        return str;
+      }
+    } catch {
+      return value;
+    }
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    result[k] = deserializeByteObjects(v);
+  }
+  return result;
+}

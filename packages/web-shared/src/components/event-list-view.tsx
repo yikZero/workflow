@@ -1,9 +1,12 @@
 'use client';
 
-import type { Event } from '@workflow/world';
+import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
+import type { Event, Step, WorkflowRun } from '@workflow/world';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { Check, ChevronRight, Copy, Loader2 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useCallback, useMemo, useState } from 'react';
+import { deserializeByteObjects, formatDuration } from '../lib/utils';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -22,18 +25,6 @@ function formatEventTime(date: Date): string {
   );
 }
 
-function formatEventDateTime(date: Date): string {
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    fractionalSecondDigits: 3,
-  });
-}
-
 function formatEventType(eventType: Event['eventType']): string {
   return eventType
     .split('_')
@@ -45,25 +36,39 @@ function formatEventType(eventType: Event['eventType']): string {
 // Event type → status color (small dot only)
 // ──────────────────────────────────────────────────────────────────────────
 
-function getStatusColor(eventType: Event['eventType']): string {
+/** Returns a Tailwind bg class matching the runs table StatusBadge colors. */
+function getStatusDotClass(eventType: Event['eventType']): string {
+  // Failed → red
   if (eventType === 'step_failed' || eventType === 'run_failed') {
-    return 'var(--ds-red-700)';
+    return 'bg-red-500';
   }
+  // Cancelled → yellow
+  if (eventType === 'run_cancelled') {
+    return 'bg-yellow-500';
+  }
+  // Retrying → yellow (similar to cancelled — warning state)
   if (eventType === 'step_retrying') {
-    return 'var(--ds-amber-700)';
+    return 'bg-yellow-500';
   }
+  // Completed/succeeded → emerald
   if (
     eventType === 'step_completed' ||
     eventType === 'run_completed' ||
     eventType === 'hook_disposed' ||
     eventType === 'wait_completed'
   ) {
-    return 'var(--ds-green-700)';
+    return 'bg-emerald-500';
   }
-  if (eventType === 'hook_created' || eventType === 'hook_received') {
-    return 'var(--ds-purple-700)';
+  // Started/running → blue
+  if (
+    eventType === 'step_started' ||
+    eventType === 'run_started' ||
+    eventType === 'hook_received'
+  ) {
+    return 'bg-blue-500';
   }
-  return 'var(--ds-gray-700)';
+  // Created/pending → gray
+  return 'bg-gray-400';
 }
 
 /** Whether this event starts a new correlation lifecycle */
@@ -86,6 +91,76 @@ function isLifecycleEnd(eventType: string): boolean {
 }
 
 /** Whether this event is a run-level event (no correlation) */
+/**
+ * Build a map from correlationId (stepId) → display name using step entities,
+ * and parse the workflow name from the run.
+ */
+function buildNameMaps(
+  steps: Step[] | null,
+  run: WorkflowRun | null
+): {
+  correlationNameMap: Map<string, string>;
+  workflowName: string | null;
+} {
+  const correlationNameMap = new Map<string, string>();
+
+  // Map step correlationId (= stepId) → parsed step name
+  if (steps) {
+    for (const step of steps) {
+      const parsed = parseStepName(String(step.stepName));
+      correlationNameMap.set(step.stepId, parsed?.shortName ?? step.stepName);
+    }
+  }
+
+  // Parse workflow name from run
+  const workflowName = run?.workflowName
+    ? (parseWorkflowName(run.workflowName)?.shortName ?? run.workflowName)
+    : null;
+
+  return { correlationNameMap, workflowName };
+}
+
+/**
+ * Build a map from correlationId → execution duration (ms) by diffing
+ * started ↔ completed/failed/cancelled event timestamps.
+ * Also computes run-level duration under the key '__run__'.
+ */
+function buildDurationMap(events: Event[]): Map<string, number> {
+  const startedTimes = new Map<string, number>();
+  const durations = new Map<string, number>();
+
+  for (const event of events) {
+    const ts = new Date(event.createdAt).getTime();
+    const key = event.correlationId ?? '__run__';
+
+    // Track started times
+    if (
+      event.eventType === 'step_started' ||
+      event.eventType === 'run_started'
+    ) {
+      startedTimes.set(key, ts);
+    }
+
+    // Compute duration on terminal events
+    if (
+      event.eventType === 'step_completed' ||
+      event.eventType === 'step_failed' ||
+      event.eventType === 'run_completed' ||
+      event.eventType === 'run_failed' ||
+      event.eventType === 'run_cancelled' ||
+      event.eventType === 'wait_completed' ||
+      event.eventType === 'hook_disposed'
+    ) {
+      const startedAt = startedTimes.get(key);
+      if (startedAt !== undefined) {
+        durations.set(key, ts - startedAt);
+      }
+    }
+  }
+
+  return durations;
+}
+
 function isRunLevel(eventType: string): boolean {
   return (
     eventType === 'run_created' ||
@@ -172,6 +247,8 @@ function TreeGutter({
   isFirst,
   isLast,
   selectedLane,
+  statusDotClass,
+  pulse = false,
   /** When true, only draw lane continuation lines (for expanded detail areas) */
   continuationOnly = false,
 }: {
@@ -180,6 +257,10 @@ function TreeGutter({
   isFirst: boolean;
   isLast: boolean;
   selectedLane?: number;
+  /** Tailwind bg class for the status color dot */
+  statusDotClass?: string;
+  /** Whether dots should pulse (group is selected and this row belongs to it) */
+  pulse?: boolean;
   continuationOnly?: boolean;
 }) {
   const gutterWidth = 20 + totalLanes * LANE_WIDTH;
@@ -224,11 +305,18 @@ function TreeGutter({
                 transform: 'translateY(-50%)',
                 width: 8,
                 height: 8,
-                borderRadius: '50%',
-                backgroundColor: rootColor,
-                transition: 'background-color 150ms',
+                zIndex: 1,
               }}
-            />
+            >
+              {pulse && (
+                <div
+                  className={`absolute inset-0 rounded-full ${statusDotClass ?? ''} animate-ping opacity-75`}
+                />
+              )}
+              <div
+                className={`w-full h-full rounded-full ${statusDotClass ?? ''}`}
+              />
+            </div>
           )}
 
           {/* Horizontal branch from root to this event's lane */}
@@ -247,7 +335,7 @@ function TreeGutter({
           )}
 
           {/* Horizontal connector from lane line to event content */}
-          {node.lane >= 0 && !node.isBranchStart && (
+          {node.lane >= 0 && (
             <div
               style={{
                 position: 'absolute',
@@ -271,46 +359,111 @@ function TreeGutter({
                 transform: 'translateY(-50%)',
                 width: 6,
                 height: 6,
-                borderRadius: '50%',
-                backgroundColor: thisLaneColor,
-                transition: 'background-color 150ms',
+                zIndex: 1,
               }}
-            />
+            >
+              {pulse && (
+                <div
+                  className={`absolute inset-0 rounded-full ${statusDotClass ?? ''} animate-ping opacity-75`}
+                />
+              )}
+              <div
+                className={`w-full h-full rounded-full ${statusDotClass ?? ''}`}
+              />
+            </div>
           )}
         </>
       )}
 
       {/* Lane vertical lines for active correlations */}
-      {Array.from(node.activeLanes).map((laneIdx) => {
-        const x = 20 + laneIdx * LANE_WIDTH;
-        const isThisLane = laneIdx === node.lane;
+      {Array.from(node.activeLanes)
+        .filter((laneIdx) => {
+          if (!continuationOnly) return true;
+          // In continuation mode (expanded details), only show this node's lane
+          // — and only if it's NOT the last event in the group (nothing to connect to below)
+          if (laneIdx === node.lane && node.isBranchEnd) return false;
+          if (laneIdx !== node.lane) return false;
+          return true;
+        })
+        .map((laneIdx) => {
+          const x = 20 + laneIdx * LANE_WIDTH;
+          const isThisLane = laneIdx === node.lane;
 
-        let top: string | number = 0;
-        let bottom: string | number = 0;
-        if (!continuationOnly) {
-          if (isThisLane && node.isBranchStart) {
-            top = '50%';
+          let top: string | number = 0;
+          let bottom: string | number = 0;
+          if (!continuationOnly) {
+            if (isThisLane && node.isBranchStart) {
+              top = '50%';
+            }
+            if (isThisLane && node.isBranchEnd) {
+              bottom = '50%';
+            }
           }
-          if (isThisLane && node.isBranchEnd) {
-            bottom = '50%';
-          }
-        }
 
-        return (
-          <div
-            key={laneIdx}
-            style={{
-              position: 'absolute',
-              left: x,
-              top,
-              bottom,
-              width: 2,
-              backgroundColor: laneColor(laneIdx),
-              transition: 'background-color 150ms',
-            }}
-          />
-        );
-      })}
+          return (
+            <div
+              key={laneIdx}
+              style={{
+                position: 'absolute',
+                left: x,
+                top,
+                bottom,
+                width: 2,
+                backgroundColor: laneColor(laneIdx),
+                transition: 'background-color 150ms',
+              }}
+            />
+          );
+        })}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Copyable cell — shows a copy button on hover
+// ──────────────────────────────────────────────────────────────────────────
+
+function CopyableCell({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}): ReactNode {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(
+    (e: ReactMouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(value).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    },
+    [value]
+  );
+
+  return (
+    <div
+      className={`group/copy flex items-center gap-1 flex-1 min-w-0 px-4 ${className ?? ''}`}
+    >
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+        {value || '-'}
+      </span>
+      {value ? (
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex-shrink-0 opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-[var(--ds-gray-alpha-200)]"
+          aria-label={`Copy ${value}`}
+        >
+          {copied ? (
+            <Check className="h-3 w-3 text-green-500" />
+          ) : (
+            <Copy className="h-3 w-3 text-muted-foreground" />
+          )}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -321,6 +474,8 @@ function TreeGutter({
 
 interface EventsListProps {
   events: Event[] | null;
+  steps?: Step[] | null;
+  run?: WorkflowRun | null;
   onLoadEventData?: (event: Event) => Promise<unknown | null>;
 }
 
@@ -332,6 +487,9 @@ function EventRow({
   isLast,
   activeLane,
   selectedLane,
+  correlationNameMap,
+  workflowName,
+  durationMap,
   onSelectLane,
   onHoverLane,
   onLoadEventData,
@@ -345,6 +503,12 @@ function EventRow({
   activeLane?: number;
   /** The clicked/locked selection (needed for toggle logic). */
   selectedLane?: number;
+  /** Map from correlationId → display name */
+  correlationNameMap: Map<string, string>;
+  /** Workflow name for run-level events */
+  workflowName: string | null;
+  /** Map from correlationId → execution duration (ms) */
+  durationMap: Map<string, number>;
   onSelectLane: (lane: number | undefined) => void;
   onHoverLane: (lane: number | undefined) => void;
   onLoadEventData?: (event: Event) => Promise<unknown | null>;
@@ -354,13 +518,23 @@ function EventRow({
   const [loadedEventData, setLoadedEventData] = useState<unknown | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const statusColor = getStatusColor(event.eventType);
+  const statusDotClass = getStatusDotClass(event.eventType);
   const createdAt = new Date(event.createdAt);
   const hasExistingEventData = 'eventData' in event && event.eventData != null;
+  const isRun = isRunLevel(event.eventType);
+  const eventName = isRun
+    ? (workflowName ?? '-')
+    : event.correlationId
+      ? (correlationNameMap.get(event.correlationId) ?? '-')
+      : '-';
+
+  const durationKey = event.correlationId ?? (isRun ? '__run__' : '');
+  const durationMs = durationKey ? durationMap.get(durationKey) : undefined;
 
   const hasActive = activeLane !== undefined;
   const isRelated = node.lane === activeLane;
   const isDimmed = hasActive && !isRelated;
+  const isPulsing = hasActive && isRelated;
 
   const loadEventDetails = useCallback(async () => {
     if (
@@ -423,19 +597,20 @@ function EventRow({
   const contentOpacity = isDimmed ? 0.3 : 1;
 
   return (
-    <div>
+    <div
+      onMouseEnter={() => onHoverLane(node.lane)}
+      onMouseLeave={() => onHoverLane(undefined)}
+    >
       {/* Row */}
       <div
         role="button"
         tabIndex={0}
         onClick={handleRowClick}
-        onMouseEnter={() => onHoverLane(node.lane)}
-        onMouseLeave={() => onHoverLane(undefined)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') handleRowClick();
         }}
-        className="w-full text-left flex items-center gap-0 text-xs hover:bg-[var(--ds-gray-alpha-100)] transition-colors cursor-pointer"
-        style={{ minHeight: 32 }}
+        className="w-full text-left flex items-center gap-0 text-sm hover:bg-[var(--ds-gray-alpha-100)] transition-colors cursor-pointer"
+        style={{ minHeight: 40 }}
       >
         {/* Tree gutter — never dimmed by row opacity */}
         <TreeGutter
@@ -444,6 +619,8 @@ function EventRow({
           isFirst={isFirst}
           isLast={isLast && !isExpanded}
           selectedLane={activeLane}
+          statusDotClass={statusDotClass}
+          pulse={isPulsing}
         />
 
         {/* Content area — dims when unrelated */}
@@ -468,44 +645,46 @@ function EventRow({
           </button>
 
           {/* Time */}
-          <div
-            className="font-mono tabular-nums flex-1 min-w-0 px-2"
-            style={{ color: 'var(--ds-gray-800)' }}
-          >
+          <div className="text-xs text-muted-foreground tabular-nums flex-1 min-w-0 px-4">
             {formatEventTime(createdAt)}
           </div>
 
           {/* Event Type */}
-          <div
-            className="font-medium flex-1 min-w-0 px-2"
-            style={{ color: 'var(--ds-gray-1000)' }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: statusColor }}
-              />
+          <div className="text-xs font-medium flex-1 min-w-0 px-4">
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <span className="relative inline-flex w-1.5 h-1.5 flex-shrink-0">
+                {isPulsing && (
+                  <span
+                    className={`absolute inset-0 rounded-full ${statusDotClass} animate-ping opacity-75`}
+                  />
+                )}
+                <span
+                  className={`relative w-1.5 h-1.5 rounded-full ${statusDotClass}`}
+                />
+              </span>
               {formatEventType(event.eventType)}
             </span>
           </div>
 
-          {/* Correlation ID */}
+          {/* Name */}
           <div
-            className="font-mono text-[11px] flex-1 min-w-0 px-2 overflow-hidden text-ellipsis whitespace-nowrap"
-            style={{ color: 'var(--ds-gray-700)' }}
-            title={event.correlationId || '-'}
+            className="text-xs flex-1 min-w-0 px-4 overflow-hidden text-ellipsis whitespace-nowrap"
+            title={eventName !== '-' ? eventName : undefined}
           >
-            {event.correlationId || '-'}
+            {eventName}
           </div>
 
+          {/* Correlation ID */}
+          <CopyableCell
+            value={event.correlationId || ''}
+            className="font-mono text-xs"
+          />
+
           {/* Event ID */}
-          <div
-            className="font-mono text-[11px] flex-1 min-w-0 px-2 overflow-hidden text-ellipsis whitespace-nowrap"
-            style={{ color: 'var(--ds-gray-600)' }}
-            title={event.eventId}
-          >
-            {event.eventId}
-          </div>
+          <CopyableCell
+            value={event.eventId}
+            className="font-mono text-xs text-muted-foreground"
+          />
         </div>
       </div>
 
@@ -524,149 +703,66 @@ function EventRow({
           {/* Spacer for chevron column */}
           <div className="w-5 flex-shrink-0" />
           <div
-            className="flex-1 py-2 pr-3 ml-2"
+            className="flex-1 my-1.5 mr-3 ml-2 py-2 rounded-md border overflow-hidden"
             style={{
-              borderTop: '1px solid var(--ds-gray-alpha-200)',
+              borderColor: 'var(--ds-gray-alpha-200)',
               opacity: contentOpacity,
               transition: 'opacity 150ms',
             }}
           >
-            {/* Attributes */}
-            <div
-              className="flex flex-col divide-y rounded-md border overflow-hidden"
-              style={{ borderColor: 'var(--ds-gray-alpha-200)' }}
-            >
-              <AttributeRow label="Event ID" value={event.eventId} mono />
-              <AttributeRow label="Event Type" value={event.eventType} />
-              <AttributeRow
-                label="Correlation ID"
-                value={event.correlationId || '-'}
-                mono
-              />
-              <AttributeRow label="Run ID" value={event.runId} mono />
-              <AttributeRow
-                label="Created At"
-                value={formatEventDateTime(createdAt)}
-              />
-            </div>
-
-            {/* Event data */}
-            <div className="mt-3">
-              <div
-                className="text-xs font-medium mb-1.5"
-                style={{ color: 'var(--ds-gray-700)' }}
-              >
-                Event Data
+            {/* Duration */}
+            {durationMs !== undefined && (
+              <div className="px-2 pb-1.5 text-xs text-muted-foreground">
+                Ran for{' '}
+                <span className="font-mono tabular-nums">
+                  {formatDuration(durationMs)}
+                </span>
               </div>
+            )}
 
-              {isLoading && (
-                <div
-                  className="flex items-center gap-2 rounded-md border p-3"
-                  style={{ borderColor: 'var(--ds-gray-alpha-200)' }}
-                >
-                  <Loader2
-                    className="h-4 w-4 animate-spin"
-                    style={{ color: 'var(--ds-gray-700)' }}
-                  />
-                  <span
-                    className="text-xs"
-                    style={{ color: 'var(--ds-gray-700)' }}
-                  >
-                    Loading event details...
-                  </span>
-                </div>
+            {/* Payload */}
+            {isLoading && (
+              <div className="flex items-center gap-2 p-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  Loading...
+                </span>
+              </div>
+            )}
+
+            {loadError && !isLoading && (
+              <div
+                className="rounded-md border p-3 text-xs"
+                style={{
+                  borderColor: 'var(--ds-red-400)',
+                  backgroundColor: 'var(--ds-red-100)',
+                  color: 'var(--ds-red-900)',
+                }}
+              >
+                {loadError}
+              </div>
+            )}
+
+            {!isLoading && !loadError && eventData != null && (
+              <pre
+                className="text-[11px] overflow-x-auto p-2"
+                style={{ color: 'var(--ds-gray-1000)' }}
+              >
+                <code>
+                  {JSON.stringify(deserializeByteObjects(eventData), null, 2)}
+                </code>
+              </pre>
+            )}
+
+            {!isLoading &&
+              !loadError &&
+              eventData == null &&
+              durationMs === undefined && (
+                <div className="p-2 text-xs text-muted-foreground">No data</div>
               )}
-
-              {loadError && !isLoading && (
-                <div
-                  className="rounded-md border p-3 text-xs"
-                  style={{
-                    borderColor: 'var(--ds-red-400)',
-                    backgroundColor: 'var(--ds-red-100)',
-                    color: 'var(--ds-red-900)',
-                  }}
-                >
-                  {loadError}
-                </div>
-              )}
-
-              {!isLoading && !loadError && eventData != null && (
-                <pre
-                  className="text-[11px] overflow-x-auto rounded-md border p-3"
-                  style={{
-                    borderColor: 'var(--ds-gray-alpha-200)',
-                    color: 'var(--ds-gray-1000)',
-                  }}
-                >
-                  <code>{JSON.stringify(eventData, null, 2)}</code>
-                </pre>
-              )}
-
-              {!isLoading &&
-                !loadError &&
-                eventData == null &&
-                !event.correlationId && (
-                  <div
-                    className="rounded-md border p-3 text-xs"
-                    style={{
-                      borderColor: 'var(--ds-gray-alpha-200)',
-                      color: 'var(--ds-gray-700)',
-                    }}
-                  >
-                    No event data available
-                  </div>
-                )}
-
-              {!isLoading &&
-                !loadError &&
-                eventData == null &&
-                event.correlationId &&
-                !hasExistingEventData &&
-                loadedEventData === null && (
-                  <div
-                    className="rounded-md border p-3 text-xs"
-                    style={{
-                      borderColor: 'var(--ds-gray-alpha-200)',
-                      color: 'var(--ds-gray-700)',
-                    }}
-                  >
-                    No event data for this event type
-                  </div>
-                )}
-            </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function AttributeRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between px-2.5 py-1.5"
-      style={{ borderColor: 'var(--ds-gray-alpha-200)' }}
-    >
-      <span
-        className="text-[11px] font-medium"
-        style={{ color: 'var(--ds-gray-700)' }}
-      >
-        {label}
-      </span>
-      <span
-        className={`text-[11px] ${mono ? 'font-mono' : ''} text-right max-w-[70%] break-all`}
-        style={{ color: 'var(--ds-gray-1000)' }}
-      >
-        {value}
-      </span>
     </div>
   );
 }
@@ -675,7 +771,12 @@ function AttributeRow({
 // Main component
 // ──────────────────────────────────────────────────────────────────────────
 
-export function EventListView({ events, onLoadEventData }: EventsListProps) {
+export function EventListView({
+  events,
+  steps,
+  run,
+  onLoadEventData,
+}: EventsListProps) {
   const sortedEvents = useMemo(() => {
     if (!events || events.length === 0) return [];
     return [...events].sort(
@@ -685,6 +786,16 @@ export function EventListView({ events, onLoadEventData }: EventsListProps) {
   }, [events]);
 
   const treeNodes = useMemo(() => buildEventTree(sortedEvents), [sortedEvents]);
+
+  const { correlationNameMap, workflowName } = useMemo(
+    () => buildNameMaps(steps ?? null, run ?? null),
+    [steps, run]
+  );
+
+  const durationMap = useMemo(
+    () => buildDurationMap(sortedEvents),
+    [sortedEvents]
+  );
 
   const totalLanes = useMemo(() => {
     let max = 0;
@@ -726,11 +837,9 @@ export function EventListView({ events, onLoadEventData }: EventsListProps) {
     <div className="h-full overflow-auto">
       {/* Header */}
       <div
-        className="flex items-center gap-0 text-xs font-medium sticky top-0 z-10 py-2 border-b"
+        className="flex items-center gap-0 text-sm font-medium text-muted-foreground sticky top-0 z-10 h-10 border-b bg-background"
         style={{
           borderColor: 'var(--ds-gray-alpha-200)',
-          backgroundColor: 'var(--ds-background-100)',
-          color: 'var(--ds-gray-700)',
         }}
       >
         <div
@@ -738,10 +847,11 @@ export function EventListView({ events, onLoadEventData }: EventsListProps) {
           style={{ width: 20 + totalLanes * LANE_WIDTH }}
         />
         <div className="w-5 flex-shrink-0" />
-        <div className="flex-1 min-w-0 px-2">Time</div>
-        <div className="flex-1 min-w-0 px-2">Event Type</div>
-        <div className="flex-1 min-w-0 px-2">Correlation ID</div>
-        <div className="flex-1 min-w-0 px-2">Event ID</div>
+        <div className="flex-1 min-w-0 px-4">Time</div>
+        <div className="flex-1 min-w-0 px-4">Event Type</div>
+        <div className="flex-1 min-w-0 px-4">Name</div>
+        <div className="flex-1 min-w-0 px-4">Correlation ID</div>
+        <div className="flex-1 min-w-0 px-4">Event ID</div>
       </div>
 
       {/* Event rows */}
@@ -756,6 +866,9 @@ export function EventListView({ events, onLoadEventData }: EventsListProps) {
             isLast={idx === treeNodes.length - 1}
             activeLane={activeLane}
             selectedLane={selectedLane}
+            correlationNameMap={correlationNameMap}
+            workflowName={workflowName}
+            durationMap={durationMap}
             onSelectLane={onSelectLane}
             onHoverLane={onHoverLane}
             onLoadEventData={onLoadEventData}
@@ -765,11 +878,8 @@ export function EventListView({ events, onLoadEventData }: EventsListProps) {
 
       {/* Summary */}
       <div
-        className="mt-4 pt-3 border-t text-xs px-3"
-        style={{
-          borderColor: 'var(--ds-gray-alpha-200)',
-          color: 'var(--ds-gray-700)',
-        }}
+        className="mt-4 pt-3 border-t text-xs text-muted-foreground px-3"
+        style={{ borderColor: 'var(--ds-gray-alpha-200)' }}
       >
         {sortedEvents.length} event{sortedEvents.length !== 1 ? 's' : ''} total
       </div>

@@ -646,6 +646,8 @@ export function RunDetailView({
                 <div className="h-full">
                   <EventListView
                     events={allEvents}
+                    steps={allSteps}
+                    run={run}
                     onLoadEventData={handleLoadEventData}
                   />
                 </div>
