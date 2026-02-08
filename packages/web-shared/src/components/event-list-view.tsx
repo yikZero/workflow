@@ -3,10 +3,11 @@
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
 import type { Event, Step, WorkflowRun } from '@workflow/world';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { Check, ChevronRight, Copy, Loader2 } from 'lucide-react';
+import { Check, ChevronRight, Copy } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deserializeByteObjects, formatDuration } from '../lib/utils';
+import { Skeleton } from './ui/skeleton';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -120,28 +121,50 @@ function buildNameMaps(
   return { correlationNameMap, workflowName };
 }
 
+interface DurationInfo {
+  /** Time from created → started (ms) */
+  queued?: number;
+  /** Time from started → completed/failed/cancelled (ms) */
+  ran?: number;
+}
+
 /**
- * Build a map from correlationId → execution duration (ms) by diffing
- * started ↔ completed/failed/cancelled event timestamps.
- * Also computes run-level duration under the key '__run__'.
+ * Build a map from correlationId → duration info by diffing
+ * created ↔ started (queued) and started ↔ completed/failed/cancelled (ran).
+ * Also computes run-level durations under the key '__run__'.
  */
-function buildDurationMap(events: Event[]): Map<string, number> {
+function buildDurationMap(events: Event[]): Map<string, DurationInfo> {
+  const createdTimes = new Map<string, number>();
   const startedTimes = new Map<string, number>();
-  const durations = new Map<string, number>();
+  const durations = new Map<string, DurationInfo>();
 
   for (const event of events) {
     const ts = new Date(event.createdAt).getTime();
     const key = event.correlationId ?? '__run__';
 
-    // Track started times
+    // Track created times (first event for each correlation)
+    if (
+      event.eventType === 'step_created' ||
+      event.eventType === 'run_created'
+    ) {
+      createdTimes.set(key, ts);
+    }
+
+    // Track started times & compute queued duration
     if (
       event.eventType === 'step_started' ||
       event.eventType === 'run_started'
     ) {
       startedTimes.set(key, ts);
+      const createdAt = createdTimes.get(key);
+      const info = durations.get(key) ?? {};
+      if (createdAt !== undefined) {
+        info.queued = ts - createdAt;
+      }
+      durations.set(key, info);
     }
 
-    // Compute duration on terminal events
+    // Compute ran duration on terminal events
     if (
       event.eventType === 'step_completed' ||
       event.eventType === 'step_failed' ||
@@ -152,9 +175,11 @@ function buildDurationMap(events: Event[]): Map<string, number> {
       event.eventType === 'hook_disposed'
     ) {
       const startedAt = startedTimes.get(key);
+      const info = durations.get(key) ?? {};
       if (startedAt !== undefined) {
-        durations.set(key, ts - startedAt);
+        info.ran = ts - startedAt;
       }
+      durations.set(key, info);
     }
   }
 
@@ -598,8 +623,8 @@ function EventRow({
   correlationNameMap: Map<string, string>;
   /** Workflow name for run-level events */
   workflowName: string | null;
-  /** Map from correlationId → execution duration (ms) */
-  durationMap: Map<string, number>;
+  /** Map from correlationId → duration info */
+  durationMap: Map<string, DurationInfo>;
   onSelectLane: (lane: number | undefined) => void;
   onHoverLane: (lane: number | undefined) => void;
   onLoadEventData?: (event: Event) => Promise<unknown | null>;
@@ -627,7 +652,7 @@ function EventRow({
       : '-';
 
   const durationKey = event.correlationId ?? (isRun ? '__run__' : '');
-  const durationMs = durationKey ? durationMap.get(durationKey) : undefined;
+  const durationInfo = durationKey ? durationMap.get(durationKey) : undefined;
 
   const hasActive = activeLane !== undefined;
   const isRelated = node.lane === activeLane;
@@ -809,23 +834,36 @@ function EventRow({
               transition: 'opacity 150ms',
             }}
           >
-            {/* Duration */}
-            {durationMs !== undefined && (
-              <div className="px-2 pb-1.5 text-xs text-muted-foreground">
-                Ran for{' '}
-                <span className="font-mono tabular-nums">
-                  {formatDuration(durationMs)}
-                </span>
+            {/* Duration info */}
+            {(durationInfo?.queued !== undefined ||
+              durationInfo?.ran !== undefined) && (
+              <div className="px-2 pb-1.5 text-xs text-muted-foreground flex gap-3">
+                {durationInfo.queued !== undefined &&
+                  durationInfo.queued > 0 && (
+                    <span>
+                      Queued for{' '}
+                      <span className="font-mono tabular-nums">
+                        {formatDuration(durationInfo.queued)}
+                      </span>
+                    </span>
+                  )}
+                {durationInfo.ran !== undefined && (
+                  <span>
+                    Ran for{' '}
+                    <span className="font-mono tabular-nums">
+                      {formatDuration(durationInfo.ran)}
+                    </span>
+                  </span>
+                )}
               </div>
             )}
 
             {/* Payload */}
             {isLoading && (
-              <div className="flex items-center gap-2 p-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">
-                  Loading...
-                </span>
+              <div className="flex flex-col gap-2 p-3">
+                <Skeleton className="h-3" style={{ width: '75%' }} />
+                <Skeleton className="h-3" style={{ width: '50%' }} />
+                <Skeleton className="h-3" style={{ width: '60%' }} />
               </div>
             )}
 

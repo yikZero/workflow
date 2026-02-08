@@ -1,5 +1,6 @@
 export { ErrorBoundary } from './error-boundary';
 export { EventListView } from './event-list-view';
+export { Skeleton } from './ui/skeleton';
 export type {
   HookActionCallbacks,
   HookActionsDropdownItemProps,

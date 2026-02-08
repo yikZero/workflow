@@ -61,6 +61,7 @@ import { SelectionBar } from './display-utils/selection-bar';
 import { StatusBadge } from './display-utils/status-badge';
 import { RunActionsDropdownItems } from './run-actions';
 import { Checkbox } from './ui/checkbox';
+import { Skeleton } from './ui/skeleton';
 
 // Inner content that fetches events when it mounts (only rendered when dropdown is open)
 function RunActionsDropdownContentInner({
@@ -657,13 +658,36 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
                   </TableCell>
                 </TableRow>
               ) : loading && !hasLoadedOnce ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="h-[400px]">
-                    <div className="flex items-center justify-center h-full">
-                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                    </div>
-                  </TableCell>
-                </TableRow>
+                <>
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <TableRow key={`skeleton-${i}`}>
+                      <TableCell className="w-10">
+                        <Skeleton className="h-4 w-4 rounded" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-3/4" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-4/5" />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Skeleton className="h-3 w-16" />
+                          <Skeleton className="h-2 w-10" />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-3 w-3/4" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-3 w-3/4" />
+                      </TableCell>
+                      <TableCell className="w-10">
+                        <Skeleton className="h-6 w-6 rounded" />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </>
               ) : !data.data || data.data.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="h-[400px]">
