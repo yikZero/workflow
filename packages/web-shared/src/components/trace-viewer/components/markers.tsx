@@ -43,13 +43,13 @@ export function Markers({
   const {
     state: { root },
   } = useTraceViewer();
-  const [, setTick] = useState(0);
-
-  // Re-render every second when live to pick up new tick marks.
-  // The markers container width is grown at 60fps by useLiveTick.
+  // Force a re-render every second when live to pick up new tick marks.
+  // The markers container width is grown at 60fps by useLiveTick;
+  // this interval only ensures the marker *labels* stay current.
+  const [, forceMarkerUpdate] = useState(0);
   useEffect(() => {
     if (!isLive) return;
-    const id = setInterval(() => setTick((v) => v + 1), 1000);
+    const id = setInterval(() => forceMarkerUpdate((v) => v + 1), 1000);
     return () => clearInterval(id);
   }, [isLive]);
 

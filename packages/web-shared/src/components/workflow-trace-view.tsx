@@ -31,6 +31,9 @@ import {
 } from './workflow-traces/trace-span-construction';
 import { otelTimeToMs } from './workflow-traces/trace-time-utils';
 
+// Stable no-op function to avoid re-creating closures
+const noop = (): void => {};
+
 /**
  * While a run is live, continuously grow root.duration and rescale so the
  * trace always fits within the viewport. Individual span widths are grown
@@ -520,7 +523,7 @@ function TraceViewerWithContextMenu({
 
       return items;
     },
-    [dispatch, onWakeUpSleep, onCancelRun, run.runId]
+    [dispatch, onWakeUpSleep, onCancelRun, run.runId, run.completedAt]
   );
 
   return (
@@ -599,28 +602,6 @@ export const WorkflowTraceViewer = ({
     }
   }, [error, isLoading]);
 
-  const DetailPanel = () => {
-    const handleSpanSelect = useCallback(
-      (info: SpanSelectionInfo) => {
-        onSpanSelect?.(info);
-      },
-      [onSpanSelect]
-    );
-
-    return (
-      <EntityDetailPanel
-        run={run}
-        onStreamClick={onStreamClick}
-        spanDetailData={spanDetailData ?? null}
-        spanDetailError={spanDetailError}
-        spanDetailLoading={spanDetailLoading}
-        onSpanSelect={handleSpanSelect}
-        onWakeUpSleep={onWakeUpSleep}
-        onResolveHook={onResolveHook}
-      />
-    );
-  };
-
   if (isLoading || !trace) {
     return (
       <div className="relative w-full h-full">
@@ -644,7 +625,16 @@ export const WorkflowTraceViewer = ({
         customSpanEventClassNameFunc={getCustomSpanEventClassName}
         customPanelComponent={
           <ErrorBoundary title="Failed to load entity details">
-            <DetailPanel />
+            <EntityDetailPanel
+              run={run}
+              onStreamClick={onStreamClick}
+              spanDetailData={spanDetailData ?? null}
+              spanDetailError={spanDetailError}
+              spanDetailLoading={spanDetailLoading}
+              onSpanSelect={onSpanSelect ?? noop}
+              onWakeUpSleep={onWakeUpSleep}
+              onResolveHook={onResolveHook}
+            />
           </ErrorBoundary>
         }
       >

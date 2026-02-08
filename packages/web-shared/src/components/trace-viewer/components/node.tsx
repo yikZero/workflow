@@ -60,6 +60,7 @@ export const SpanNodes = memo(function SpanNodes({
   scale: number;
   spans: VisibleSpan[];
   scrollSnapshotRef: MutableRefObject<ScrollSnapshot | undefined>;
+  /** Not used in the body — exists solely to bust React.memo when the global memo cache changes. */
   cacheKey?: MemoCacheKey;
   cache: MemoCache;
   customSpanClassNameFunc?: (span: SpanNode) => string;
@@ -118,7 +119,6 @@ export const SpanComponent = memo(function SpanComponent({
   root,
   scale,
   scrollSnapshotRef,
-  cacheKey,
   customSpanClassNameFunc,
   customSpanEventClassNameFunc,
 }: {
@@ -126,6 +126,7 @@ export const SpanComponent = memo(function SpanComponent({
   root: RootNode;
   scale: number;
   scrollSnapshotRef: MutableRefObject<ScrollSnapshot | undefined>;
+  /** Not used in the body — exists solely to bust React.memo for this span. */
   cacheKey?: MemoCacheKey;
   customSpanClassNameFunc?: (span: SpanNode) => string;
   customSpanEventClassNameFunc?: (event: VisibleSpanEvent) => string;
@@ -165,6 +166,26 @@ export const SpanComponent = memo(function SpanComponent({
         : !data.completedAt
       : false;
 
+  // For live spans the data-level `node.duration` can be stale (from the last
+  // fetch) while the visual width is growing via rAF. Recompute from real
+  // elapsed time so that:
+  //  - height/isSmall classification stays correct (not shrunken to 40%)
+  //  - React-rendered width matches the rAF-driven width, preventing a brief
+  //    shrink→expand flash on re-render that breaks cursor hit-testing
+  if (isLive) {
+    const elapsed = Date.now() - node.startTime;
+    const liveActualWidth = elapsed * scale;
+    const liveWidth = Math.max(liveActualWidth, 4);
+    layout.actualWidth = liveActualWidth;
+    layout.width = liveWidth;
+    layout.isSmall = liveActualWidth < 64;
+    layout.isHuge = liveActualWidth >= 500;
+    if (!layout.isSmall) {
+      layout.height = ROW_HEIGHT;
+      layout.top = MARKER_HEIGHT + (ROW_HEIGHT + ROW_PADDING) * node.row;
+    }
+  }
+
   // Smoothly grow active span width at 60fps using wall clock time
   useEffect(() => {
     if (!isLive || !ref.current) return;
@@ -188,16 +209,21 @@ export const SpanComponent = memo(function SpanComponent({
       <button
         aria-label={`${span.name} - ${duration}`}
         className={clsx(
-          getSpanClassName(node, scale),
+          styles.spanNode,
+          layout.isHuge && styles.huge,
+          layout.isSmall && styles.small,
+          layout.isHovered && styles.xHover,
+          node.isHighlighted
+            ? styles.colorHighlight
+            : getSpanColorClassName(node),
+          node.isHighlighted === false && styles.unlit,
           customClassName,
           isWorkflowSpan && styles.hasSegments
         )}
         data-span-id={span.spanId}
         data-start-time={node.startTime - root.startTime}
         data-right-side={layout.isNearRightSide}
-        data-cache-key={cacheKey ? '1' : undefined}
-        {...(node.isSelected ? { 'data-selected': '' } : {})}
-        {...(isLive ? { 'data-live': '' } : {})}
+        data-selected={node.isSelected ? '' : undefined}
         ref={ref}
         style={getSpanStyle(layout, node, root, scale)}
         type="button"
