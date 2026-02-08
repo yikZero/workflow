@@ -1,7 +1,7 @@
 'use client';
 
 import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
-import { AlarmClockOff, Ban, ClipboardCopy, FileText } from 'lucide-react';
+import { Clock, Copy, Info, Type, XCircle } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -450,7 +450,7 @@ function TraceViewerWithContextMenu({
       ) {
         items.push({
           label: 'Wake Up Sleep',
-          icon: <AlarmClockOff className="h-3.5 w-3.5" />,
+          icon: <Clock className="h-3.5 w-3.5" />,
           action: () => {
             onWakeUpSleep(run.runId, menu.spanId)
               .then((result) => {
@@ -480,7 +480,7 @@ function TraceViewerWithContextMenu({
       if (menu.resourceType === 'run' && isRunActive && onCancelRun) {
         items.push({
           label: 'Cancel Run',
-          icon: <Ban className="h-3.5 w-3.5" />,
+          icon: <XCircle className="h-3.5 w-3.5" />,
           destructive: true,
           action: () => {
             onCancelRun(run.runId).catch((err: unknown) => {
@@ -495,20 +495,33 @@ function TraceViewerWithContextMenu({
         });
       }
 
-      // Separator equivalent: push common actions
-      // View Details (select span in panel)
+      // Common actions
       items.push({
         label: 'View Details',
-        icon: <FileText className="h-3.5 w-3.5" />,
+        icon: <Info className="h-3.5 w-3.5" />,
         action: () => {
           dispatch({ type: 'select', id: menu.spanId });
         },
       });
 
-      // Copy ID
+      items.push({
+        label: 'Copy Name',
+        icon: <Type className="h-3.5 w-3.5" />,
+        action: () => {
+          navigator.clipboard
+            .writeText(menu.spanName)
+            .then(() => {
+              toast.success('Name copied to clipboard');
+            })
+            .catch(() => {
+              toast.error('Failed to copy name');
+            });
+        },
+      });
+
       items.push({
         label: 'Copy ID',
-        icon: <ClipboardCopy className="h-3.5 w-3.5" />,
+        icon: <Copy className="h-3.5 w-3.5" />,
         action: () => {
           navigator.clipboard
             .writeText(menu.spanId)

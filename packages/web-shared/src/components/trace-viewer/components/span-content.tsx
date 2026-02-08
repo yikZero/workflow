@@ -59,9 +59,6 @@ function SegmentLayer({
           left: `${seg.startFraction * 100}%`,
           width: `${(seg.endFraction - seg.startFraction) * 100}%`,
         };
-        // Skip inline label for the first segment (overlaps span name)
-        // and for segments with no descriptive label (e.g. "running")
-        const showInlineLabel = seg.startFraction > 0.01 && label !== '';
 
         return (
           <div
@@ -73,33 +70,63 @@ function SegmentLayer({
                 ? `${label} ${formatDuration(segDuration)}`
                 : formatDuration(segDuration)
             }
-          >
-            {showInlineLabel ? (
-              <span className={styles.segmentLabel}>
-                {label} {formatDuration(segDuration)}
-              </span>
-            ) : null}
-          </div>
+          />
         );
       })}
     </div>
   );
 }
 
+/** Build inline segment tags to render next to the span name. */
+function getSegmentTags(
+  segments: Segment[],
+  spanDuration: number
+): { label: string; duration: string }[] {
+  const tags: { label: string; duration: string }[] = [];
+  for (const seg of segments) {
+    const label = SEGMENT_LABELS[seg.status];
+    if (!label) continue; // skip "running" which has no label
+    const segDuration = (seg.endFraction - seg.startFraction) * spanDuration;
+    tags.push({ label, duration: formatDuration(segDuration) });
+  }
+  return tags;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Text content (shared label + duration rendering)
 // ──────────────────────────────────────────────────────────────────────────
 
-function TextContent({ node, layout }: SpanContentProps): ReactNode {
+function TextContent({
+  node,
+  layout,
+  segmentTags,
+}: SpanContentProps & {
+  segmentTags?: { label: string; duration: string }[];
+}): ReactNode {
   const duration = getDuration(node);
 
   if (layout.isSmall && !layout.isHovered) {
     return null;
   }
 
+  const showTags =
+    segmentTags &&
+    segmentTags.length > 0 &&
+    (layout.isHovered || layout.width > 200);
+
   return (
     <>
-      <span className={styles.spanName}>{node.label || node.span.name}</span>
+      <span className={styles.spanName}>
+        {node.label || node.span.name}
+        {showTags
+          ? segmentTags.map((tag, i) => (
+              <span key={i} className={styles.segmentTag}>
+                {' · '}
+                {tag.label} {tag.duration}
+              </span>
+            ))
+          : null}
+      </span>
       {layout.isHuge ? <span className={styles.spanSpacer} /> : null}
       {layout.isHovered || layout.width > 128 ? (
         <span className={styles.spanDuration}>{duration}</span>
@@ -135,11 +162,12 @@ function WorkflowContent({
   layout,
 }: SpanContentProps & { resourceType: ResourceType }): ReactNode {
   const { segments } = computeSegments(resourceType, node);
+  const segmentTags = getSegmentTags(segments, node.duration);
 
   return (
     <>
       <SegmentLayer segments={segments} spanDuration={node.duration} />
-      <TextContent node={node} layout={layout} />
+      <TextContent node={node} layout={layout} segmentTags={segmentTags} />
     </>
   );
 }
