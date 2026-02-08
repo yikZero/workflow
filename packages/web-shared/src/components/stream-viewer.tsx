@@ -1,6 +1,26 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { deserializeByteObjects } from '../lib/utils';
+
+/**
+ * Attempt to parse chunk text as JSON, run deserializeByteObjects to convert
+ * byte-array-like objects into readable strings, then re-stringify.
+ * Falls back to the original text if parsing fails.
+ */
+function deserializeChunkText(text: string): string {
+  try {
+    const parsed = JSON.parse(text);
+    const deserialized = deserializeByteObjects(parsed);
+    // If it deserialized to a plain string, return it directly
+    if (typeof deserialized === 'string') {
+      return deserialized;
+    }
+    return JSON.stringify(deserialized, null, 2);
+  } catch {
+    return text;
+  }
+}
 
 interface StreamViewerProps {
   streamId: string;
@@ -122,7 +142,7 @@ export function StreamViewer({
                   >
                     [{index}]
                   </span>
-                  {chunk.text}
+                  {deserializeChunkText(chunk.text)}
                 </code>
               </pre>
             ))

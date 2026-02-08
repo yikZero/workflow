@@ -46,8 +46,31 @@ export function useStreamReader(env: EnvMap, streamId: string | null) {
     const addChunk = (value: unknown) => {
       if (mounted && value !== undefined && value !== null) {
         const chunkId = chunkIdRef.current++;
-        const text =
-          typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        let text: string;
+        if (typeof value === 'string') {
+          text = value;
+        } else if (value instanceof Uint8Array) {
+          text = new TextDecoder().decode(value);
+        } else if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+          const buf =
+            value instanceof ArrayBuffer
+              ? value
+              : value.buffer.slice(
+                  value.byteOffset,
+                  value.byteOffset + value.byteLength
+                );
+          text = new TextDecoder().decode(buf);
+        } else {
+          text = JSON.stringify(value, null, 2);
+        }
+        // Attempt to pretty-print if the decoded text is JSON
+        if (text.startsWith('{') || text.startsWith('[')) {
+          try {
+            text = JSON.stringify(JSON.parse(text), null, 2);
+          } catch {
+            // not JSON, keep as-is
+          }
+        }
         setChunks((prev) => [...prev, { id: chunkId, text }]);
       }
     };
