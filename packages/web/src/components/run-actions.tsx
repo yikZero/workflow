@@ -285,12 +285,14 @@ export function RunActionsDropdownItems({
         </TooltipContent>
       </Tooltip>
 
-      {/* Wake Up Sleeps - disabled if no active sleeps */}
+      {/* Wake Up Sleeps - disabled if no active sleeps or run is not active */}
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuItem
             onClick={onCancelSleeps}
-            disabled={eventsLoading || !hasPendingSleeps || wakingUp}
+            disabled={
+              eventsLoading || !hasPendingSleeps || !isRunActive || wakingUp
+            }
           >
             <AlarmClockOff className="h-4 w-4 mr-2" />
             {wakingUp ? 'Waking up...' : 'Wake Up Sleeps'}
@@ -382,13 +384,17 @@ export function RunActionsButtons({
           </TooltipContent>
         </Tooltip>
 
-        {/* Wake Up Sleeps */}
+        {/* Wake Up Sleeps - disabled if no active sleeps or run is not active */}
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuItem
               onClick={handleWakeUp}
               disabled={
-                loading || eventsLoading || !hasPendingSleeps || wakingUp
+                loading ||
+                eventsLoading ||
+                !hasPendingSleeps ||
+                !isRunActive ||
+                wakingUp
               }
             >
               <AlarmClockOff className="h-4 w-4 mr-2" />

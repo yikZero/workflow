@@ -282,6 +282,15 @@ export function RunDetailView({
   } = useWorkflowTraceViewerData(env, runId, { live: true });
   const run = runData ?? ({} as WorkflowRun);
 
+  const handleCancelRunFromContext = useCallback(
+    async (targetRunId: string) => {
+      await cancelRun(env, targetRunId);
+      await update();
+      toast.success('Run cancelled successfully');
+    },
+    [env, update]
+  );
+
   const [spanSelection, setSpanSelection] = useState<SpanSelectionInfo | null>(
     null
   );
@@ -356,7 +365,10 @@ export function RunDetailView({
       toast.success('New run started successfully', {
         description: `Run ID: ${newRunId}`,
       });
-      // Navigate to the new run
+      // Radix AlertDialog sets pointer-events:none on document.body while open.
+      // Navigating before its cleanup runs leaves the new page unclickable.
+      // Ensure pointer-events are restored before client-side navigation.
+      document.body.style.pointerEvents = '';
       router.push(`/run/${newRunId}`);
     } catch (err) {
       console.error('Failed to re-run workflow:', err);
@@ -640,6 +652,7 @@ export function RunDetailView({
                     onStreamClick={handleStreamClick}
                     onWakeUpSleep={handleWakeUpSleep}
                     onResolveHook={handleResolveHook}
+                    onCancelRun={handleCancelRunFromContext}
                   />
                 </div>
               </ErrorBoundary>
