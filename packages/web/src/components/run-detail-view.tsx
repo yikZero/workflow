@@ -607,16 +607,16 @@ export function RunDetailView({
                 <List className="h-4 w-4" />
                 Trace
               </TabsTrigger>
+              <TabsTrigger value="events" className="gap-2">
+                <List className="h-4 w-4" />
+                Events
+              </TabsTrigger>
               {isLocalBackend && (
                 <TabsTrigger value="graph" className="gap-2">
                   <GitBranch className="h-4 w-4" />
                   Graph
                 </TabsTrigger>
               )}
-              <TabsTrigger value="events" className="gap-2">
-                <List className="h-4 w-4" />
-                Events
-              </TabsTrigger>
               <TabsTrigger value="streams" className="gap-2">
                 <List className="h-4 w-4" />
                 Streams
