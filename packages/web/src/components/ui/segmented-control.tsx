@@ -1,6 +1,7 @@
 'use client';
 
 import type * as React from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface SegmentedControlProps {
@@ -16,6 +17,11 @@ export function SegmentedControl({
   options,
   className,
 }: SegmentedControlProps) {
+  // Defer active styling until after hydration to avoid mismatch
+  // (e.g. next-themes resolves theme client-side only)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   return (
     <div
       className={cn(
@@ -30,7 +36,7 @@ export function SegmentedControl({
           onClick={() => onValueChange(option.value)}
           className={cn(
             'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
-            value === option.value
+            mounted && value === option.value
               ? 'bg-background text-foreground shadow'
               : 'hover:bg-background/50'
           )}
