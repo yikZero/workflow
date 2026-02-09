@@ -1545,6 +1545,70 @@ describe('e2e', () => {
     }
   );
 
+  test(
+    'stepFunctionAsStartArgWorkflow - step function reference passed as start() argument',
+    { timeout: 120_000 },
+    async () => {
+      // This test verifies that step function references can be:
+      // 1. Serialized in the client bundle (the SWC plugin sets stepId property on the function)
+      // 2. Passed as arguments to start()
+      // 3. Deserialized in the workflow bundle (using WORKFLOW_USE_STEP from globalThis)
+      // 4. Invoked from within a step function in the workflow
+      //
+      // In client mode, the SWC plugin sets the `stepId` property directly on step functions
+      // (e.g., `myStepFn.stepId = "step//..."`). This allows the serialization layer to detect
+      // step functions and serialize them by their stepId.
+      //
+      // The workflow receives a step function reference (add) and:
+      // 1. Calls stepFn(3, 5) directly -> 8
+      // 2. Passes it to invokeStepFn(stepFn, 3, 5) -> stepFn(3, 5) = 8
+      // 3. Calls stepFn(8, 8) -> 16
+
+      // Look up the stepId for the `add` function from 98_duplicate_case.ts
+      // This simulates what the SWC plugin does in client mode: setting stepId on the function
+      const manifest = await fetchManifest();
+      const stepFile = Object.keys(manifest.steps).find((f) =>
+        f.includes('98_duplicate_case')
+      );
+      assert(stepFile, 'Could not find 98_duplicate_case in manifest steps');
+      const addStepInfo = manifest.steps[stepFile]?.['add'];
+      assert(addStepInfo, 'Could not find "add" step in manifest');
+
+      // Create a function reference with stepId, mimicking what the SWC client transform does
+      const addStepRef = Object.assign(() => {}, {
+        stepId: addStepInfo.stepId,
+      });
+
+      const run = await start(await e2e('stepFunctionAsStartArgWorkflow'), [
+        addStepRef,
+        3,
+        5,
+      ]);
+      const returnValue = await run.returnValue;
+
+      // Verify the workflow result
+      // directResult: stepFn called directly from workflow code = add(3, 5) = 8
+      // viaStepResult: stepFn called via invokeStepFn = add(3, 5) = 8
+      // doubled: stepFn(8, 8) = 16
+      expect(returnValue).toEqual({
+        directResult: 8,
+        viaStepResult: 8,
+        doubled: 16,
+      });
+
+      // Verify the run completed successfully via CLI
+      const { json: runData } = await cliInspectJson(
+        `runs ${run.runId} --withData`
+      );
+      expect(runData.status).toBe('completed');
+      expect(runData.output).toEqual({
+        directResult: 8,
+        viaStepResult: 8,
+        doubled: 16,
+      });
+    }
+  );
+
   // ==================== PAGES ROUTER TESTS ====================
   // Tests for Next.js Pages Router API endpoint (only runs for nextjs-turbopack and nextjs-webpack)
   const isNextJsApp =
