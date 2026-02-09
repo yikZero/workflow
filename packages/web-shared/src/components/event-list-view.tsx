@@ -9,6 +9,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deserializeByteObjects, formatDuration } from '../lib/utils';
 import { Skeleton } from './ui/skeleton';
 
+const BUTTON_RESET_STYLE: React.CSSProperties = {
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  border: 'none',
+  background: 'transparent',
+  padding: 0,
+};
+const DOT_PULSE_ANIMATION =
+  'workflow-dot-pulse 1.25s cubic-bezier(0, 0, 0.2, 1) infinite';
+
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
@@ -37,45 +47,52 @@ function formatEventType(eventType: Event['eventType']): string {
 // Event type → status color (small dot only)
 // ──────────────────────────────────────────────────────────────────────────
 
-/** Returns a Tailwind bg class matching the runs table StatusBadge colors. */
-function getStatusDotClass(eventType: Event['eventType']): string {
+/** Returns a CSS color using Geist design tokens for the status dot. */
+function getStatusDotColor(eventType: string): string {
   // Failed → red
-  if (eventType === 'step_failed' || eventType === 'run_failed') {
-    return 'bg-red-500';
+  if (
+    eventType === 'step_failed' ||
+    eventType === 'run_failed' ||
+    eventType === 'workflow_failed'
+  ) {
+    return 'var(--ds-red-700)';
   }
-  // Cancelled → yellow
+  // Cancelled → amber
   if (eventType === 'run_cancelled') {
-    return 'bg-yellow-500';
+    return 'var(--ds-amber-700)';
   }
-  // Retrying → yellow (similar to cancelled — warning state)
+  // Retrying → amber
   if (eventType === 'step_retrying') {
-    return 'bg-yellow-500';
+    return 'var(--ds-amber-700)';
   }
-  // Completed/succeeded → emerald
+  // Completed/succeeded → green
   if (
     eventType === 'step_completed' ||
     eventType === 'run_completed' ||
+    eventType === 'workflow_completed' ||
     eventType === 'hook_disposed' ||
     eventType === 'wait_completed'
   ) {
-    return 'bg-emerald-500';
+    return 'var(--ds-green-700)';
   }
   // Started/running → blue
   if (
     eventType === 'step_started' ||
     eventType === 'run_started' ||
+    eventType === 'workflow_started' ||
     eventType === 'hook_received'
   ) {
-    return 'bg-blue-500';
+    return 'var(--ds-blue-700)';
   }
   // Created/pending → gray
-  return 'bg-gray-400';
+  return 'var(--ds-gray-600)';
 }
 
 /** Whether this event starts a new correlation lifecycle */
 function isLifecycleStart(eventType: string): boolean {
   return (
     eventType === 'step_created' ||
+    eventType === 'step_started' ||
     eventType === 'hook_created' ||
     eventType === 'wait_created'
   );
@@ -141,21 +158,24 @@ function buildDurationMap(events: Event[]): Map<string, DurationInfo> {
   for (const event of events) {
     const ts = new Date(event.createdAt).getTime();
     const key = event.correlationId ?? '__run__';
+    const type: string = event.eventType;
 
     // Track created times (first event for each correlation)
-    if (
-      event.eventType === 'step_created' ||
-      event.eventType === 'run_created'
-    ) {
+    if (type === 'step_created' || type === 'run_created') {
       createdTimes.set(key, ts);
     }
 
     // Track started times & compute queued duration
     if (
-      event.eventType === 'step_started' ||
-      event.eventType === 'run_started'
+      type === 'step_started' ||
+      type === 'run_started' ||
+      type === 'workflow_started'
     ) {
       startedTimes.set(key, ts);
+      // If no explicit created event was seen, use the started time as created
+      if (!createdTimes.has(key)) {
+        createdTimes.set(key, ts);
+      }
       const createdAt = createdTimes.get(key);
       const info = durations.get(key) ?? {};
       if (createdAt !== undefined) {
@@ -166,13 +186,15 @@ function buildDurationMap(events: Event[]): Map<string, DurationInfo> {
 
     // Compute ran duration on terminal events
     if (
-      event.eventType === 'step_completed' ||
-      event.eventType === 'step_failed' ||
-      event.eventType === 'run_completed' ||
-      event.eventType === 'run_failed' ||
-      event.eventType === 'run_cancelled' ||
-      event.eventType === 'wait_completed' ||
-      event.eventType === 'hook_disposed'
+      type === 'step_completed' ||
+      type === 'step_failed' ||
+      type === 'run_completed' ||
+      type === 'run_failed' ||
+      type === 'run_cancelled' ||
+      type === 'workflow_completed' ||
+      type === 'workflow_failed' ||
+      type === 'wait_completed' ||
+      type === 'hook_disposed'
     ) {
       const startedAt = startedTimes.get(key);
       const info = durations.get(key) ?? {};
@@ -192,7 +214,10 @@ function isRunLevel(eventType: string): boolean {
     eventType === 'run_started' ||
     eventType === 'run_completed' ||
     eventType === 'run_failed' ||
-    eventType === 'run_cancelled'
+    eventType === 'run_cancelled' ||
+    eventType === 'workflow_started' ||
+    eventType === 'workflow_completed' ||
+    eventType === 'workflow_failed'
   );
 }
 
@@ -240,7 +265,10 @@ function buildEventTree(events: Event[]): EventTreeNode[] {
     let isBranchEnd = false;
 
     if (!isRun && corrId) {
-      if (isLifecycleStart(event.eventType)) {
+      // Start a lane on lifecycle-start events, but only if this
+      // correlation doesn't already have a lane (step_started should
+      // not create a second lane if step_created already opened one).
+      if (isLifecycleStart(event.eventType) && !correlationToLane.has(corrId)) {
         lane = nextLane++;
         correlationToLane.set(corrId, lane);
         activeLanes.add(lane);
@@ -295,9 +323,8 @@ function TreeGutter({
   isFirst,
   isLast,
   selectedLane,
-  statusDotClass,
+  statusDotColor,
   pulse = false,
-  /** When true, only draw lane continuation lines (for expanded detail areas) */
   continuationOnly = false,
 }: {
   node: EventTreeNode;
@@ -305,8 +332,8 @@ function TreeGutter({
   isFirst: boolean;
   isLast: boolean;
   selectedLane?: number;
-  /** Tailwind bg class for the status color dot */
-  statusDotClass?: string;
+  /** CSS color for the status dot (Geist design token) */
+  statusDotColor?: string;
   /** Whether dots should pulse (group is selected and this row belongs to it) */
   pulse?: boolean;
   continuationOnly?: boolean;
@@ -360,11 +387,23 @@ function TreeGutter({
             >
               {pulse && (
                 <div
-                  className={`absolute inset-0 rounded-full ${statusDotClass ?? ''} animate-ping opacity-75`}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: '50%',
+                    backgroundColor: statusDotColor,
+                    opacity: 0.75,
+                    animation: DOT_PULSE_ANIMATION,
+                  }}
                 />
               )}
               <div
-                className={`w-full h-full rounded-full ${statusDotClass ?? ''}`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: '50%',
+                  backgroundColor: statusDotColor,
+                }}
               />
             </div>
           )}
@@ -418,11 +457,23 @@ function TreeGutter({
             >
               {pulse && (
                 <div
-                  className={`absolute inset-0 rounded-full ${statusDotClass ?? ''} animate-ping opacity-75`}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: '50%',
+                    backgroundColor: statusDotColor,
+                    opacity: 0.75,
+                    animation: DOT_PULSE_ANIMATION,
+                  }}
                 />
               )}
               <div
-                className={`w-full h-full rounded-full ${statusDotClass ?? ''}`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: '50%',
+                  backgroundColor: statusDotColor,
+                }}
               />
             </div>
           )}
@@ -511,12 +562,16 @@ function CopyableCell({
           type="button"
           onClick={handleCopy}
           className="flex-shrink-0 opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-[var(--ds-gray-alpha-200)]"
+          style={BUTTON_RESET_STYLE}
           aria-label={`Copy ${value}`}
         >
           {copied ? (
-            <Check className="h-3 w-3 text-green-500" />
+            <Check
+              className="h-3 w-3"
+              style={{ color: 'var(--ds-green-700)' }}
+            />
           ) : (
-            <Copy className="h-3 w-3 text-muted-foreground" />
+            <Copy className="h-3 w-3" style={{ color: 'var(--ds-gray-700)' }} />
           )}
         </button>
       ) : null}
@@ -588,13 +643,17 @@ function PayloadBlock({ data }: { data: unknown }): ReactNode {
       <button
         type="button"
         onClick={handleCopy}
-        className="absolute bottom-2 right-2 opacity-0 group-hover/payload:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-[var(--ds-gray-alpha-200)]"
+        className="absolute bottom-2 right-2 opacity-0 group-hover/payload:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-md text-xs hover:bg-[var(--ds-gray-alpha-200)]"
+        style={{ ...BUTTON_RESET_STYLE, color: 'var(--ds-gray-700)' }}
         aria-label="Copy payload"
       >
         {copied ? (
           <>
-            <Check className="h-3 w-3 text-green-500" />
-            <span className="text-green-500">Copied</span>
+            <Check
+              className="h-3 w-3"
+              style={{ color: 'var(--ds-green-700)' }}
+            />
+            <span style={{ color: 'var(--ds-green-700)' }}>Copied</span>
           </>
         ) : (
           <>
@@ -665,7 +724,7 @@ function EventRow({
     }
   }, [selectedLane, node.lane]);
 
-  const statusDotClass = getStatusDotClass(event.eventType);
+  const statusDotColor = getStatusDotColor(event.eventType);
   const createdAt = new Date(event.createdAt);
   const hasExistingEventData = 'eventData' in event && event.eventData != null;
   const isRun = isRunLevel(event.eventType);
@@ -768,7 +827,7 @@ function EventRow({
           isFirst={isFirst}
           isLast={isLast && !isExpanded}
           selectedLane={activeLane}
-          statusDotClass={statusDotClass}
+          statusDotColor={statusDotColor}
           pulse={isPulsing}
         />
 
@@ -782,6 +841,7 @@ function EventRow({
             type="button"
             onClick={handleExpandToggle}
             className="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded hover:bg-[var(--ds-gray-alpha-200)] transition-colors"
+            style={BUTTON_RESET_STYLE}
             aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
           >
             <ChevronRight
@@ -794,21 +854,48 @@ function EventRow({
           </button>
 
           {/* Time */}
-          <div className="text-xs text-muted-foreground tabular-nums flex-1 min-w-0 px-4">
+          <div
+            className="text-xs tabular-nums flex-1 min-w-0 px-4"
+            style={{ color: 'var(--ds-gray-900)' }}
+          >
             {formatEventTime(createdAt)}
           </div>
 
           {/* Event Type */}
           <div className="text-xs font-medium flex-1 min-w-0 px-4">
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <span className="relative inline-flex w-1.5 h-1.5 flex-shrink-0">
+            <span
+              className="inline-flex items-center gap-1.5"
+              style={{ color: 'var(--ds-gray-900)' }}
+            >
+              <span
+                style={{
+                  position: 'relative',
+                  display: 'inline-flex',
+                  width: 6,
+                  height: 6,
+                  flexShrink: 0,
+                }}
+              >
                 {isPulsing && (
                   <span
-                    className={`absolute inset-0 rounded-full ${statusDotClass} animate-ping opacity-75`}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      borderRadius: '50%',
+                      backgroundColor: statusDotColor,
+                      opacity: 0.75,
+                      animation: DOT_PULSE_ANIMATION,
+                    }}
                   />
                 )}
                 <span
-                  className={`relative w-1.5 h-1.5 rounded-full ${statusDotClass}`}
+                  style={{
+                    position: 'relative',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    backgroundColor: statusDotColor,
+                  }}
                 />
               </span>
               {formatEventType(event.eventType)}
@@ -859,7 +946,10 @@ function EventRow({
             {/* Duration info */}
             {(durationInfo?.queued !== undefined ||
               durationInfo?.ran !== undefined) && (
-              <div className="px-2 pb-1.5 text-xs text-muted-foreground flex gap-3">
+              <div
+                className="px-2 pb-1.5 text-xs flex gap-3"
+                style={{ color: 'var(--ds-gray-900)' }}
+              >
                 {durationInfo.queued !== undefined &&
                   durationInfo.queued > 0 && (
                     <span>
@@ -904,7 +994,12 @@ function EventRow({
                 <Skeleton className="h-3" style={{ width: '60%' }} />
               </div>
             ) : (
-              <div className="p-2 text-xs text-muted-foreground">No data</div>
+              <div
+                className="p-2 text-xs"
+                style={{ color: 'var(--ds-gray-900)' }}
+              >
+                No data
+              </div>
             )}
           </div>
         </div>
@@ -1024,8 +1119,12 @@ export function EventListView({
 
   return (
     <div className="h-full overflow-auto" ref={scrollContainerRef}>
+      <style>{`@keyframes workflow-dot-pulse{0%{transform:scale(1);opacity:.7}70%,100%{transform:scale(2.2);opacity:0}}`}</style>
       {/* Search bar */}
-      <div className="sticky top-0 z-20 bg-background" style={{ padding: 6 }}>
+      <div
+        className="sticky top-0 z-20"
+        style={{ padding: 6, backgroundColor: 'var(--ds-background-100)' }}
+      >
         <label
           style={{
             display: 'flex',
@@ -1093,9 +1192,11 @@ export function EventListView({
 
       {/* Header */}
       <div
-        className="flex items-center gap-0 text-sm font-medium text-muted-foreground sticky top-[52px] z-10 h-10 border-b bg-background"
+        className="flex items-center gap-0 text-sm font-medium sticky top-[52px] z-10 h-10 border-b"
         style={{
           borderColor: 'var(--ds-gray-alpha-200)',
+          color: 'var(--ds-gray-900)',
+          backgroundColor: 'var(--ds-background-100)',
         }}
       >
         <div
@@ -1134,8 +1235,11 @@ export function EventListView({
 
       {/* Summary */}
       <div
-        className="mt-4 pt-3 border-t text-xs text-muted-foreground px-3"
-        style={{ borderColor: 'var(--ds-gray-alpha-200)' }}
+        className="mt-4 pt-3 border-t text-xs px-3"
+        style={{
+          borderColor: 'var(--ds-gray-alpha-200)',
+          color: 'var(--ds-gray-900)',
+        }}
       >
         {sortedEvents.length} event{sortedEvents.length !== 1 ? 's' : ''} total
       </div>
