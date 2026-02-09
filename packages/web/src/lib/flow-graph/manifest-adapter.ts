@@ -190,14 +190,7 @@ export function adaptManifest(
 ): WorkflowGraphManifest {
   const workflows: Record<string, WorkflowGraph> = {};
 
-  console.log('[adaptManifest] Raw manifest version:', raw?.version);
-  console.log(
-    '[adaptManifest] Raw workflows keys:',
-    Object.keys(raw?.workflows || {})
-  );
-
   if (!raw?.workflows) {
-    console.log('[adaptManifest] No workflows in manifest, returning empty');
     return { version: raw?.version || '1.0.0', workflows: {} };
   }
 
@@ -221,11 +214,6 @@ export function adaptManifest(
       workflows[entry.workflowId] = workflowGraph;
     }
   }
-
-  console.log(
-    '[adaptManifest] Adapted workflows count:',
-    Object.keys(workflows).length
-  );
 
   return {
     version: raw.version,

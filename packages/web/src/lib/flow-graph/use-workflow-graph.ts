@@ -34,7 +34,6 @@ export function useWorkflowGraphManifest() {
     setError(null);
 
     try {
-      console.log('[useWorkflowGraphManifest] Fetching with env:', env);
       const { result: rawManifest, error } = await unwrapServerActionResult(
         fetchWorkflowsManifest(env)
       );
@@ -42,21 +41,9 @@ export function useWorkflowGraphManifest() {
         setError(error);
         return;
       }
-      console.log(
-        '[useWorkflowGraphManifest] Raw manifest after unwrap:',
-        rawManifest
-      );
-      console.log(
-        '[useWorkflowGraphManifest] Workflows in raw:',
-        Object.keys(rawManifest?.workflows || {})
-      );
 
       // Transform the new manifest format to the format expected by UI components
       const adaptedManifest = adaptManifest(rawManifest);
-      console.log(
-        '[useWorkflowGraphManifest] Adapted manifest workflows:',
-        Object.keys(adaptedManifest.workflows)
-      );
       setManifest(adaptedManifest);
     } catch (err) {
       const error =
