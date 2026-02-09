@@ -538,29 +538,6 @@ export async function stepFunctionPassingWorkflow() {
   return result;
 }
 
-async function invokeStepFn(
-  stepFn: (a: number, b: number) => Promise<number>,
-  x: number,
-  y: number
-): Promise<number> {
-  'use step';
-  return stepFn(x, y);
-}
-
-export async function stepFunctionAsStartArgWorkflow(
-  stepFn: (a: number, b: number) => Promise<number>,
-  x: number,
-  y: number
-): Promise<{ directResult: number; viaStepResult: number; doubled: number }> {
-  'use workflow';
-
-  const directResult = await stepFn(x, y);
-  const viaStepResult = await invokeStepFn(stepFn, x, y);
-  const doubled = await stepFn(directResult, directResult);
-
-  return { directResult, viaStepResult, doubled };
-}
-
 async function stepWithStepFunctionArg(stepFn: (x: number) => Promise<number>) {
   'use step';
   // Call the passed step function reference
