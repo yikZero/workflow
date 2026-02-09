@@ -9,6 +9,10 @@ type WorkflowPatternMatch = import('@workflow/builders').WorkflowPatternMatch;
 
 // Cache decorator options per working directory to avoid reading tsconfig for every file
 const decoratorOptionsCache = new Map<string, Promise<DecoratorOptions>>();
+const workflowAliasResolutionCache = new Map<
+  string,
+  Promise<string | undefined>
+>();
 
 // Cache for shared utilities from @workflow/builders (ESM module loaded dynamically in CommonJS context)
 let cachedBuildersModule: typeof import('@workflow/builders') | null = null;
@@ -20,36 +24,53 @@ async function resolveWorkflowAliasRelativePath(
   absoluteFilePath: string,
   workingDir: string
 ): Promise<string | undefined> {
-  const fileName = basename(absoluteFilePath);
-  const aliasDirs = ['workflows', 'src/workflows'];
-  const resolvedFilePath = await realpath(absoluteFilePath).catch(
-    () => undefined
-  );
-  if (!resolvedFilePath) {
+  const normalizedAbsolutePath = absoluteFilePath.replace(/\\/g, '/');
+  // Only workflow source files can map to app-level `workflows/*` aliases.
+  if (!normalizedAbsolutePath.includes('/workflows/')) {
     return undefined;
   }
 
-  const aliases = await Promise.all(
-    aliasDirs.map(async (aliasDir) => {
-      const candidatePath = resolve(workingDir, aliasDir, fileName);
-      try {
-        await access(candidatePath);
-      } catch {
-        return undefined;
-      }
-      const resolvedCandidatePath = await realpath(candidatePath).catch(
-        () => undefined
-      );
-      if (!resolvedCandidatePath) {
-        return undefined;
-      }
-      return resolvedCandidatePath === resolvedFilePath
-        ? `${aliasDir}/${fileName}`
-        : undefined;
-    })
-  );
+  const cacheKey = `${workingDir}::${normalizedAbsolutePath}`;
+  const cached = workflowAliasResolutionCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-  return aliases.find((aliasPath): aliasPath is string => Boolean(aliasPath));
+  const resolutionPromise = (async () => {
+    const fileName = basename(absoluteFilePath);
+    const aliasDirs = ['workflows', 'src/workflows'];
+    const resolvedFilePath = await realpath(absoluteFilePath).catch(
+      () => undefined
+    );
+    if (!resolvedFilePath) {
+      return undefined;
+    }
+
+    const aliases = await Promise.all(
+      aliasDirs.map(async (aliasDir) => {
+        const candidatePath = resolve(workingDir, aliasDir, fileName);
+        try {
+          await access(candidatePath);
+        } catch {
+          return undefined;
+        }
+        const resolvedCandidatePath = await realpath(candidatePath).catch(
+          () => undefined
+        );
+        if (!resolvedCandidatePath) {
+          return undefined;
+        }
+        return resolvedCandidatePath === resolvedFilePath
+          ? `${aliasDir}/${fileName}`
+          : undefined;
+      })
+    );
+
+    return aliases.find((aliasPath): aliasPath is string => Boolean(aliasPath));
+  })();
+
+  workflowAliasResolutionCache.set(cacheKey, resolutionPromise);
+  return resolutionPromise;
 }
 
 function shouldUseSocketDiscovery(): boolean {
