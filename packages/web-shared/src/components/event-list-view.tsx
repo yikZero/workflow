@@ -219,7 +219,19 @@ function buildEventTree(events: Event[]): EventTreeNode[] {
 
   const nodes: EventTreeNode[] = [];
 
-  for (const event of events) {
+  // Pre-compute the last event index for each correlation so we can
+  // terminate lanes that never receive a proper lifecycle-end event
+  // (e.g. hook_received with no subsequent hook_disposed because the run failed).
+  const lastEventIndexByCorrelation = new Map<string, number>();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const corrId = events[i].correlationId;
+    if (corrId && !lastEventIndexByCorrelation.has(corrId)) {
+      lastEventIndexByCorrelation.set(corrId, i);
+    }
+  }
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
     const corrId = event.correlationId;
     const isRun = isRunLevel(event.eventType);
 
@@ -238,6 +250,17 @@ function buildEventTree(events: Event[]): EventTreeNode[] {
         if (isLifecycleEnd(event.eventType) && lane >= 0) {
           isBranchEnd = true;
         }
+      }
+
+      // If this is the last event for this correlation and it wasn't
+      // already marked as a branch end, terminate the lane here to
+      // avoid an orphan gutter line extending past the last event.
+      if (
+        !isBranchEnd &&
+        lane >= 0 &&
+        lastEventIndexByCorrelation.get(corrId) === i
+      ) {
+        isBranchEnd = true;
       }
     }
 

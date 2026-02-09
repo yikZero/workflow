@@ -89,23 +89,49 @@ export async function unwrapServerActionResult<T>(
   try {
     result = await promise;
   } catch (error) {
+    // The caught error might be a raw Error (not a ServerActionError).
+    // Next.js server actions can throw non-serializable errors that arrive
+    // as empty objects. Build a proper error from whatever we received.
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : 'Server action failed';
+    const cause =
+      error instanceof Error ? error.stack || error.message : String(error);
     result = {
       success: false,
-      error: error as ServerActionError,
+      error: {
+        message,
+        layer: 'server',
+        cause,
+        request: { status: 500, operation: 'unknown', params: {} },
+      },
     };
   }
   if (!result.success) {
-    console.error('[web-api-client] error', result.error);
-    if (!result.error) {
+    const err = result.error;
+    if (!err || !isServerActionError(err)) {
+      // Error is missing or malformed (e.g. empty {} from serialization failure)
+      const fallbackMessage =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: unknown }).message)
+          : 'Unknown error occurred';
+      // Use console.warn to avoid Next.js dev overlay for handled errors
+      console.warn('[web-api-client] error:', fallbackMessage);
       return {
-        error: new WorkflowWebAPIError('Unknown error occurred', {
+        error: new WorkflowWebAPIError(fallbackMessage, {
           layer: 'client',
         }),
         result: null,
       };
     }
+    // Use console.warn to avoid Next.js dev overlay — callers decide
+    // whether to surface the error to the user or silently handle it.
+    console.warn('[web-api-client] error:', err.message, err.request);
     return {
-      error: createWorkflowAPIError(result.error),
+      error: createWorkflowAPIError(err),
       result: null,
     };
   }
@@ -1052,7 +1078,14 @@ export function useWorkflowResourceData(
         fetchHook(env, resourceId, 'all')
       );
       if (error) {
-        setError(error);
+        // Hook may no longer exist after resolution/disposal.
+        // If it's a "not found" error, silently ignore it and keep
+        // whatever data the span attributes already provide.
+        const isNotFound =
+          error.message?.toLowerCase().includes('not found') ?? false;
+        if (!isNotFound) {
+          setError(error);
+        }
         return;
       }
       setData(result);

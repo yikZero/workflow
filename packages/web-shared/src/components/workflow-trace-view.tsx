@@ -1,7 +1,7 @@
 'use client';
 
 import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
-import { Clock, Copy, Info, Type, XCircle } from 'lucide-react';
+import { Clock, Copy, Info, Send, Type, XCircle } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -11,6 +11,7 @@ import {
   EntityDetailPanel,
   type SpanSelectionInfo,
 } from './sidebar/entity-detail-panel';
+import { ResolveHookModal } from './sidebar/resolve-hook-modal';
 import {
   TraceViewerContextProvider,
   TraceViewerTimeline,
@@ -370,19 +371,27 @@ function SpanContextMenu({
 function TraceViewerWithContextMenu({
   trace,
   run,
+  hooks,
   isLive,
   onWakeUpSleep,
   onCancelRun,
+  onResolveHook,
   children,
 }: {
   trace: { spans: Span[] };
   run: WorkflowRun;
+  hooks: Hook[];
   isLive: boolean;
   onWakeUpSleep?: (
     runId: string,
     correlationId: string
   ) => Promise<{ stoppedCount: number }>;
   onCancelRun?: (runId: string) => Promise<void>;
+  onResolveHook?: (
+    hookToken: string,
+    payload: unknown,
+    hook?: Hook
+  ) => Promise<void>;
   children: ReactNode;
 }): ReactNode {
   const { dispatch } = useTraceViewer();
@@ -390,6 +399,12 @@ function TraceViewerWithContextMenu({
   // Drive active span widths at 60fps without React re-renders
   useLiveTick(isLive);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [resolveHookTarget, setResolveHookTarget] = useState<Hook | null>(null);
+  const [resolvingHook, setResolvingHook] = useState(false);
+  // Track hooks resolved in this session so the context menu item hides immediately
+  const [resolvedHookIds, setResolvedHookIds] = useState<Set<string>>(
+    new Set()
+  );
 
   // Build a lookup map: spanId → span
   const spanLookup = useMemo(() => {
@@ -399,6 +414,53 @@ function TraceViewerWithContextMenu({
     }
     return map;
   }, [trace.spans]);
+
+  // Build a lookup map: hookId → Hook
+  const hookLookup = useMemo(() => {
+    const map = new Map<string, Hook>();
+    for (const hook of hooks) {
+      map.set(hook.hookId, hook);
+    }
+    return map;
+  }, [hooks]);
+
+  const handleResolveHook = useCallback(
+    async (payload: unknown) => {
+      if (resolvingHook || !resolveHookTarget || !onResolveHook) return;
+      if (!resolveHookTarget.token) {
+        toast.error('Unable to resolve hook', {
+          description:
+            'Missing hook token. Try refreshing the run data and retry.',
+        });
+        return;
+      }
+      try {
+        setResolvingHook(true);
+        await onResolveHook(
+          resolveHookTarget.token,
+          payload,
+          resolveHookTarget
+        );
+        toast.success('Hook resolved', {
+          description: 'The payload has been sent and the hook resolved.',
+        });
+        // Mark this hook as resolved locally so the menu item hides immediately
+        setResolvedHookIds((prev) =>
+          new Set(prev).add(resolveHookTarget.hookId)
+        );
+        setResolveHookTarget(null);
+      } catch (err) {
+        console.error('Failed to resolve hook:', err);
+        toast.error('Failed to resolve hook', {
+          description:
+            err instanceof Error ? err.message : 'An unknown error occurred',
+        });
+      } finally {
+        setResolvingHook(false);
+      }
+    },
+    [onResolveHook, resolveHookTarget, resolvingHook]
+  );
 
   const handleContextMenu = useCallback(
     (e: ReactMouseEvent): void => {
@@ -476,6 +538,29 @@ function TraceViewerWithContextMenu({
         });
       }
 
+      // Hook-specific: Resolve Hook (only on active, unresolved hooks)
+      if (menu.resourceType === 'hook' && isRunActive && onResolveHook) {
+        const hook = hookLookup.get(menu.spanId);
+        const span = spanLookup.get(menu.spanId);
+        // Check data-level disposedAt, span events, AND local resolved state
+        const hookData = span?.attributes?.data as
+          | { disposedAt?: unknown }
+          | undefined;
+        const isDisposed =
+          Boolean(hookData?.disposedAt) ||
+          Boolean(span?.events?.some((e) => e.name === 'hook_disposed')) ||
+          resolvedHookIds.has(menu.spanId);
+        if (hook?.token && !isDisposed) {
+          items.push({
+            label: 'Resolve Hook',
+            icon: <Send className="h-3.5 w-3.5" />,
+            action: () => {
+              setResolveHookTarget(hook);
+            },
+          });
+        }
+      }
+
       // Run-specific: Cancel (only on active runs)
       if (menu.resourceType === 'run' && isRunActive && onCancelRun) {
         items.push({
@@ -536,7 +621,16 @@ function TraceViewerWithContextMenu({
 
       return items;
     },
-    [dispatch, onWakeUpSleep, onCancelRun, run.runId, run.completedAt]
+    [
+      dispatch,
+      onWakeUpSleep,
+      onCancelRun,
+      onResolveHook,
+      hookLookup,
+      resolvedHookIds,
+      run.runId,
+      run.completedAt,
+    ]
   );
 
   return (
@@ -549,6 +643,12 @@ function TraceViewerWithContextMenu({
           onClose={closeMenu}
         />
       ) : null}
+      <ResolveHookModal
+        isOpen={resolveHookTarget !== null}
+        onClose={() => setResolveHookTarget(null)}
+        onSubmit={handleResolveHook}
+        isSubmitting={resolvingHook}
+      />
     </div>
   );
 }
@@ -640,6 +740,7 @@ export const WorkflowTraceViewer = ({
           <ErrorBoundary title="Failed to load entity details">
             <EntityDetailPanel
               run={run}
+              hooks={hooks}
               onStreamClick={onStreamClick}
               spanDetailData={spanDetailData ?? null}
               spanDetailError={spanDetailError}
@@ -654,9 +755,11 @@ export const WorkflowTraceViewer = ({
         <TraceViewerWithContextMenu
           trace={trace}
           run={run}
+          hooks={hooks}
           isLive={isLive}
           onWakeUpSleep={onWakeUpSleep}
           onCancelRun={onCancelRun}
+          onResolveHook={onResolveHook}
         >
           <TraceViewerTimeline
             eagerRender
