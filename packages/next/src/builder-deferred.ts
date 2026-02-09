@@ -99,10 +99,14 @@ export async function getNextBuilderDeferred() {
           await this.buildDiscoveredFiles(inputFiles, implicitStepFiles);
           didBuildSucceed = true;
         } catch (error) {
-          console.warn(
-            '[workflow] Deferred entries build failed. Will retry only after inputs change.',
-            error
-          );
+          if (this.config.watch) {
+            console.warn(
+              '[workflow] Deferred entries build failed. Will retry only after inputs change.',
+              error
+            );
+          } else {
+            throw error;
+          }
         } finally {
           // Record attempted signature even on failure so we don't loop on the
           // same broken input graph.
