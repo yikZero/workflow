@@ -35,6 +35,7 @@ export function createDevTests(config?: DevTestConfig) {
   }
   describe('dev e2e', () => {
     const appPath = getWorkbenchAppPath();
+    const deploymentUrl = process.env.DEPLOYMENT_URL;
     const generatedStep = path.join(appPath, finalConfig.generatedStepPath);
     const generatedWorkflow = path.join(
       appPath,
@@ -44,12 +45,22 @@ export function createDevTests(config?: DevTestConfig) {
     const workflowsDir = finalConfig.workflowsDir ?? 'workflows';
     const restoreFiles: Array<{ path: string; content: string }> = [];
 
+    const fetchWithTimeout = (pathname: string) => {
+      if (!deploymentUrl) {
+        return Promise.resolve();
+      }
+
+      return fetch(new URL(pathname, deploymentUrl), {
+        signal: AbortSignal.timeout(5_000),
+      });
+    };
+
     const prewarm = async () => {
-      // pre-warm for dev watching
-      await fetch(new URL('/', process.env.DEPLOYMENT_URL)).catch(() => {});
-      await fetch(new URL('/api/chat', process.env.DEPLOYMENT_URL)).catch(
-        () => {}
-      );
+      // Pre-warm the app with bounded requests so cleanup hooks cannot hang.
+      await Promise.all([
+        fetchWithTimeout('/').catch(() => {}),
+        fetchWithTimeout('/api/chat').catch(() => {}),
+      ]);
     };
 
     beforeAll(async () => {
@@ -158,7 +169,7 @@ ${apiFileContent}`
 
         while (true) {
           try {
-            await fetch(new URL('/api/chat', process.env.DEPLOYMENT_URL));
+            await fetchWithTimeout('/api/chat');
             const workflowContent = await fs.readFile(
               generatedWorkflow,
               'utf8'

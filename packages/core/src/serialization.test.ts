@@ -1701,6 +1701,32 @@ describe('step function serialization', () => {
     expect(result).toBe(stepFn);
   });
 
+  it('should deserialize step function using workflows/example path aliases', () => {
+    const registeredStepId = 'step//./example/workflows/99_e2e//doubleNumber';
+    const aliasedStepId = 'step//./workflows/99_e2e//doubleNumber';
+    const stepFn = async () => 42;
+
+    registerStepFunction(registeredStepId, stepFn);
+
+    const revivers = getCommonRevivers(vmGlobalThis);
+    const result = revivers.StepFunction({ stepId: aliasedStepId });
+
+    expect(result).toBe(stepFn);
+  });
+
+  it('should deserialize step function using workflows/src path aliases', () => {
+    const registeredStepId = 'step//./src/workflows/99_e2e//doubleFromSrc';
+    const aliasedStepId = 'step//./workflows/99_e2e//doubleFromSrc';
+    const stepFn = async () => 42;
+
+    registerStepFunction(registeredStepId, stepFn);
+
+    const revivers = getCommonRevivers(vmGlobalThis);
+    const result = revivers.StepFunction({ stepId: aliasedStepId });
+
+    expect(result).toBe(stepFn);
+  });
+
   it('should throw error when reviver cannot find registered step function', () => {
     const revivers = getCommonRevivers(vmGlobalThis);
 
