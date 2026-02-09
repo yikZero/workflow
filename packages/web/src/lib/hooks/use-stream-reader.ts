@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { readStream } from '@/lib/workflow-api-client';
 import type { EnvMap } from '@/server/workflow-server-actions';
 
-interface Chunk {
+export interface Chunk {
   id: number;
   text: string;
 }

@@ -83,10 +83,28 @@ function getSegmentTags(
   spanDuration: number
 ): { label: string; duration: string }[] {
   const tags: { label: string; duration: string }[] = [];
-  for (const seg of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
     const label = SEGMENT_LABELS[seg.status];
     if (!label) continue; // skip "running" which has no label
-    const segDuration = (seg.endFraction - seg.startFraction) * spanDuration;
+    let segDuration = (seg.endFraction - seg.startFraction) * spanDuration;
+
+    // For terminal segments (succeeded/failed) with ~0 duration,
+    // use the preceding running segment's duration instead.
+    if (
+      segDuration < 1 &&
+      (seg.status === 'succeeded' || seg.status === 'failed') &&
+      i > 0
+    ) {
+      const prev = segments[i - 1];
+      if (prev.status === 'running') {
+        segDuration = (prev.endFraction - prev.startFraction) * spanDuration;
+      }
+    }
+
+    // Skip tags that still have no meaningful duration
+    if (segDuration < 1) continue;
+
     tags.push({ label, duration: formatDuration(segDuration) });
   }
   return tags;

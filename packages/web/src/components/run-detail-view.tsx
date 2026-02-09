@@ -11,6 +11,8 @@ import type { SpanSelectionInfo } from '@workflow/web-shared';
 import type { Event, Step, WorkflowRun } from '@workflow/world';
 import {
   AlertCircle,
+  Check,
+  Copy,
   GitBranch,
   HelpCircle,
   List,
@@ -162,6 +164,59 @@ interface RunDetailViewProps {
 }
 
 type Tab = 'trace' | 'graph' | 'streams' | 'events';
+
+function StreamSidebarItem({
+  streamId,
+  isSelected,
+  onSelect,
+}: {
+  streamId: string;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(streamId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div
+      className="group/stream flex items-center rounded-md transition-colors cursor-pointer"
+      style={{
+        backgroundColor: isSelected ? 'var(--ds-gray-200)' : undefined,
+      }}
+      onClick={onSelect}
+      onMouseEnter={(e) => {
+        if (!isSelected)
+          e.currentTarget.style.backgroundColor = 'var(--ds-gray-100)';
+      }}
+      onMouseLeave={(e) => {
+        if (!isSelected) e.currentTarget.style.backgroundColor = '';
+      }}
+    >
+      <span
+        className="flex-1 min-w-0 text-left px-3 py-2 text-xs font-mono truncate"
+        style={{ color: 'var(--ds-gray-1000)' }}
+        title={streamId}
+      >
+        {streamId}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="flex-shrink-0 mr-1 p-1 rounded opacity-0 group-hover/stream:opacity-100 transition-opacity"
+        style={{ color: copied ? 'var(--ds-green-700)' : 'var(--ds-gray-700)' }}
+        title="Copy stream ID"
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
 
 export function RunDetailView({
   runId,
@@ -317,6 +372,13 @@ export function RunDetailView({
     loading: streamsLoading,
     error: streamsError,
   } = useWorkflowStreams(env, runId);
+
+  const [streamSearchQuery, setStreamSearchQuery] = useState('');
+  const filteredStreams = useMemo(() => {
+    const q = streamSearchQuery.trim().toLowerCase();
+    if (!q) return streams;
+    return streams.filter((id) => id.toLowerCase().includes(q));
+  }, [streams, streamSearchQuery]);
 
   const {
     chunks: streamChunks,
@@ -659,22 +721,92 @@ export function RunDetailView({
                 <div className="h-full flex gap-4">
                   {/* Stream list sidebar */}
                   <div
-                    className="w-64 flex-shrink-0 border rounded-lg overflow-hidden"
+                    className="w-64 flex-shrink-0 border rounded-lg overflow-hidden flex flex-col"
                     style={{
                       borderColor: 'var(--ds-gray-300)',
                       backgroundColor: 'var(--ds-background-100)',
                     }}
                   >
                     <div
-                      className="px-3 py-2 border-b text-xs font-medium"
+                      className="px-3 py-2 text-xs font-medium"
                       style={{
-                        borderColor: 'var(--ds-gray-300)',
                         color: 'var(--ds-gray-900)',
                       }}
                     >
-                      Streams ({streams.length})
+                      {streams.length}{' '}
+                      {streams.length === 1 ? 'stream' : 'streams'} total
                     </div>
-                    <div className="overflow-auto max-h-[calc(100vh-400px)]">
+                    {/* Search bar */}
+                    {streams.length > 0 && (
+                      <div style={{ padding: 6 }}>
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: 6,
+                            boxShadow: '0 0 0 1px var(--ds-gray-alpha-400)',
+                            background: 'var(--ds-background-100)',
+                            height: 32,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 32,
+                              height: 32,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: 'var(--ds-gray-800)',
+                              flexShrink: 0,
+                            }}
+                          >
+                            <svg
+                              width={14}
+                              height={14}
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <circle
+                                cx="7"
+                                cy="7"
+                                r="4.5"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              />
+                              <path
+                                d="M11.5 11.5L14 14"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          </div>
+                          <input
+                            type="search"
+                            placeholder="Search streams…"
+                            value={streamSearchQuery}
+                            onChange={(e) =>
+                              setStreamSearchQuery(e.target.value)
+                            }
+                            style={{
+                              marginLeft: -14,
+                              paddingInline: 10,
+                              fontFamily: 'inherit',
+                              fontSize: 12,
+                              background: 'transparent',
+                              border: 'none',
+                              outline: 'none',
+                              height: 32,
+                              width: '100%',
+                            }}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    <div className="overflow-auto flex-1 px-1.5 pb-1.5">
                       {streamsLoading ? (
                         <div className="p-4 flex items-center justify-center">
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -690,24 +822,21 @@ export function RunDetailView({
                         >
                           No streams found for this run
                         </div>
+                      ) : filteredStreams.length === 0 ? (
+                        <div
+                          className="p-4 text-xs"
+                          style={{ color: 'var(--ds-gray-600)' }}
+                        >
+                          No matching streams
+                        </div>
                       ) : (
-                        streams.map((streamId) => (
-                          <button
-                            key={streamId}
-                            type="button"
-                            onClick={() => setSelectedStreamId(streamId)}
-                            className="w-full text-left px-3 py-2 text-xs font-mono truncate hover:bg-accent transition-colors"
-                            style={{
-                              backgroundColor:
-                                selectedStreamId === streamId
-                                  ? 'var(--ds-gray-200)'
-                                  : 'transparent',
-                              color: 'var(--ds-gray-1000)',
-                            }}
-                            title={streamId}
-                          >
-                            {streamId}
-                          </button>
+                        filteredStreams.map((sid) => (
+                          <StreamSidebarItem
+                            key={sid}
+                            streamId={sid}
+                            isSelected={selectedStreamId === sid}
+                            onSelect={() => setSelectedStreamId(sid)}
+                          />
                         ))
                       )}
                     </div>
@@ -721,6 +850,7 @@ export function RunDetailView({
                         chunks={streamChunks}
                         isLive={streamIsLive}
                         error={streamError}
+                        isLoading={streamIsLive && streamChunks.length === 0}
                       />
                     ) : (
                       <div
