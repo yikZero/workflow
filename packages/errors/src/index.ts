@@ -101,10 +101,18 @@ export class WorkflowAPIError extends WorkflowError {
   status?: number;
   code?: string;
   url?: string;
+  /** Retry-After value in seconds, present on 429 responses */
+  retryAfter?: number;
 
   constructor(
     message: string,
-    options?: { status?: number; url?: string; code?: string; cause?: unknown }
+    options?: {
+      status?: number;
+      url?: string;
+      code?: string;
+      retryAfter?: number;
+      cause?: unknown;
+    }
   ) {
     super(message, {
       cause: options?.cause,
@@ -113,6 +121,7 @@ export class WorkflowAPIError extends WorkflowError {
     this.status = options?.status;
     this.code = options?.code;
     this.url = options?.url;
+    this.retryAfter = options?.retryAfter;
   }
 
   static is(value: unknown): value is WorkflowAPIError {

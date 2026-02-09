@@ -374,7 +374,11 @@ export abstract class BaseBuilder {
 
     // Bundle with esbuild and our custom SWC plugin
     const entriesToBundle = externalizeNonSteps
-      ? [...stepFiles, ...(resolvedBuiltInSteps ? [resolvedBuiltInSteps] : [])]
+      ? [
+          ...stepFiles,
+          ...serdeFiles,
+          ...(resolvedBuiltInSteps ? [resolvedBuiltInSteps] : []),
+        ]
       : undefined;
     const normalizedEntriesToBundle = entriesToBundle
       ? Array.from(
@@ -544,8 +548,8 @@ export abstract class BaseBuilder {
     await this.writeDebugFile(outfile, { workflowFiles, serdeOnlyFiles });
 
     // Helper to create import statement from file path
-    // For workspace/node_modules packages, uses the package name so esbuild
-    // will resolve through package.json exports with conditions: ['workflow']
+    // For packages, uses the package name so esbuild will resolve through
+    // package.json exports with conditions: ['workflow']
     const createImport = (file: string) => {
       const { importPath, isPackage } = getImportPath(
         file,

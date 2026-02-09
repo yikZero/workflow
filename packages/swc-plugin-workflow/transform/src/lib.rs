@@ -323,6 +323,8 @@ pub struct StepTransform {
     workflow_exports_to_expand: Vec<(String, Expr, swc_core::common::Span)>,
     // Track workflow functions that need workflowId property in client mode
     workflow_functions_needing_id: Vec<(String, swc_core::common::Span)>,
+    // Track step functions that need stepId property in client mode
+    step_functions_needing_id: Vec<(String, swc_core::common::Span)>,
     // Track step function exports that need to be converted to const declarations in workflow mode
     step_exports_to_convert: Vec<(String, String, swc_core::common::Span)>, // (fn_name, step_id, span)
     // Track default exports that need to be replaced with expressions
@@ -1031,7 +1033,9 @@ impl StepTransform {
                                     return;
                                 }
                                 TransformMode::Client => {
-                                    // In client mode, just remove the directive and keep the function
+                                    // In client mode for nested step functions, just remove directive
+                                    // WITHOUT registering - the function will be undefined since the
+                                    // workflow body is replaced with throw Error
                                     self.remove_use_step_directive(&mut fn_decl.function.body);
                                     return;
                                 }
@@ -1041,6 +1045,13 @@ impl StepTransform {
                                 TransformMode::Step => {
                                     self.remove_use_step_directive(&mut fn_decl.function.body);
                                     self.create_registration_call(&fn_name, fn_decl.function.span);
+                                    stmt.visit_mut_children_with(self);
+                                }
+                                TransformMode::Client => {
+                                    // In client mode, track for stepId assignment instead of registration
+                                    self.remove_use_step_directive(&mut fn_decl.function.body);
+                                    self.step_functions_needing_id
+                                        .push((fn_name.clone(), fn_decl.function.span));
                                     stmt.visit_mut_children_with(self);
                                 }
                                 TransformMode::Workflow => {
@@ -1073,10 +1084,6 @@ impl StepTransform {
                                         })];
                                     }
                                 }
-                                TransformMode::Client => {
-                                    self.remove_use_step_directive(&mut fn_decl.function.body);
-                                    stmt.visit_mut_children_with(self);
-                                }
                             }
                         }
                     }
@@ -1088,9 +1095,10 @@ impl StepTransform {
                         match self.mode {
                             TransformMode::Step => {
                                 // First visit children to process nested step functions
+                                // This must happen BEFORE replacing the body so nested steps are hoisted
                                 stmt.visit_mut_children_with(self);
 
-                                // After step hoisting, re-extract fn_decl and replace workflow body with throw error
+                                // After processing nested steps, re-extract fn_decl and replace workflow body with throw error
                                 if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
                                     self.remove_use_workflow_directive(&mut fn_decl.function.body);
                                     if let Some(body) = &mut fn_decl.function.body {
@@ -1130,6 +1138,8 @@ impl StepTransform {
                                 stmt.visit_mut_children_with(self);
                             }
                             TransformMode::Client => {
+                                // In client mode, don't visit children - nested steps inside workflows
+                                // are unreachable since the workflow body is replaced with throw error
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
                                 if let Some(body) = &mut fn_decl.function.body {
                                     let error_msg = format!(
@@ -1161,7 +1171,6 @@ impl StepTransform {
                                 }
                                 self.workflow_functions_needing_id
                                     .push((fn_name.clone(), fn_span));
-                                stmt.visit_mut_children_with(self);
                             }
                         }
                     }
@@ -1234,6 +1243,7 @@ impl StepTransform {
             current_parent_function_name: None,
             workflow_exports_to_expand: Vec::new(),
             workflow_functions_needing_id: Vec::new(),
+            step_functions_needing_id: Vec::new(),
             step_exports_to_convert: Vec::new(),
             default_exports_to_replace: Vec::new(),
             default_workflow_exports: Vec::new(),
@@ -1745,7 +1755,39 @@ impl StepTransform {
                                         ));
                                     }
                                     TransformMode::Client => {
-                                        // In client mode, just remove the directive (already done above)
+                                        // In client mode, replace method with key-value property referencing the hoisted variable
+                                        // (same as step mode) so the stepId property is accessible
+                                        let safe_parent_name = parent_var_name.replace('/', "$");
+                                        let hoist_var_name = if let Some(ref workflow_name) =
+                                            self.current_workflow_function_name
+                                        {
+                                            format!(
+                                                "{}${}${}",
+                                                workflow_name, safe_parent_name, prop_key
+                                            )
+                                        } else {
+                                            format!("{}${}", safe_parent_name, prop_key)
+                                        };
+                                        let step_id = self.create_object_property_id(
+                                            parent_var_name,
+                                            &prop_key,
+                                            false,
+                                            self.current_workflow_function_name.as_deref(),
+                                        );
+                                        // Replace the method with a key-value property referencing the hoisted function
+                                        *boxed_prop = Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: method_prop.key.clone(),
+                                            value: Box::new(Expr::Ident(Ident::new(
+                                                hoist_var_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        }));
+                                        self.object_property_workflow_conversions.push((
+                                            parent_var_name.to_string(),
+                                            prop_key,
+                                            step_id,
+                                        ));
                                     }
                                 }
                             }
@@ -1805,7 +1847,26 @@ impl StepTransform {
                 ));
             }
             TransformMode::Client => {
-                // In client mode, just remove the directive
+                // In client mode, replace with reference to hoisted variable
+                // (same as step mode) so the stepId property is accessible
+                let safe_parent_name = parent_var_name.replace('/', "$");
+                let hoist_var_name =
+                    if let Some(ref workflow_name) = self.current_workflow_function_name {
+                        format!("{}${}${}", workflow_name, safe_parent_name, prop_key)
+                    } else {
+                        format!("{}${}", safe_parent_name, prop_key)
+                    };
+                *kv_prop.value = Expr::Ident(Ident::new(
+                    hoist_var_name.into(),
+                    DUMMY_SP,
+                    SyntaxContext::empty(),
+                ));
+                // Track for metadata
+                self.object_property_workflow_conversions.push((
+                    parent_var_name.to_string(),
+                    prop_key.to_string(),
+                    step_id,
+                ));
             }
         }
     }
@@ -2781,6 +2842,39 @@ impl StepTransform {
         })
     }
 
+    // Create a statement that adds stepId property to a function (client mode)
+    // Creates: functionName.stepId = "stepId"
+    fn create_step_id_assignment(&self, fn_name: &str, span: swc_core::common::Span) -> Stmt {
+        let step_id = self.create_id(Some(fn_name), span, false);
+        self.create_step_id_assignment_with_id(fn_name, &step_id)
+    }
+
+    // Create a statement that adds stepId property to a function with a pre-computed step_id (client mode)
+    // Creates: functionName.stepId = "stepId"
+    fn create_step_id_assignment_with_id(&self, fn_name: &str, step_id: &str) -> Stmt {
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: DUMMY_SP,
+                op: AssignOp::Assign,
+                left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                    span: DUMMY_SP,
+                    obj: Box::new(Expr::Ident(Ident::new(
+                        fn_name.into(),
+                        DUMMY_SP,
+                        SyntaxContext::empty(),
+                    ))),
+                    prop: MemberProp::Ident(IdentName::new("stepId".into(), DUMMY_SP)),
+                })),
+                right: Box::new(Expr::Lit(Lit::Str(Str {
+                    span: DUMMY_SP,
+                    value: step_id.into(),
+                    raw: None,
+                }))),
+            })),
+        })
+    }
+
     // Create a workflow registration call for workflow mode:
     // globalThis.__private_workflows.set("workflowId", functionName);
     fn create_workflow_registration(&self, fn_name: &str, span: swc_core::common::Span) -> Stmt {
@@ -3584,8 +3678,9 @@ impl VisitMut for StepTransform {
                         }
                     }
                     TransformMode::Client => {
-                        // In client mode, we still need class serialization registration
-                        // so that classes can be serialized when passed to start(workflow)
+                        // In client mode, we use stepId property assignments instead of registerStepFunction
+                        // for step functions, so no need to import registerStepFunction.
+                        // Class serialization registration is still needed.
                         let needs_class_serialization =
                             !self.classes_needing_serialization.is_empty();
                         if needs_class_serialization {
@@ -3599,8 +3694,8 @@ impl VisitMut for StepTransform {
                     module.body.insert(0, import);
                 }
 
-                // Add hoisted object property functions and registration calls at the end for step mode
-                if matches!(self.mode, TransformMode::Step) {
+                // Add hoisted object property functions and registration calls at the end for step mode or client mode
+                if matches!(self.mode, TransformMode::Step | TransformMode::Client) {
                     // Calculate insertion position once before any hoisting
                     let initial_insert_pos = module
                         .body
@@ -3732,46 +3827,55 @@ impl VisitMut for StepTransform {
                         module.body.insert(current_insert_pos, hoisted_decl);
                         current_insert_pos += 1;
 
-                        // Create a registration call with parent workflow name in the step ID
+                        // Create a registration call or stepId assignment with parent workflow name in the step ID
                         let step_fn_name = if parent_workflow_name.is_empty() {
                             fn_name.clone()
                         } else {
                             format!("{}/{}", parent_workflow_name, fn_name)
                         };
                         let step_id = self.create_id(Some(&step_fn_name), span, false);
-                        let registration_call = Stmt::Expr(ExprStmt {
-                            span: DUMMY_SP,
-                            expr: Box::new(Expr::Call(CallExpr {
-                                span: DUMMY_SP,
-                                ctxt: SyntaxContext::empty(),
-                                callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
-                                    "registerStepFunction".into(),
-                                    DUMMY_SP,
-                                    SyntaxContext::empty(),
-                                )))),
-                                args: vec![
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                            span: DUMMY_SP,
-                                            value: step_id.into(),
-                                            raw: None,
-                                        }))),
-                                    },
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Ident(Ident::new(
-                                            hoisted_name.into(),
-                                            DUMMY_SP,
-                                            SyntaxContext::empty(),
-                                        ))),
-                                    },
-                                ],
-                                type_args: None,
-                            })),
-                        });
 
-                        self.registration_calls.push(registration_call);
+                        if self.mode == TransformMode::Client {
+                            // In client mode, use stepId property assignment instead of registerStepFunction
+                            let step_id_assignment =
+                                self.create_step_id_assignment_with_id(&hoisted_name, &step_id);
+                            self.registration_calls.push(step_id_assignment);
+                        } else {
+                            // In step mode, use registerStepFunction
+                            let registration_call = Stmt::Expr(ExprStmt {
+                                span: DUMMY_SP,
+                                expr: Box::new(Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    ctxt: SyntaxContext::empty(),
+                                    callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+                                        "registerStepFunction".into(),
+                                        DUMMY_SP,
+                                        SyntaxContext::empty(),
+                                    )))),
+                                    args: vec![
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: step_id.into(),
+                                                raw: None,
+                                            }))),
+                                        },
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Ident(Ident::new(
+                                                hoisted_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        },
+                                    ],
+                                    type_args: None,
+                                })),
+                            });
+
+                            self.registration_calls.push(registration_call);
+                        }
                     }
 
                     // Then process object property step functions (they typically appear later)
@@ -3832,40 +3936,47 @@ impl VisitMut for StepTransform {
                         module.body.insert(current_insert_pos, hoisted_decl);
                         current_insert_pos += 1;
 
-                        // Create a registration call
-                        let registration_call = Stmt::Expr(ExprStmt {
-                            span: DUMMY_SP,
-                            expr: Box::new(Expr::Call(CallExpr {
+                        if self.mode == TransformMode::Client {
+                            // In client mode, use stepId property assignment instead of registerStepFunction
+                            let step_id_assignment =
+                                self.create_step_id_assignment_with_id(&hoist_var_name, &step_id);
+                            self.registration_calls.push(step_id_assignment);
+                        } else {
+                            // In step mode, use registerStepFunction
+                            let registration_call = Stmt::Expr(ExprStmt {
                                 span: DUMMY_SP,
-                                ctxt: SyntaxContext::empty(),
-                                callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
-                                    "registerStepFunction".into(),
-                                    DUMMY_SP,
-                                    SyntaxContext::empty(),
-                                )))),
-                                args: vec![
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                            span: DUMMY_SP,
-                                            value: step_id.into(),
-                                            raw: None,
-                                        }))),
-                                    },
-                                    ExprOrSpread {
-                                        spread: None,
-                                        expr: Box::new(Expr::Ident(Ident::new(
-                                            hoist_var_name.into(),
-                                            DUMMY_SP,
-                                            SyntaxContext::empty(),
-                                        ))),
-                                    },
-                                ],
-                                type_args: None,
-                            })),
-                        });
+                                expr: Box::new(Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    ctxt: SyntaxContext::empty(),
+                                    callee: Callee::Expr(Box::new(Expr::Ident(Ident::new(
+                                        "registerStepFunction".into(),
+                                        DUMMY_SP,
+                                        SyntaxContext::empty(),
+                                    )))),
+                                    args: vec![
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: step_id.into(),
+                                                raw: None,
+                                            }))),
+                                        },
+                                        ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Ident(Ident::new(
+                                                hoist_var_name.into(),
+                                                DUMMY_SP,
+                                                SyntaxContext::empty(),
+                                            ))),
+                                        },
+                                    ],
+                                    type_args: None,
+                                })),
+                            });
 
-                        self.registration_calls.push(registration_call);
+                            self.registration_calls.push(registration_call);
+                        }
                     }
 
                     for call in self.registration_calls.drain(..) {
@@ -5118,6 +5229,116 @@ impl VisitMut for StepTransform {
         // Clear the workflow_functions_needing_id since we've already processed them
         self.workflow_functions_needing_id.clear();
 
+        // In client mode, add stepId property assignments for step functions
+        if self.mode == TransformMode::Client && !self.step_functions_needing_id.is_empty() {
+            let step_functions: Vec<_> = self.step_functions_needing_id.drain(..).collect();
+            let mut items_to_insert: Vec<(usize, ModuleItem)> = Vec::new();
+
+            for (i, item) in items.iter().enumerate() {
+                match item {
+                    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
+                        // Exported step functions
+                        match &export_decl.decl {
+                            Decl::Fn(fn_decl) => {
+                                let fn_name = fn_decl.ident.sym.to_string();
+                                if step_functions.iter().any(|(name, _)| name == &fn_name) {
+                                    items_to_insert.push((
+                                        i + 1,
+                                        ModuleItem::Stmt(self.create_step_id_assignment(
+                                            &fn_name,
+                                            fn_decl.function.span,
+                                        )),
+                                    ));
+                                }
+                            }
+                            Decl::Var(var_decl) => {
+                                for declarator in &var_decl.decls {
+                                    if let Pat::Ident(binding) = &declarator.name {
+                                        let name = binding.id.sym.to_string();
+                                        if step_functions.iter().any(|(n, _)| n == &name) {
+                                            if let Some(init) = &declarator.init {
+                                                let span = match &**init {
+                                                    Expr::Fn(fn_expr) => fn_expr.function.span,
+                                                    Expr::Arrow(arrow_expr) => arrow_expr.span,
+                                                    _ => declarator.span,
+                                                };
+                                                items_to_insert.push((
+                                                    i + 1,
+                                                    ModuleItem::Stmt(
+                                                        self.create_step_id_assignment(&name, span),
+                                                    ),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(default_decl)) => {
+                        // Default exported step function
+                        if let DefaultDecl::Fn(fn_expr) = &default_decl.decl {
+                            if let Some(ident) = &fn_expr.ident {
+                                let fn_name = ident.sym.to_string();
+                                if step_functions.iter().any(|(name, _)| name == &fn_name) {
+                                    items_to_insert.push((
+                                        i + 1,
+                                        ModuleItem::Stmt(self.create_step_id_assignment(
+                                            &fn_name,
+                                            fn_expr.function.span,
+                                        )),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                        // Non-exported function declaration
+                        let fn_name = fn_decl.ident.sym.to_string();
+                        if step_functions.iter().any(|(name, _)| name == &fn_name) {
+                            items_to_insert.push((
+                                i + 1,
+                                ModuleItem::Stmt(
+                                    self.create_step_id_assignment(&fn_name, fn_decl.function.span),
+                                ),
+                            ));
+                        }
+                    }
+                    ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                        // Non-exported variable declaration
+                        for declarator in &var_decl.decls {
+                            if let Pat::Ident(binding) = &declarator.name {
+                                let name = binding.id.sym.to_string();
+                                if step_functions.iter().any(|(n, _)| n == &name) {
+                                    if let Some(init) = &declarator.init {
+                                        let span = match &**init {
+                                            Expr::Fn(fn_expr) => fn_expr.function.span,
+                                            Expr::Arrow(arrow_expr) => arrow_expr.span,
+                                            _ => declarator.span,
+                                        };
+                                        items_to_insert.push((
+                                            i + 1,
+                                            ModuleItem::Stmt(
+                                                self.create_step_id_assignment(&name, span),
+                                            ),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Insert items in reverse order to maintain correct indices
+            items_to_insert.sort_by(|a, b| b.0.cmp(&a.0));
+            for (pos, item) in items_to_insert {
+                items.insert(pos, item);
+            }
+        }
+
         // In workflow mode, convert step functions to const declarations
         // (Must be after visit_mut_children_with so step_function_names is populated)
         if self.mode == TransformMode::Workflow {
@@ -5306,12 +5527,18 @@ impl VisitMut for StepTransform {
                         self.remove_use_step_directive(&mut fn_decl.function.body);
                         self.create_registration_call(&fn_name, fn_decl.function.span);
                     }
+                    TransformMode::Client => {
+                        self.remove_use_step_directive(&mut fn_decl.function.body);
+                        // Only set stepId for module-level step functions in client mode
+                        // Nested step functions are unreachable (their containing function
+                        // bodies are not hoisted to module level)
+                        if self.in_module_level {
+                            self.step_functions_needing_id
+                                .push((fn_name.clone(), fn_decl.function.span));
+                        }
+                    }
                     TransformMode::Workflow => {
                         // For workflow mode, we need to replace the entire declaration
-                        // This will be handled at a higher level
-                    }
-                    TransformMode::Client => {
-                        // Step functions are completely removed in client mode
                         // This will be handled at a higher level
                     }
                 }
@@ -5413,6 +5640,12 @@ impl VisitMut for StepTransform {
                                 self.create_registration_call(&fn_name, fn_decl.function.span);
                                 export_decl.visit_mut_children_with(self);
                             }
+                            TransformMode::Client => {
+                                self.remove_use_step_directive(&mut fn_decl.function.body);
+                                self.step_functions_needing_id
+                                    .push((fn_name.clone(), fn_decl.function.span));
+                                export_decl.visit_mut_children_with(self);
+                            }
                             TransformMode::Workflow => {
                                 // Collect for later conversion in visit_mut_module_items
                                 self.remove_use_step_directive(&mut fn_decl.function.body);
@@ -5423,11 +5656,6 @@ impl VisitMut for StepTransform {
                                     step_id,
                                     fn_decl.function.span,
                                 ));
-                            }
-                            TransformMode::Client => {
-                                // In client mode, just remove the directive and keep the function as-is
-                                self.remove_use_step_directive(&mut fn_decl.function.body);
-                                export_decl.visit_mut_children_with(self);
                             }
                         }
                     }
@@ -5452,52 +5680,47 @@ impl VisitMut for StepTransform {
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
                             }
                             TransformMode::Client => {
-                                // Only replace with throw if function has inline directive
-                                // Functions with only file-level directive keep original body
-                                let has_inline_directive =
-                                    self.has_use_workflow_directive(&fn_decl.function.body);
-
+                                // In client mode, don't visit children - nested steps inside workflows
+                                // are unreachable since the workflow body is replaced with throw error
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
-
-                                if has_inline_directive {
-                                    // Replace with error throw for inline workflow directives
-                                    if let Some(body) = &mut fn_decl.function.body {
-                                        let error_msg = format!(
-                                            "You attempted to execute workflow {} function directly. To start a workflow, use start({}) from workflow/api",
-                                            fn_name, fn_name
-                                        );
-                                        let error_expr = Expr::New(NewExpr {
-                                            span: DUMMY_SP,
-                                            ctxt: SyntaxContext::empty(),
-                                            callee: Box::new(Expr::Ident(Ident::new(
-                                                "Error".into(),
-                                                DUMMY_SP,
-                                                SyntaxContext::empty(),
-                                            ))),
-                                            args: Some(vec![ExprOrSpread {
-                                                spread: None,
-                                                expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                                    span: DUMMY_SP,
-                                                    value: error_msg.into(),
-                                                    raw: None,
-                                                }))),
-                                            }]),
-                                            type_args: None,
-                                        });
-                                        body.stmts = vec![Stmt::Throw(ThrowStmt {
-                                            span: DUMMY_SP,
-                                            arg: Box::new(error_expr),
-                                        })];
-                                    }
+                                if let Some(body) = &mut fn_decl.function.body {
+                                    let error_msg = format!(
+                                        "You attempted to execute workflow {} function directly. To start a workflow, use start({}) from workflow/api",
+                                        fn_name, fn_name
+                                    );
+                                    let error_expr = Expr::New(NewExpr {
+                                        span: DUMMY_SP,
+                                        ctxt: SyntaxContext::empty(),
+                                        callee: Box::new(Expr::Ident(Ident::new(
+                                            "Error".into(),
+                                            DUMMY_SP,
+                                            SyntaxContext::empty(),
+                                        ))),
+                                        args: Some(vec![ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: DUMMY_SP,
+                                                value: error_msg.into(),
+                                                raw: None,
+                                            }))),
+                                        }]),
+                                        type_args: None,
+                                    });
+                                    body.stmts = vec![Stmt::Throw(ThrowStmt {
+                                        span: DUMMY_SP,
+                                        arg: Box::new(error_expr),
+                                    })];
                                 }
-
                                 self.workflow_functions_needing_id
                                     .push((fn_name.clone(), fn_decl.function.span));
                             }
                         }
                     }
-                    // Visit children for workflow functions OUTSIDE the match to avoid borrow issues
-                    export_decl.visit_mut_children_with(self);
+                    // Visit children for workflow functions in Step and Workflow modes
+                    // (Client mode already handled above - no children to visit)
+                    if !matches!(self.mode, TransformMode::Client) || !is_workflow_function {
+                        export_decl.visit_mut_children_with(self);
+                    }
 
                     // After visiting, process the function again for cleanup and Step mode transformation
                     if let Decl::Fn(fn_decl) = &mut export_decl.decl {
@@ -5589,6 +5812,15 @@ impl VisitMut for StepTransform {
                                                         fn_expr.function.span,
                                                     );
                                                 }
+                                                TransformMode::Client => {
+                                                    self.remove_use_step_directive(
+                                                        &mut fn_expr.function.body,
+                                                    );
+                                                    self.step_functions_needing_id.push((
+                                                        name.clone(),
+                                                        fn_expr.function.span,
+                                                    ));
+                                                }
                                                 TransformMode::Workflow => {
                                                     // Replace the function expression with an initializer call
                                                     self.remove_use_step_directive(
@@ -5602,12 +5834,6 @@ impl VisitMut for StepTransform {
                                                     // Replace the entire function expression with the initializer
                                                     *init = Box::new(
                                                         self.create_step_initializer(&step_id),
-                                                    );
-                                                }
-                                                TransformMode::Client => {
-                                                    // In client mode, just remove the directive and keep the function as-is
-                                                    self.remove_use_step_directive(
-                                                        &mut fn_expr.function.body,
                                                     );
                                                 }
                                             }
@@ -5753,6 +5979,13 @@ impl VisitMut for StepTransform {
                                                         arrow_expr.span,
                                                     );
                                                 }
+                                                TransformMode::Client => {
+                                                    self.remove_use_step_directive_arrow(
+                                                        &mut arrow_expr.body,
+                                                    );
+                                                    self.step_functions_needing_id
+                                                        .push((name.clone(), arrow_expr.span));
+                                                }
                                                 TransformMode::Workflow => {
                                                     // Replace the arrow function with an initializer call
                                                     self.remove_use_step_directive_arrow(
@@ -5766,12 +5999,6 @@ impl VisitMut for StepTransform {
                                                     // Replace the entire arrow function with the initializer
                                                     *init = Box::new(
                                                         self.create_step_initializer(&step_id),
-                                                    );
-                                                }
-                                                TransformMode::Client => {
-                                                    // In client mode, just remove the directive and keep the function as-is
-                                                    self.remove_use_step_directive_arrow(
-                                                        &mut arrow_expr.body,
                                                     );
                                                 }
                                             }
@@ -5991,6 +6218,16 @@ impl VisitMut for StepTransform {
                                                 fn_expr.function.span,
                                             );
                                         }
+                                        TransformMode::Client => {
+                                            self.remove_use_step_directive(
+                                                &mut fn_expr.function.body,
+                                            );
+                                            // Only set stepId for module-level step functions
+                                            if self.in_module_level {
+                                                self.step_functions_needing_id
+                                                    .push((name.clone(), fn_expr.function.span));
+                                            }
+                                        }
                                         TransformMode::Workflow => {
                                             // Keep the function expression but replace its body with a proxy call
                                             self.remove_use_step_directive(
@@ -6032,12 +6269,6 @@ impl VisitMut for StepTransform {
                                                     arg: Some(Box::new(proxy_call)),
                                                 })];
                                             }
-                                        }
-                                        TransformMode::Client => {
-                                            // In client mode, just remove the directive and keep the function as-is
-                                            self.remove_use_step_directive(
-                                                &mut fn_expr.function.body,
-                                            );
                                         }
                                     }
                                 }
@@ -6277,7 +6508,9 @@ impl VisitMut for StepTransform {
                                                 ));
                                             }
                                             TransformMode::Client => {
-                                                // In client mode, just remove the directive and keep the function
+                                                // In client mode for nested step functions, just remove directive
+                                                // WITHOUT registering - the function will be undefined since it's
+                                                // locally scoped within another function
                                                 self.remove_use_step_directive_arrow(
                                                     &mut arrow_expr.body,
                                                 );
@@ -6294,6 +6527,13 @@ impl VisitMut for StepTransform {
                                                     &name,
                                                     arrow_expr.span,
                                                 );
+                                            }
+                                            TransformMode::Client => {
+                                                self.remove_use_step_directive_arrow(
+                                                    &mut arrow_expr.body,
+                                                );
+                                                self.step_functions_needing_id
+                                                    .push((name.clone(), arrow_expr.span));
                                             }
                                             TransformMode::Workflow => {
                                                 // Keep the arrow function but replace its body with a proxy call
@@ -6332,12 +6572,6 @@ impl VisitMut for StepTransform {
                                                 arrow_expr.body = Box::new(BlockStmtOrExpr::Expr(
                                                     Box::new(proxy_call),
                                                 ));
-                                            }
-                                            TransformMode::Client => {
-                                                // In client mode, just remove the directive and keep the function as-is
-                                                self.remove_use_step_directive_arrow(
-                                                    &mut arrow_expr.body,
-                                                );
                                             }
                                         }
                                     }
@@ -7330,6 +7564,11 @@ impl VisitMut for StepTransform {
                                 self.remove_use_step_directive(&mut fn_expr.function.body);
                                 self.create_registration_call(&fn_name, fn_expr.function.span);
                             }
+                            TransformMode::Client => {
+                                self.remove_use_step_directive(&mut fn_expr.function.body);
+                                self.step_functions_needing_id
+                                    .push((fn_name.clone(), fn_expr.function.span));
+                            }
                             TransformMode::Workflow => {
                                 // Replace function body with step proxy
                                 self.remove_use_step_directive(&mut fn_expr.function.body);
@@ -7364,10 +7603,6 @@ impl VisitMut for StepTransform {
                                         arg: Some(Box::new(proxy_call)),
                                     })];
                                 }
-                            }
-                            TransformMode::Client => {
-                                // Transform step function body to use step run call
-                                self.remove_use_step_directive(&mut fn_expr.function.body);
                             }
                         }
                     }

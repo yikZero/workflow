@@ -51,7 +51,7 @@ const MAX_DELAY_SECONDS = Number(
 type QueueFunction = (
   queueName: ValidQueueName,
   payload: QueuePayload,
-  opts?: QueueOptions & { delaySeconds?: number }
+  opts?: QueueOptions
 ) => ReturnType<Queue['queue']>;
 
 export function createQueue(config?: APIConfig): Queue {
@@ -71,7 +71,7 @@ export function createQueue(config?: APIConfig): Queue {
   const queue: QueueFunction = async (
     queueName,
     payload,
-    opts?: QueueOptions & { delaySeconds?: number }
+    opts?: QueueOptions
   ) => {
     // Check if we have a deployment ID either from options or environment
     const deploymentId = opts?.deploymentId ?? process.env.VERCEL_DEPLOYMENT_ID;
