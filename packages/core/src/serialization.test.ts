@@ -1726,8 +1726,22 @@ describe('step function serialization', () => {
 
     registerStepFunction(registeredStepId, stepFn);
 
-    const revivers = getCommonRevivers(vmGlobalThis);
-    const result = revivers.StepFunction({ stepId: aliasedStepId });
+    const fnWithStepId = async () => 42;
+    Object.defineProperty(fnWithStepId, 'stepId', {
+      value: aliasedStepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    const dehydrated = dehydrateStepArguments([fnWithStepId], globalThis);
+    const ops: Promise<void>[] = [];
+    const hydrated = hydrateStepArguments(
+      dehydrated,
+      ops,
+      mockRunId,
+      globalThis
+    );
+    const result = hydrated[0];
 
     expect(result).toBe(stepFn);
   });
@@ -1739,8 +1753,22 @@ describe('step function serialization', () => {
 
     registerStepFunction(registeredStepId, stepFn);
 
-    const revivers = getCommonRevivers(vmGlobalThis);
-    const result = revivers.StepFunction({ stepId: aliasedStepId });
+    const fnWithStepId = async () => 42;
+    Object.defineProperty(fnWithStepId, 'stepId', {
+      value: aliasedStepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    const dehydrated = dehydrateStepArguments([fnWithStepId], globalThis);
+    const ops: Promise<void>[] = [];
+    const hydrated = hydrateStepArguments(
+      dehydrated,
+      ops,
+      mockRunId,
+      globalThis
+    );
+    const result = hydrated[0];
 
     expect(result).toBe(stepFn);
   });
