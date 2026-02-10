@@ -11,6 +11,7 @@ import {
   deserializeByteObjects,
   extractConversation,
   isDoStreamStep,
+  tryDeserializeSerializedData,
 } from '../../lib/utils';
 import { ConversationView } from './conversation-view';
 import { DetailCard } from './detail-card';
@@ -611,7 +612,9 @@ const attributeToDisplayFn: Record<
   resumeAt: localMillisecondTime,
   // Resolved attributes, won't actually use this function
   metadata: JsonBlock,
-  input: (value: unknown, context?: DisplayContext) => {
+  input: (rawValue: unknown, context?: DisplayContext) => {
+    const value = tryDeserializeSerializedData(rawValue);
+
     // Check if input has args + closure vars structure
     if (value && typeof value === 'object' && 'args' in value) {
       const { args, closureVars } = value as {
@@ -672,7 +675,8 @@ const attributeToDisplayFn: Record<
       </DetailCard>
     );
   },
-  output: (value: unknown) => {
+  output: (rawValue: unknown) => {
+    const value = tryDeserializeSerializedData(rawValue);
     return <DetailCard summary="Output">{JsonBlock(value)}</DetailCard>;
   },
   error: (value: unknown) => {

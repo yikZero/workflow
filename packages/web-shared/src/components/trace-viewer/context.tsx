@@ -118,11 +118,6 @@ export interface TraceViewerState {
    */
   isMobile: boolean;
   /**
-   * Panel to render instead of the default span detail panel. The panel
-   * should use the context to get the selected span and other state.
-   */
-  customPanelComponent: ReactNode | null;
-  /**
    * A function to provide custom class names for spans.
    */
   customSpanClassNameFunc?: (span: SpanNode) => string;
@@ -257,7 +252,6 @@ export const initialState: TraceViewerState = {
   getQuickLinks: () => [],
   withPanel: false,
   isMobile: false,
-  customPanelComponent: null,
 };
 
 const getMinScale = (state: TraceViewerState): number => {
@@ -617,7 +611,6 @@ export function TraceViewerContextProvider({
       scrollSnapshotRef,
       customSpanClassNameFunc,
       customSpanEventClassNameFunc,
-      customPanelComponent,
       memoCacheRef,
       withPanel,
       getQuickLinks: (span) => {
@@ -647,11 +640,23 @@ export function TraceViewerContextProvider({
   );
 
   return (
-    <TraceViewerContext.Provider value={value}>
-      {children}
-    </TraceViewerContext.Provider>
+    <CustomPanelContext.Provider value={customPanelComponent}>
+      <TraceViewerContext.Provider value={value}>
+        {children}
+      </TraceViewerContext.Provider>
+    </CustomPanelContext.Provider>
   );
 }
 
 export const useTraceViewer = (): TraceViewerContextProps =>
   useContext(TraceViewerContext);
+
+/**
+ * Separate context for the custom panel component. This is intentionally
+ * outside the useReducer state so that the panel re-renders reactively
+ * when props like spanDetailData change.
+ */
+const CustomPanelContext = createContext<ReactNode | null>(null);
+
+export const useCustomPanelComponent = (): ReactNode | null =>
+  useContext(CustomPanelContext);
