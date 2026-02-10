@@ -1,14 +1,165 @@
+import { connect, type Socket } from 'node:net';
 import { relative } from 'node:path';
 import { transform } from '@swc/core';
+import { type SocketMessage, serializeMessage } from './socket-server.js';
 
 type DecoratorOptions = import('@workflow/builders').DecoratorOptions;
 type WorkflowPatternMatch = import('@workflow/builders').WorkflowPatternMatch;
 
 // Cache decorator options per working directory to avoid reading tsconfig for every file
 const decoratorOptionsCache = new Map<string, Promise<DecoratorOptions>>();
-
 // Cache for shared utilities from @workflow/builders (ESM module loaded dynamically in CommonJS context)
 let cachedBuildersModule: typeof import('@workflow/builders') | null = null;
+
+// Cache socket connection to avoid reconnecting on every file.
+let socketClientPromise: Promise<Socket | null> | null = null;
+let socketClient: Socket | null = null;
+
+function resetSocketClient(cachedSocket?: Socket): void {
+  if (cachedSocket && socketClient && socketClient !== cachedSocket) {
+    return;
+  }
+
+  socketClientPromise = null;
+  socketClient = null;
+}
+
+async function writeSocketMessage(
+  socket: Socket,
+  message: string
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    socket.write(message, (error?: Error | null) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function shouldUseSocketDiscovery(): boolean {
+  return Boolean(
+    process.env.WORKFLOW_SOCKET_PORT && process.env.WORKFLOW_SOCKET_AUTH
+  );
+}
+
+async function getSocketClient(): Promise<Socket | null> {
+  if (!shouldUseSocketDiscovery()) {
+    return null;
+  }
+
+  if (socketClient?.destroyed) {
+    resetSocketClient(socketClient);
+  }
+
+  if (!socketClientPromise) {
+    socketClientPromise = (async () => {
+      try {
+        const socketPort = process.env.WORKFLOW_SOCKET_PORT;
+        if (!socketPort) {
+          throw new Error(
+            'Invariant: no socket port provided for workflow loader'
+          );
+        }
+
+        const port = Number.parseInt(socketPort, 10);
+        if (Number.isNaN(port)) {
+          throw new Error(
+            `Invariant: invalid socket port provided: ${socketPort}`
+          );
+        }
+
+        const socket = connect({ port, host: '127.0.0.1' });
+
+        // Wait for connection
+        await new Promise<void>((resolve, reject) => {
+          const onConnect = () => {
+            socket.setNoDelay(true);
+            cleanup();
+            resolve();
+          };
+          const onError = (error: Error) => {
+            cleanup();
+            reject(error);
+          };
+          const timeout = setTimeout(() => {
+            cleanup();
+            socket.destroy();
+            reject(new Error('Socket connection timeout'));
+          }, 1000);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            socket.off('connect', onConnect);
+            socket.off('error', onError);
+          };
+
+          socket.on('connect', onConnect);
+          socket.on('error', onError);
+        });
+
+        socket.on('close', () => {
+          resetSocketClient(socket);
+        });
+        socket.on('error', () => {
+          resetSocketClient(socket);
+        });
+
+        socketClient = socket;
+        return socket;
+      } catch (error) {
+        resetSocketClient();
+        throw error;
+      }
+    })();
+  }
+
+  return socketClientPromise;
+}
+
+async function notifySocketServer(
+  filename: string,
+  hasWorkflow: boolean,
+  hasStep: boolean,
+  hasSerde: boolean
+): Promise<void> {
+  if (!shouldUseSocketDiscovery()) {
+    return;
+  }
+
+  const socket = await getSocketClient();
+  if (!socket) {
+    throw new Error('Invariant: missing workflow socket connection');
+  }
+
+  const authToken = process.env.WORKFLOW_SOCKET_AUTH;
+  if (!authToken) {
+    throw new Error(
+      'Invariant: no socket auth token provided for workflow loader'
+    );
+  }
+
+  const message: SocketMessage = {
+    type: 'file-discovered',
+    filePath: filename,
+    hasWorkflow,
+    hasStep,
+    hasSerde,
+  };
+  const serializedMessage = serializeMessage(message, authToken);
+
+  try {
+    await writeSocketMessage(socket, serializedMessage);
+  } catch (error) {
+    resetSocketClient(socket);
+    const reconnectedSocket = await getSocketClient();
+    if (!reconnectedSocket) {
+      throw error;
+    }
+    await writeSocketMessage(reconnectedSocket, serializedMessage);
+  }
+}
 
 async function getBuildersModule(): Promise<
   typeof import('@workflow/builders')
@@ -72,6 +223,14 @@ async function getModuleSpecifier(
   return resolveModuleSpecifier(filePath, projectRoot).moduleSpecifier;
 }
 
+async function resolveWorkflowAliasPath(
+  filePath: string,
+  workingDir: string
+): Promise<string | undefined> {
+  const { resolveWorkflowAliasRelativePath } = await getBuildersModule();
+  return resolveWorkflowAliasRelativePath(filePath, workingDir);
+}
+
 // This loader applies the "use workflow"/"use step"
 // client transformation
 export default async function workflowLoader(
@@ -91,6 +250,14 @@ export default async function workflowLoader(
 
   // Detect workflow patterns in the source code
   const patterns = await detectPatterns(normalizedSource);
+  // Always notify discovery tracking, even for `false/false`, so files that
+  // previously had workflow/step usage are removed from the tracked sets.
+  await notifySocketServer(
+    filename,
+    patterns.hasUseWorkflow,
+    patterns.hasUseStep,
+    patterns.hasSerde
+  );
 
   // For @workflow SDK packages, only transform files with actual directives,
   // not files that just match serde patterns (which are internal SDK implementation files)
@@ -136,10 +303,18 @@ export default async function workflowLoader(
     relativeFilename = relative(workingDir, filename).replace(/\\/g, '/');
 
     if (relativeFilename.startsWith('../')) {
-      relativeFilename = relativeFilename
-        .split('/')
-        .filter((part) => part !== '..')
-        .join('/');
+      const aliasedRelativePath = await resolveWorkflowAliasPath(
+        filename,
+        workingDir
+      );
+      if (aliasedRelativePath) {
+        relativeFilename = aliasedRelativePath;
+      } else {
+        relativeFilename = relativeFilename
+          .split('/')
+          .filter((part) => part !== '..')
+          .join('/');
+      }
     }
   }
 

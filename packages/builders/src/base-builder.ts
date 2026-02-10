@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { pluralize } from '@workflow/utils';
@@ -24,6 +24,12 @@ const enhancedResolve = promisify(enhancedResolveOriginal);
 
 const EMIT_SOURCEMAPS_FOR_DEBUGGING =
   process.env.WORKFLOW_EMIT_SOURCEMAPS_FOR_DEBUGGING === '1';
+
+export interface DiscoveredEntries {
+  discoveredSteps: string[];
+  discoveredWorkflows: string[];
+  discoveredSerdeFiles: string[];
+}
 
 /**
  * Base class for workflow builders. Provides common build logic for transforming
@@ -100,11 +106,7 @@ export abstract class BaseBuilder {
   protected async discoverEntries(
     inputs: string[],
     outdir: string
-  ): Promise<{
-    discoveredSteps: string[];
-    discoveredWorkflows: string[];
-    discoveredSerdeFiles: string[];
-  }> {
+  ): Promise<DiscoveredEntries> {
     const previousResult = this.discoveredEntries.get(inputs);
 
     if (previousResult) {
@@ -270,23 +272,26 @@ export abstract class BaseBuilder {
     outfile,
     externalizeNonSteps,
     tsconfigPath,
+    discoveredEntries,
   }: {
     tsconfigPath?: string;
     inputFiles: string[];
     outfile: string;
     format?: 'cjs' | 'esm';
     externalizeNonSteps?: boolean;
+    discoveredEntries?: DiscoveredEntries;
   }): Promise<{
     context: esbuild.BuildContext | undefined;
     manifest: WorkflowManifest;
   }> {
     // These need to handle watching for dev to scan for
     // new entries and changes to existing ones
-    const {
-      discoveredSteps: stepFiles,
-      discoveredWorkflows: workflowFiles,
-      discoveredSerdeFiles: serdeFiles,
-    } = await this.discoverEntries(inputFiles, dirname(outfile));
+    const discovered =
+      discoveredEntries ??
+      (await this.discoverEntries(inputFiles, dirname(outfile)));
+    const stepFiles = [...discovered.discoveredSteps].sort();
+    const workflowFiles = [...discovered.discoveredWorkflows].sort();
+    const serdeFiles = [...discovered.discoveredSerdeFiles].sort();
 
     // Include serde files that aren't already step files for cross-context class registration.
     // Classes need to be registered in the step bundle so they can be deserialized
@@ -368,6 +373,31 @@ export abstract class BaseBuilder {
     export { stepEntrypoint as POST } from 'workflow/runtime';`;
 
     // Bundle with esbuild and our custom SWC plugin
+    const entriesToBundle = externalizeNonSteps
+      ? [
+          ...stepFiles,
+          ...serdeFiles,
+          ...(resolvedBuiltInSteps ? [resolvedBuiltInSteps] : []),
+        ]
+      : undefined;
+    const normalizedEntriesToBundle = entriesToBundle
+      ? Array.from(
+          new Set(
+            (
+              await Promise.all(
+                entriesToBundle.map(async (entryToBundle) => {
+                  const resolvedEntry = await realpath(entryToBundle).catch(
+                    () => undefined
+                  );
+                  return resolvedEntry
+                    ? [entryToBundle, resolvedEntry]
+                    : [entryToBundle];
+                })
+              )
+            ).flat()
+          )
+        )
+      : undefined;
     const esbuildCtx = await esbuild.context({
       banner: {
         js: '// biome-ignore-all lint: generated file\n/* eslint-disable */\n',
@@ -414,13 +444,7 @@ export abstract class BaseBuilder {
         createPseudoPackagePlugin(),
         createSwcPlugin({
           mode: 'step',
-          entriesToBundle: externalizeNonSteps
-            ? [
-                ...stepFiles,
-                ...serdeFiles,
-                ...(resolvedBuiltInSteps ? [resolvedBuiltInSteps] : []),
-              ]
-            : undefined,
+          entriesToBundle: normalizedEntriesToBundle,
           outdir: outfile ? dirname(outfile) : undefined,
           workflowManifest,
         }),
@@ -495,21 +519,24 @@ export abstract class BaseBuilder {
     outfile,
     bundleFinalOutput = true,
     tsconfigPath,
+    discoveredEntries,
   }: {
     tsconfigPath?: string;
     inputFiles: string[];
     outfile: string;
     format?: 'cjs' | 'esm';
     bundleFinalOutput?: boolean;
+    discoveredEntries?: DiscoveredEntries;
   }): Promise<{
     manifest: WorkflowManifest;
     interimBundleCtx?: esbuild.BuildContext;
     bundleFinal?: (interimBundleResult: string) => Promise<void>;
   }> {
-    const {
-      discoveredWorkflows: workflowFiles,
-      discoveredSerdeFiles: serdeFiles,
-    } = await this.discoverEntries(inputFiles, dirname(outfile));
+    const discovered =
+      discoveredEntries ??
+      (await this.discoverEntries(inputFiles, dirname(outfile)));
+    const workflowFiles = [...discovered.discoveredWorkflows].sort();
+    const serdeFiles = [...discovered.discoveredSerdeFiles].sort();
 
     // Include serde files that aren't already workflow files for cross-context class registration.
     // Classes need to be registered in the workflow bundle so they can be deserialized

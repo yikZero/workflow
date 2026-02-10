@@ -1719,6 +1719,60 @@ describe('step function serialization', () => {
     expect(hydrated[0]).toBe(stepFn);
   });
 
+  it('should deserialize step function using workflows/example path aliases', () => {
+    const registeredStepId = 'step//./example/workflows/99_e2e//doubleNumber';
+    const aliasedStepId = 'step//./workflows/99_e2e//doubleNumber';
+    const stepFn = async () => 42;
+
+    registerStepFunction(registeredStepId, stepFn);
+
+    const fnWithStepId = async () => 42;
+    Object.defineProperty(fnWithStepId, 'stepId', {
+      value: aliasedStepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    const dehydrated = dehydrateStepArguments([fnWithStepId], globalThis);
+    const ops: Promise<void>[] = [];
+    const hydrated = hydrateStepArguments(
+      dehydrated,
+      ops,
+      mockRunId,
+      globalThis
+    );
+    const result = hydrated[0];
+
+    expect(result).toBe(stepFn);
+  });
+
+  it('should deserialize step function using workflows/src path aliases', () => {
+    const registeredStepId = 'step//./src/workflows/99_e2e//doubleFromSrc';
+    const aliasedStepId = 'step//./workflows/99_e2e//doubleFromSrc';
+    const stepFn = async () => 42;
+
+    registerStepFunction(registeredStepId, stepFn);
+
+    const fnWithStepId = async () => 42;
+    Object.defineProperty(fnWithStepId, 'stepId', {
+      value: aliasedStepId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    const dehydrated = dehydrateStepArguments([fnWithStepId], globalThis);
+    const ops: Promise<void>[] = [];
+    const hydrated = hydrateStepArguments(
+      dehydrated,
+      ops,
+      mockRunId,
+      globalThis
+    );
+    const result = hydrated[0];
+
+    expect(result).toBe(stepFn);
+  });
+
   it('should throw error when reviver cannot find registered step function', () => {
     // Create a function with a non-existent stepId
     const fnWithNonExistentStepId = async () => 42;
