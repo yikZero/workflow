@@ -6,14 +6,17 @@ import { type StructuredError, StructuredErrorSchema } from '@workflow/world';
 import { decode, encode } from 'cbor-x';
 import type { z } from 'zod';
 import {
-  trace,
+  ErrorType,
   getSpanKind,
   HttpRequestMethod,
   HttpResponseStatusCode,
-  UrlFull,
+  PeerService,
+  RpcService,
+  RpcSystem,
   ServerAddress,
   ServerPort,
-  ErrorType,
+  trace,
+  UrlFull,
   WorldParseFormat,
 } from './telemetry.js';
 import { version } from './version.js';
@@ -152,12 +155,15 @@ export const getHttpUrl = (
   const projectConfig = config?.projectConfig;
   const defaultHost =
     WORKFLOW_SERVER_URL_OVERRIDE || 'https://vercel-workflow.com';
+  const customProxyUrl = process.env.WORKFLOW_VERCEL_BACKEND_URL;
   const defaultProxyUrl = 'https://api.vercel.com/v1/workflow';
   // Use proxy when we have project config (for authentication via Vercel API)
   const usingProxy = Boolean(projectConfig?.projectId && projectConfig?.teamId);
   // When using proxy, requests go through api.vercel.com (with x-vercel-workflow-api-url header if override is set)
   // When not using proxy, use the default workflow-server URL (with /api path appended)
-  const baseUrl = usingProxy ? defaultProxyUrl : `${defaultHost}/api`;
+  const baseUrl = usingProxy
+    ? customProxyUrl || defaultProxyUrl
+    : `${defaultHost}/api`;
   return { baseUrl, usingProxy };
 };
 
@@ -244,6 +250,10 @@ export async function makeRequest<T>({
         ...UrlFull(url),
         ...(serverAddress && ServerAddress(serverAddress)),
         ...(serverPort && ServerPort(serverPort)),
+        // Peer service for Datadog service maps
+        ...PeerService('workflow-server'),
+        ...RpcSystem('http'),
+        ...RpcService('workflow-server'),
       });
 
       headers.set('Accept', 'application/cbor');
@@ -282,10 +292,23 @@ export async function makeRequest<T>({
             `Failed to fetch, reproduce with:\ncurl -X ${request.method} ${stringifiedHeaders} "${url}"`
           );
         }
+
+        // Parse Retry-After header for 429 responses (value is in seconds)
+        let retryAfter: number | undefined;
+        if (response.status === 429) {
+          const retryAfterHeader = response.headers.get('Retry-After');
+          if (retryAfterHeader) {
+            const parsed = parseInt(retryAfterHeader, 10);
+            if (!Number.isNaN(parsed)) {
+              retryAfter = parsed;
+            }
+          }
+        }
+
         const error = new WorkflowAPIError(
           errorData.message ||
             `${request.method} ${endpoint} -> HTTP ${response.status}: ${response.statusText}`,
-          { url, status: response.status, code: errorData.code }
+          { url, status: response.status, code: errorData.code, retryAfter }
         );
         // Record error attributes per OTEL conventions
         span?.setAttributes({

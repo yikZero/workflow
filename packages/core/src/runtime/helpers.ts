@@ -1,3 +1,4 @@
+import { WorkflowAPIError } from '@workflow/errors';
 import type {
   Event,
   HealthCheckPayload,
@@ -6,12 +7,33 @@ import type {
 } from '@workflow/world';
 import { HealthCheckPayloadSchema } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
+import { runtimeLogger } from '../logger.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 import { getSpanKind, trace } from '../telemetry.js';
 import { getWorld } from './world.js';
 
 /** Default timeout for health checks in milliseconds */
 const DEFAULT_HEALTH_CHECK_TIMEOUT = 30_000;
+
+/**
+ * Pattern for safe workflow names. Only allows alphanumeric characters,
+ * underscores, hyphens, dots, and forward slashes (for namespaced workflows).
+ */
+const SAFE_WORKFLOW_NAME_PATTERN = /^[a-zA-Z0-9_\-./]+$/;
+
+/**
+ * Validates a workflow name and returns the corresponding queue name.
+ * Ensures the workflow name only contains safe characters before
+ * interpolating it into the queue name string.
+ */
+export function getWorkflowQueueName(workflowName: string): ValidQueueName {
+  if (!SAFE_WORKFLOW_NAME_PATTERN.test(workflowName)) {
+    throw new Error(
+      `Invalid workflow name "${workflowName}": must only contain alphanumeric characters, underscores, hyphens, dots, or forward slashes`
+    );
+  }
+  return `__wkf_workflow_${workflowName}` as ValidQueueName;
+}
 
 const generateId = monotonicFactory();
 
@@ -29,6 +51,8 @@ export interface HealthCheckResult {
   healthy: boolean;
   /** Error message if health check failed */
   error?: string;
+  /** Latency if the health check was successful */
+  latencyMs?: number;
 }
 
 /**
@@ -218,7 +242,10 @@ export async function healthCheck(
 
         const response = parseHealthCheckResponse(chunks);
         if (response) {
-          return response;
+          return {
+            ...response,
+            latencyMs: Date.now() - startTime,
+          };
         }
 
         await new Promise((resolve) =>
@@ -230,7 +257,6 @@ export async function healthCheck(
         );
       }
     }
-
     return {
       healthy: false,
       error: `Health check timed out after ${timeout}ms`,
@@ -339,13 +365,18 @@ export async function queueMessage(
 ) {
   const queueName = args[0];
   await trace(
-    'queueMessage',
+    'queue.publish',
     {
       // Standard OTEL messaging conventions
       attributes: {
         ...Attribute.MessagingSystem('vercel-queue'),
         ...Attribute.MessagingDestinationName(queueName),
         ...Attribute.MessagingOperationType('publish'),
+        // Peer service for Datadog service maps
+        ...Attribute.PeerService('vercel-queue'),
+        ...Attribute.RpcSystem('vercel-queue'),
+        ...Attribute.RpcService('vqs'),
+        ...Attribute.RpcMethod('publish'),
       },
       kind: await getSpanKind('PRODUCER'),
     },
@@ -367,5 +398,72 @@ export function getQueueOverhead(message: { requestedAt?: Date }) {
     );
   } catch {
     return;
+  }
+}
+
+/**
+ * Wraps a queue handler with HTTP 429 throttle retry logic.
+ * - retryAfter < 10s: waits in-process via setTimeout, then retries once
+ * - retryAfter >= 10s: returns { timeoutSeconds } to defer to the queue
+ *
+ * Safe to retry the entire handler because 429 is sent from server middleware
+ * before the request is processed — no server state has changed.
+ */
+// biome-ignore lint/suspicious/noConfusingVoidType: matches Queue handler return type
+export async function withThrottleRetry(
+  fn: () => Promise<void | { timeoutSeconds: number }>
+): Promise<void | { timeoutSeconds: number }> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (WorkflowAPIError.is(err) && err.status === 429) {
+      const retryAfterSeconds = Math.max(
+        // If we don't have a retry-after value, 30s seems a reasonable default
+        // to avoid re-trying during the unknown rate-limiting period.
+        1,
+        typeof err.retryAfter === 'number' ? err.retryAfter : 30
+      );
+
+      if (retryAfterSeconds < 10) {
+        runtimeLogger.warn(
+          'Throttled by workflow-server (429), retrying in-process',
+          {
+            retryAfterSeconds,
+            url: err.url,
+          }
+        );
+        // Short wait: sleep in-process, then retry once
+        await new Promise((resolve) =>
+          setTimeout(resolve, retryAfterSeconds * 1000)
+        );
+        try {
+          return await fn();
+        } catch (retryErr) {
+          // If the retry also gets throttled, defer to queue
+          if (WorkflowAPIError.is(retryErr) && retryErr.status === 429) {
+            const retryRetryAfter = Math.max(
+              1,
+              typeof retryErr.retryAfter === 'number' ? retryErr.retryAfter : 1
+            );
+            runtimeLogger.warn('Throttled again on retry, deferring to queue', {
+              retryAfterSeconds: retryRetryAfter,
+            });
+            return { timeoutSeconds: retryRetryAfter };
+          }
+          throw retryErr;
+        }
+      }
+
+      // Long wait: defer to queue infrastructure
+      runtimeLogger.warn(
+        'Throttled by workflow-server (429), deferring to queue',
+        {
+          retryAfterSeconds,
+          url: err.url,
+        }
+      );
+      return { timeoutSeconds: retryAfterSeconds };
+    }
+    throw err;
   }
 }
