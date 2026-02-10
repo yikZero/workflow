@@ -198,31 +198,53 @@ function byteObjectToString(value: Record<string, number>): string {
  * Recursively walk a value and convert any byte-array-like objects to strings.
  * Returns a new object (or the original if nothing changed).
  */
+const MAX_DESERIALIZE_DEPTH = 100;
+
 export function deserializeByteObjects(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (typeof value !== 'object') return value;
+  const activePath = new WeakSet<object>();
 
-  if (Array.isArray(value)) {
-    return value.map(deserializeByteObjects);
-  }
+  const walk = (current: unknown, depth: number): unknown => {
+    if (current === null || current === undefined) return current;
+    if (typeof current !== 'object') return current;
 
-  if (isByteObject(value)) {
-    try {
-      const str = byteObjectToString(value);
-      // Try to parse as JSON in case the bytes encode a JSON string
-      try {
-        return JSON.parse(str);
-      } catch {
-        return str;
-      }
-    } catch {
-      return value;
+    if (depth > MAX_DESERIALIZE_DEPTH) {
+      return '[MaxDepthExceeded]';
     }
-  }
 
-  const result: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) {
-    result[k] = deserializeByteObjects(v);
-  }
-  return result;
+    if (activePath.has(current)) {
+      return '[Circular]';
+    }
+
+    activePath.add(current);
+
+    try {
+      if (Array.isArray(current)) {
+        return current.map((item) => walk(item, depth + 1));
+      }
+
+      if (isByteObject(current)) {
+        try {
+          const str = byteObjectToString(current);
+          // Try to parse as JSON in case the bytes encode a JSON string
+          try {
+            return walk(JSON.parse(str), depth + 1);
+          } catch {
+            return str;
+          }
+        } catch {
+          return current;
+        }
+      }
+
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(current)) {
+        result[k] = walk(v, depth + 1);
+      }
+      return result;
+    } finally {
+      activePath.delete(current);
+    }
+  };
+
+  return walk(value, 0);
 }
