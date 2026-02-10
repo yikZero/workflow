@@ -126,6 +126,19 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             step = startResult.step;
           } catch (err) {
             if (WorkflowAPIError.is(err)) {
+              if (WorkflowAPIError.is(err) && err.status === 429) {
+                const retryRetryAfter = Math.max(
+                  1,
+                  typeof err.retryAfter === 'number' ? err.retryAfter : 1
+                );
+                runtimeLogger.warn(
+                  'Throttled again on retry, deferring to queue',
+                  {
+                    retryAfterSeconds: retryRetryAfter,
+                  }
+                );
+                return { timeoutSeconds: retryRetryAfter };
+              }
               // 410 Gone: Workflow has already completed
               if (err.status === 410) {
                 console.warn(

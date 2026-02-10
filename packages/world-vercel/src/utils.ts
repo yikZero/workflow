@@ -6,18 +6,18 @@ import { type StructuredError, StructuredErrorSchema } from '@workflow/world';
 import { decode, encode } from 'cbor-x';
 import type { z } from 'zod';
 import {
-  trace,
+  ErrorType,
   getSpanKind,
   HttpRequestMethod,
   HttpResponseStatusCode,
-  UrlFull,
+  PeerService,
+  RpcService,
+  RpcSystem,
   ServerAddress,
   ServerPort,
-  ErrorType,
+  trace,
+  UrlFull,
   WorldParseFormat,
-  PeerService,
-  RpcSystem,
-  RpcService,
 } from './telemetry.js';
 import { version } from './version.js';
 
@@ -292,10 +292,23 @@ export async function makeRequest<T>({
             `Failed to fetch, reproduce with:\ncurl -X ${request.method} ${stringifiedHeaders} "${url}"`
           );
         }
+
+        // Parse Retry-After header for 429 responses (value is in seconds)
+        let retryAfter: number | undefined;
+        if (response.status === 429) {
+          const retryAfterHeader = response.headers.get('Retry-After');
+          if (retryAfterHeader) {
+            const parsed = parseInt(retryAfterHeader, 10);
+            if (!Number.isNaN(parsed)) {
+              retryAfter = parsed;
+            }
+          }
+        }
+
         const error = new WorkflowAPIError(
           errorData.message ||
             `${request.method} ${endpoint} -> HTTP ${response.status}: ${response.statusText}`,
-          { url, status: response.status, code: errorData.code }
+          { url, status: response.status, code: errorData.code, retryAfter }
         );
         // Record error attributes per OTEL conventions
         span?.setAttributes({
