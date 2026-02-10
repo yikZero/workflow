@@ -1,7 +1,6 @@
 import { runInContext } from 'node:vm';
 import type { WorkflowRuntimeError } from '@workflow/errors';
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from '@workflow/serde';
-import type { Encryptor } from '@workflow/world';
 import { describe, expect, it } from 'vitest';
 import { registerSerializationClass } from './class-serialization.js';
 import { getStepFunction, registerStepFunction } from './private.js';
@@ -1933,12 +1932,17 @@ describe('step function serialization', () => {
       enumerable: false,
       configurable: false,
     });
-    const dehydrated = await dehydrateStepArguments([fnWithStepId], globalThis);
-    const ops: Promise<void>[] = [];
+    const dehydrated = await dehydrateStepArguments(
+      [fnWithStepId],
+      mockRunId,
+      undefined,
+      globalThis
+    );
     const hydrated = await hydrateStepArguments(
       dehydrated,
-      ops,
       mockRunId,
+      undefined,
+      [],
       globalThis
     );
     const result = hydrated[0];
@@ -1960,12 +1964,17 @@ describe('step function serialization', () => {
       enumerable: false,
       configurable: false,
     });
-    const dehydrated = await dehydrateStepArguments([fnWithStepId], globalThis);
-    const ops: Promise<void>[] = [];
+    const dehydrated = await dehydrateStepArguments(
+      [fnWithStepId],
+      mockRunId,
+      undefined,
+      globalThis
+    );
     const hydrated = await hydrateStepArguments(
       dehydrated,
-      ops,
       mockRunId,
+      undefined,
+      [],
       globalThis
     );
     const result = hydrated[0];
@@ -3149,51 +3158,24 @@ describe('getDeserializeStream legacy fallback', () => {
 });
 
 describe('encryption integration', () => {
-  // Create a mock encryptor that actually encrypts/decrypts
-  const createTestEncryptor = (): Encryptor => {
-    // Simple XOR-based "encryption" for testing (NOT secure, just for tests)
-    const xorKey = 0x42;
+  // Real 32-byte AES-256 test key
+  const testKey = new Uint8Array([
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+    0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+  ]);
+  // A different key for wrong-key tests
+  const wrongKey = new Uint8Array(32);
+  wrongKey.fill(0xff);
 
-    return {
-      async encrypt(data: Uint8Array, context: { runId: string }) {
-        // Add 'encr' prefix and XOR the data
-        const result = new Uint8Array(4 + data.length);
-        result.set(new TextEncoder().encode('encr'), 0);
-        for (let i = 0; i < data.length; i++) {
-          result[4 + i] =
-            data[i] ^
-            xorKey ^
-            (context.runId.charCodeAt(i % context.runId.length) & 0xff);
-        }
-        return result;
-      },
-      async decrypt(data: Uint8Array, context: { runId: string }) {
-        // Check prefix and XOR back
-        const prefix = new TextDecoder().decode(data.subarray(0, 4));
-        if (prefix !== 'encr') {
-          throw new Error(`Invalid prefix: ${prefix}`);
-        }
-        const result = new Uint8Array(data.length - 4);
-        for (let i = 0; i < result.length; i++) {
-          result[i] =
-            data[4 + i] ^
-            xorKey ^
-            (context.runId.charCodeAt(i % context.runId.length) & 0xff);
-        }
-        return result;
-      },
-    };
-  };
-
-  it('should encrypt workflow arguments when encryptor is provided', async () => {
-    const testEncryptor = createTestEncryptor();
+  it('should encrypt workflow arguments when key is provided', async () => {
     const testRunId = 'wrun_test123';
     const testValue = { message: 'secret data', count: 42 };
 
     const encrypted = await dehydrateWorkflowArguments(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis,
       false
@@ -3207,15 +3189,14 @@ describe('encryption integration', () => {
     expect(prefix).toBe('encr');
   });
 
-  it('should decrypt workflow arguments when encryptor is provided', async () => {
-    const testEncryptor = createTestEncryptor();
+  it('should decrypt workflow arguments with correct key', async () => {
     const testRunId = 'wrun_test123';
     const testValue = { message: 'secret data', count: 42 };
 
     const encrypted = await dehydrateWorkflowArguments(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis,
       false
@@ -3224,7 +3205,7 @@ describe('encryption integration', () => {
     const decrypted = await hydrateWorkflowArguments(
       encrypted,
       testRunId,
-      testEncryptor,
+      testKey,
       globalThis,
       {}
     );
@@ -3232,43 +3213,33 @@ describe('encryption integration', () => {
     expect(decrypted).toEqual(testValue);
   });
 
-  it('should fail to decrypt with wrong runId', async () => {
-    const testEncryptor = createTestEncryptor();
+  it('should fail to decrypt with wrong key', async () => {
     const testRunId = 'wrun_test123';
-    const wrongRunId = 'wrun_wrong456';
     const testValue = { message: 'secret data' };
 
     const encrypted = await dehydrateWorkflowArguments(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis,
       false
     );
 
-    // Decrypting with wrong runId should produce garbage (in real crypto would fail auth)
-    // Our simple XOR produces bytes that aren't valid JSON, so hydration throws
+    // AES-GCM auth tag check should fail with wrong key
     await expect(
-      hydrateWorkflowArguments(
-        encrypted,
-        wrongRunId,
-        testEncryptor,
-        globalThis,
-        {}
-      )
+      hydrateWorkflowArguments(encrypted, testRunId, wrongKey, globalThis, {})
     ).rejects.toThrow();
   });
 
-  it('should not encrypt when no encryptor is provided', async () => {
-    const noEncryptor: Encryptor = {};
+  it('should not encrypt when no key is provided', async () => {
     const testRunId = 'wrun_test123';
     const testValue = { message: 'plain data' };
 
     const serialized = await dehydrateWorkflowArguments(
       testValue,
       testRunId,
-      noEncryptor,
+      undefined,
       [],
       globalThis,
       false
@@ -3282,8 +3253,7 @@ describe('encryption integration', () => {
     expect(prefix).toBe('devl');
   });
 
-  it('should handle unencrypted data when encryptor is provided', async () => {
-    const testEncryptor = createTestEncryptor();
+  it('should handle unencrypted data when key is provided', async () => {
     const testRunId = 'wrun_test123';
     const testValue = { message: 'plain data' };
 
@@ -3291,17 +3261,17 @@ describe('encryption integration', () => {
     const serialized = await dehydrateWorkflowArguments(
       testValue,
       testRunId,
-      {}, // no encryptor
+      undefined,
       [],
       globalThis,
       false
     );
 
-    // Hydrate with encryptor - should still work because data isn't encrypted
+    // Hydrate with key — should still work because data isn't encrypted
     const hydrated = await hydrateWorkflowArguments(
       serialized,
       testRunId,
-      testEncryptor,
+      testKey,
       globalThis,
       {}
     );
@@ -3310,15 +3280,13 @@ describe('encryption integration', () => {
   });
 
   it('should encrypt step arguments', async () => {
-    const testEncryptor = createTestEncryptor();
     const testRunId = 'wrun_test123';
     const testValue = ['arg1', { nested: 'value' }, 123];
 
-    // dehydrateStepArguments signature: (value, runId, encryptor, global, v1Compat)
     const encrypted = await dehydrateStepArguments(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       globalThis,
       false
     );
@@ -3331,11 +3299,10 @@ describe('encryption integration', () => {
     expect(prefix).toBe('encr');
 
     // Should round-trip correctly
-    // hydrateStepArguments signature: (value, runId, encryptor, ops, global)
     const decrypted = await hydrateStepArguments(
       encrypted,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis
     );
@@ -3344,14 +3311,13 @@ describe('encryption integration', () => {
   });
 
   it('should encrypt step return values', async () => {
-    const testEncryptor = createTestEncryptor();
     const testRunId = 'wrun_test123';
     const testValue = { result: 'success', data: [1, 2, 3] };
 
     const encrypted = await dehydrateStepReturnValue(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis
     );
@@ -3367,7 +3333,7 @@ describe('encryption integration', () => {
     const decrypted = await hydrateStepReturnValue(
       encrypted,
       testRunId,
-      testEncryptor,
+      testKey,
       globalThis
     );
 
@@ -3375,15 +3341,13 @@ describe('encryption integration', () => {
   });
 
   it('should encrypt workflow return values', async () => {
-    const testEncryptor = createTestEncryptor();
     const testRunId = 'wrun_test123';
     const testValue = { final: 'result', timestamp: Date.now() };
 
-    // dehydrateWorkflowReturnValue signature: (value, runId, encryptor, global)
     const encrypted = await dehydrateWorkflowReturnValue(
       testValue,
       testRunId,
-      testEncryptor,
+      testKey,
       globalThis
     );
 
@@ -3395,11 +3359,10 @@ describe('encryption integration', () => {
     expect(prefix).toBe('encr');
 
     // Should round-trip correctly
-    // hydrateWorkflowReturnValue signature: (value, runId, encryptor, ops, global, extraRevivers)
     const decrypted = await hydrateWorkflowReturnValue(
       encrypted,
       testRunId,
-      testEncryptor,
+      testKey,
       [],
       globalThis,
       {}
