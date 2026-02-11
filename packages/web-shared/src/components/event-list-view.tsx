@@ -583,10 +583,6 @@ function CopyableCell({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Payload block — formats JSON cleanly with a copy button
-// ──────────────────────────────────────────────────────────────────────────
-
 /** Recursively parse stringified JSON values so escaped slashes / quotes are cleaned up */
 function deepParseJson(value: unknown): unknown {
   if (typeof value === 'string') {
