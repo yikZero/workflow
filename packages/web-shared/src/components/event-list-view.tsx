@@ -6,7 +6,11 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, Copy } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { deserializeByteObjects, formatDuration } from '../lib/utils';
+import {
+  deserializeByteObjects,
+  formatDuration,
+  tryDeserializeSerializedData,
+} from '../lib/utils';
 import { Skeleton } from './ui/skeleton';
 
 const BUTTON_RESET_STYLE: React.CSSProperties = {
@@ -617,7 +621,9 @@ function PayloadBlock({ data }: { data: unknown }): ReactNode {
   const [copied, setCopied] = useState(false);
 
   const formatted = useMemo(() => {
-    const cleaned = deepParseJson(deserializeByteObjects(data));
+    const cleaned = deepParseJson(
+      deserializeByteObjects(tryDeserializeSerializedData(data))
+    );
     return JSON.stringify(cleaned, null, 2);
   }, [data]);
 

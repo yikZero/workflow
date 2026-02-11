@@ -26,4 +26,5 @@ export {
   formatDuration,
   identifyStreamSteps,
   isDoStreamStep,
+  tryDeserializeSerializedData,
 } from './lib/utils';

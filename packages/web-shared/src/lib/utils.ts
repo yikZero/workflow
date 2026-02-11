@@ -409,6 +409,9 @@ export function deserializeByteObjects(value: unknown): unknown {
             try {
               return walk(JSON.parse(str), depth + 1);
             } catch {
+              // JSON parse failed — try devalue in case bytes encode devl[…] data
+              const devalued = tryDeserializeDevalue(str);
+              if (devalued !== str) return walk(devalued, depth + 1);
               return str;
             }
           } catch {
@@ -421,10 +424,12 @@ export function deserializeByteObjects(value: unknown): unknown {
       if (isByteObject(current)) {
         try {
           const str = byteObjectToString(current);
-          // Try to parse as JSON in case the bytes encode a JSON string
           try {
             return walk(JSON.parse(str), depth + 1);
           } catch {
+            // JSON parse failed — try devalue in case bytes encode devl[…] data
+            const devalued = tryDeserializeDevalue(str);
+            if (devalued !== str) return walk(devalued, depth + 1);
             return str;
           }
         } catch {
