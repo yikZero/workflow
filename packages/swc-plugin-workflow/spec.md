@@ -576,7 +576,10 @@ registerSerializationClass("class//./input//Point", Point);
 
 ## Static Methods
 
-Static class methods can be marked with directives. Instance methods are **not supported**.
+Static class methods can be marked with directives. Instance methods are supported for `"use step"` (with custom serialization), but `"use workflow"` is only supported on static methods.
+
+- `"use step"`: supported on **static** and **instance** methods (instance methods require custom serialization).
+- `"use workflow"`: supported on **static** methods only (instance methods are rejected).
 
 ### Static Step Method
 
@@ -795,6 +798,8 @@ Files containing classes with custom serialization are automatically discovered 
 
 This allows serialization classes to be defined in separate files (such as Next.js API routes or utility modules) and still be registered in the serialization system when the application is built.
 
+> **Compatibility note:** For auto-discovery of serialization-only files, prefer importing `WORKFLOW_SERIALIZE` / `WORKFLOW_DESERIALIZE` from `@workflow/serde` consistently. If you import these symbols from `@vercel/workflow` in a file that contains only serialization classes (no `"use step"`/`"use workflow"`), the file may not match the discovery heuristic. If you must use `@vercel/workflow`, either use `Symbol.for("workflow-serialize"/"workflow-deserialize")` directly or ensure the file also contains a workflow directive so it is transformed.
+
 ### Cross-Context Class Registration
 
 Classes with custom serialization are automatically included in **all bundle contexts** (step, workflow, client) to ensure they can be properly serialized and deserialized when crossing execution boundaries:
@@ -850,6 +855,9 @@ The plugin emits errors for invalid usage:
 |-------|-------------|
 | Non-async function | Functions with `"use step"` or `"use workflow"` must be async |
 | Instance methods with `"use workflow"` | Only static methods can have `"use workflow"` (not instance methods) |
+| Forbidden `this` in step function | Step functions cannot reference `this` (they are hoisted and executed out of instance context). |
+| Forbidden `arguments` in step function | Step functions cannot reference `arguments`. Use explicit parameters or rest params instead. |
+| Forbidden `super` in step function | Step functions cannot use `super` calls. Move that logic outside the step boundary. |
 | Misplaced directive | Directive must be at top of file or start of function body |
 | Conflicting directives | Cannot have both `"use step"` and `"use workflow"` at module level |
 | Invalid exports | Module-level directive files can only export async functions |
