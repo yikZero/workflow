@@ -824,6 +824,7 @@ export const WorkflowTraceViewer = ({
   onStreamClick,
   onSpanSelect,
   onLoadEventData,
+  onDecrypt,
 }: {
   run: WorkflowRun;
   steps: Step[];
@@ -854,6 +855,8 @@ export const WorkflowTraceViewer = ({
     correlationId: string,
     eventId: string
   ) => Promise<unknown | null>;
+  /** Callback to decrypt encrypted data (triggers audit-logged key retrieval) */
+  onDecrypt?: () => void;
 }) => {
   const [selectedSpan, setSelectedSpan] = useState<SelectedSpanInfo | null>(
     null
@@ -1072,6 +1075,7 @@ export const WorkflowTraceViewer = ({
                 onWakeUpSleep={onWakeUpSleep}
                 onLoadEventData={onLoadEventData}
                 onResolveHook={onResolveHook}
+                onDecrypt={onDecrypt}
                 selectedSpan={selectedSpan}
               />
             </ErrorBoundary>

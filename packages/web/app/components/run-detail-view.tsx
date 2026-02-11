@@ -367,6 +367,7 @@ export function RunDetailView({
     data: spanDetailData,
     loading: spanDetailLoading,
     error: spanDetailError,
+    refetch: refetchSpanDetail,
   } = useWorkflowResourceData(
     env,
     spanSelection?.resource ?? 'run',
@@ -380,6 +381,10 @@ export function RunDetailView({
       ),
     }
   );
+
+  const handleDecrypt = useCallback(() => {
+    refetchSpanDetail({ decrypt: true });
+  }, [refetchSpanDetail]);
 
   const handleSpanSelect = useCallback((info: SpanSelectionInfo) => {
     setSpanSelection(info);
@@ -723,6 +728,7 @@ export function RunDetailView({
                     onWakeUpSleep={handleWakeUpSleep}
                     onResolveHook={handleResolveHook}
                     onLoadEventData={handleLoadSidebarEventData}
+                    onDecrypt={handleDecrypt}
                   />
                 </div>
               </ErrorBoundary>

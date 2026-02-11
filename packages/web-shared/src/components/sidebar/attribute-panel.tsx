@@ -5,6 +5,7 @@ import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
 import type { ModelMessage } from 'ai';
 import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
+import { isEncryptedData } from '../../lib/hydration';
 import { extractConversation, isDoStreamStep } from '../../lib/utils';
 import { DataInspector, StreamClickContext } from '../ui/data-inspector';
 import { ErrorCard } from '../ui/error-card';
@@ -497,6 +498,7 @@ export const AttributePanel = ({
   error,
   expiredAt,
   onStreamClick,
+  onDecrypt,
 }: {
   data: Record<string, unknown>;
   moduleSpecifier?: string;
@@ -505,6 +507,8 @@ export const AttributePanel = ({
   expiredAt?: string | Date;
   /** Callback when a stream reference is clicked */
   onStreamClick?: (streamId: string) => void;
+  /** Callback to decrypt encrypted data (triggers audit-logged key retrieval) */
+  onDecrypt?: () => void;
 }) => {
   // Extract workflowCoreVersion from executionContext for display
   const displayData = useMemo(() => {
@@ -568,6 +572,14 @@ export const AttributePanel = ({
     return attributes;
   }, [visibleBasicAttributes]);
 
+  // Check if any attribute value is an encrypted Uint8Array
+  const hasEncryptedData = useMemo(() => {
+    return resolvedAttributes.some((attr) => {
+      const val = displayData[attr as keyof typeof displayData];
+      return isEncryptedData(val);
+    });
+  }, [resolvedAttributes, displayData]);
+
   // Memoize context object to avoid object reconstruction on render
   const displayContext = useMemo(
     () => ({
@@ -623,15 +635,57 @@ export const AttributePanel = ({
         ) : hasExpired ? (
           <ExpiredDataMessage />
         ) : (
-          resolvedAttributes.map((attribute) => (
-            <AttributeBlock
-              isLoading={isLoading}
-              key={attribute}
-              attribute={attribute}
-              value={displayData[attribute as keyof typeof displayData]}
-              context={displayContext}
-            />
-          ))
+          <>
+            {hasEncryptedData && onDecrypt ? (
+              <div
+                className="flex items-center justify-between rounded-lg border px-3 py-2.5 mb-3"
+                style={{
+                  borderColor: 'var(--ds-gray-300)',
+                  backgroundColor: 'var(--ds-gray-100)',
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🔒</span>
+                  <div>
+                    <span
+                      className="text-[11px] font-medium block"
+                      style={{ color: 'var(--ds-gray-900)' }}
+                    >
+                      Encrypted Data
+                    </span>
+                    <span
+                      className="text-[10px]"
+                      style={{ color: 'var(--ds-gray-700)' }}
+                    >
+                      Input and output values are encrypted
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onDecrypt}
+                  className="text-[11px] font-medium px-3 py-1 rounded border cursor-pointer transition-colors hover:brightness-90 active:brightness-75"
+                  style={{
+                    color: 'var(--ds-blue-900)',
+                    backgroundColor: 'var(--ds-blue-200)',
+                    borderColor: 'var(--ds-blue-400)',
+                  }}
+                >
+                  Decrypt
+                </button>
+              </div>
+            ) : (
+              resolvedAttributes.map((attribute) => (
+                <AttributeBlock
+                  isLoading={isLoading}
+                  key={attribute}
+                  attribute={attribute}
+                  value={displayData[attribute as keyof typeof displayData]}
+                  context={displayContext}
+                />
+              ))
+            )}
+          </>
         )}
       </div>
     </StreamClickContext.Provider>
