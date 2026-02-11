@@ -244,6 +244,7 @@ interface EventTreeNode {
 function buildEventTree(events: Event[]): EventTreeNode[] {
   const correlationToLane = new Map<string, number>();
   const activeLanes = new Set<number>();
+  const reusableLanes: number[] = [];
   let nextLane = 0;
 
   const nodes: EventTreeNode[] = [];
@@ -273,7 +274,18 @@ function buildEventTree(events: Event[]): EventTreeNode[] {
       // correlation doesn't already have a lane (step_started should
       // not create a second lane if step_created already opened one).
       if (isLifecycleStart(event.eventType) && !correlationToLane.has(corrId)) {
-        lane = nextLane++;
+        if (reusableLanes.length > 0) {
+          let smallestIdx = 0;
+          for (let i = 1; i < reusableLanes.length; i++) {
+            if (reusableLanes[i] < reusableLanes[smallestIdx]) {
+              smallestIdx = i;
+            }
+          }
+          lane = reusableLanes[smallestIdx];
+          reusableLanes.splice(smallestIdx, 1);
+        } else {
+          lane = nextLane++;
+        }
         correlationToLane.set(corrId, lane);
         activeLanes.add(lane);
         isBranchStart = true;
@@ -305,7 +317,11 @@ function buildEventTree(events: Event[]): EventTreeNode[] {
     });
 
     if (isBranchEnd && lane >= 0) {
+      if (corrId) {
+        correlationToLane.delete(corrId);
+      }
       activeLanes.delete(lane);
+      reusableLanes.push(lane);
     }
   }
 
