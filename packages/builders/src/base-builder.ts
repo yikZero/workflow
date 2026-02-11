@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { pluralize } from '@workflow/utils';
+import { pluralize, usesVercelWorld } from '@workflow/utils';
 import chalk from 'chalk';
 import enhancedResolveOriginal from 'enhanced-resolve';
 import * as esbuild from 'esbuild';
@@ -1064,6 +1064,16 @@ export const OPTIONS = handler;`;
   }
 
   /**
+   * Whether diagnostics artifacts should be emitted to Vercel output.
+   * This is enabled when the resolved world target is Vercel.
+   */
+  protected get shouldEmitVercelDiagnostics(): boolean {
+    return (
+      usesVercelWorld() || this.config.buildTarget === 'vercel-build-output-api'
+    );
+  }
+
+  /**
    * Creates a manifest JSON file containing step/workflow/class metadata
    * and graph data for visualization.
    *
@@ -1096,6 +1106,13 @@ export const OPTIONS = handler;`;
 
       await mkdir(manifestDir, { recursive: true });
       await writeFile(join(manifestDir, 'manifest.json'), manifestJson);
+      if (this.shouldEmitVercelDiagnostics) {
+        const diagnosticsManifestPath = this.resolvePath(
+          '.vercel/output/diagnostics/workflows-manifest.json'
+        );
+        await this.ensureDirectory(diagnosticsManifestPath);
+        await writeFile(diagnosticsManifestPath, manifestJson);
+      }
 
       const stepCount = Object.values(steps).reduce(
         (acc, s) => acc + Object.keys(s).length,

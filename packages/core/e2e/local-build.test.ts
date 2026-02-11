@@ -1,6 +1,9 @@
-import { exec as execOriginal } from 'child_process';
-import { promisify } from 'util';
+import { exec as execOriginal } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, test } from 'vitest';
+import { usesVercelWorld } from '../../utils/src/world-target';
 import { getWorkbenchAppPath } from './utils';
 
 const exec = promisify(execOriginal);
@@ -29,5 +32,13 @@ describe.each([
     });
 
     expect(result.stderr).not.toContain('Error:');
+
+    if (usesVercelWorld()) {
+      const diagnosticsManifestPath = path.join(
+        getWorkbenchAppPath(project),
+        '.vercel/output/diagnostics/workflows-manifest.json'
+      );
+      await fs.access(diagnosticsManifestPath);
+    }
   });
 });
