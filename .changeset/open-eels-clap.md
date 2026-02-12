@@ -5,4 +5,4 @@
 "@workflow/cli": patch
 ---
 
-Align observability hydration and RPC transport across web, web-shared, core, and cli.
+Align observability hydration and RPC transport across web, web-shared, core, and cli. Refactor and enhance web-shared components.
