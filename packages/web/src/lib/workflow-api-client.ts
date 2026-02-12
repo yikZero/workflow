@@ -1,6 +1,10 @@
 'use client';
 
 import { VERCEL_403_ERROR_MESSAGE } from '@workflow/errors';
+import {
+  hydrateResourceIO,
+  waitEventsToWaitEntity,
+} from '@workflow/web-shared';
 import type {
   Event,
   Hook,
@@ -9,12 +13,6 @@ import type {
   WorkflowRunStatus,
 } from '@workflow/world';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getPaginationDisplay } from './utils';
-import { waitEventsToWaitEntity } from '@workflow/web-shared';
-import type {
-  EnvMap,
-  ServerActionError,
-} from '@/server/workflow-server-actions';
 import {
   cancelRun as cancelRunServerAction,
   fetchEvents,
@@ -26,15 +24,19 @@ import {
   fetchStep,
   fetchSteps,
   fetchStreams,
-  type ResumeHookResult,
-  readStreamServerAction,
   recreateRun as recreateRunServerAction,
   reenqueueRun as reenqueueRunServerAction,
   resumeHook as resumeHookServerAction,
-  type StopSleepOptions,
-  type StopSleepResult,
   wakeUpRun as wakeUpRunServerAction,
-} from '@/server/workflow-server-actions';
+} from '@/lib/rpc-client';
+import type {
+  EnvMap,
+  ResumeHookResult,
+  ServerActionError,
+  StopSleepOptions,
+  StopSleepResult,
+} from '@/lib/types';
+import { getPaginationDisplay } from './utils';
 
 const MAX_ITEMS = 1000;
 const LIVE_POLL_LIMIT = 10;
@@ -773,20 +775,20 @@ export function useWorkflowTraceViewerData(
             setError(error);
             return;
           }
-          setRun(result);
+          setRun(hydrateResourceIO(result));
           return result;
         }
       ),
       fetchAllSteps(env, runId).then((result) => {
-        setSteps(result.data);
+        setSteps(result.data.map(hydrateResourceIO));
         setStepsCursor(result.cursor);
       }),
       fetchAllHooks(env, runId).then((result) => {
-        setHooks(result.data);
+        setHooks(result.data.map(hydrateResourceIO));
         setHooksCursor(result.cursor);
       }),
       fetchAllEvents(env, runId).then((result) => {
-        setEvents(result.data);
+        setEvents(result.data.map(hydrateResourceIO));
         setEventsCursor(result.cursor);
       }),
     ];
@@ -840,7 +842,7 @@ export function useWorkflowTraceViewerData(
       setError(error);
       return false;
     }
-    setRun(result);
+    setRun(hydrateResourceIO(result));
     return true;
   }, [env, runId, run?.completedAt]);
 
@@ -859,7 +861,7 @@ export function useWorkflowTraceViewerData(
     }
 
     if (result.data.length > 0) {
-      setSteps((prev) => mergeSteps(prev, result.data));
+      setSteps((prev) => mergeSteps(prev, result.data.map(hydrateResourceIO)));
       // We intentionally leave the cursor where it is, unless we're at the end of the page
       // in which case we roll over. This is so that we re-fetch existing steps, to ensure
       // their status gets updated.
@@ -886,7 +888,7 @@ export function useWorkflowTraceViewerData(
       return false;
     }
     if (result.data.length > 0) {
-      setHooks((prev) => mergeHooks(prev, result.data));
+      setHooks((prev) => mergeHooks(prev, result.data.map(hydrateResourceIO)));
       if (result.cursor) {
         setHooksCursor(result.cursor);
       }
@@ -910,7 +912,9 @@ export function useWorkflowTraceViewerData(
       return false;
     }
     if (result.data.length > 0) {
-      setEvents((prev) => mergeEvents(prev, result.data));
+      setEvents((prev) =>
+        mergeEvents(prev, result.data.map(hydrateResourceIO))
+      );
       if (result.cursor) {
         setEventsCursor(result.cursor);
       }
@@ -1039,6 +1043,7 @@ async function fetchResourceWithCorrelationId(
     });
   }
 
+  resourceData = hydrateResourceIO(resourceData);
   return { data: resourceData, correlationId };
 }
 
@@ -1088,7 +1093,7 @@ export function useWorkflowResourceData(
         }
         return;
       }
-      setData(result);
+      setData(hydrateResourceIO(result));
       return;
     }
     if (resource === 'sleep') {
@@ -1103,7 +1108,7 @@ export function useWorkflowResourceData(
         setError(error);
         return;
       }
-      const events = result.data as unknown as Event[];
+      const events = (result.data as unknown as Event[]).map(hydrateResourceIO);
       const data = waitEventsToWaitEntity(events);
       if (data === null) {
         setError(
@@ -1247,25 +1252,35 @@ function isServerActionError(value: unknown): value is ServerActionError {
 }
 
 export async function readStream(
-  env: EnvMap,
+  _env: EnvMap,
   streamId: string,
   startIndex?: number
 ): Promise<ReadableStream<unknown>> {
   try {
-    const stream = await readStreamServerAction(env, streamId, startIndex);
-    if (!stream) {
-      throw new WorkflowWebAPIError('Failed to read stream', {
+    const url = `/api/stream/${encodeURIComponent(streamId)}${startIndex != null ? `?startIndex=${startIndex}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      if (errorData && isServerActionError(errorData)) {
+        throw new WorkflowWebAPIError(errorData.message, {
+          layer: 'client',
+          cause: errorData.cause,
+          request: errorData.request,
+        });
+      }
+      throw new WorkflowWebAPIError(
+        `Failed to read stream: ${response.status}`,
+        {
+          layer: 'client',
+        }
+      );
+    }
+    if (!response.body) {
+      throw new WorkflowWebAPIError('Failed to read stream: no body', {
         layer: 'client',
       });
     }
-    if (isServerActionError(stream)) {
-      throw new WorkflowWebAPIError(stream.message, {
-        layer: 'client',
-        cause: stream.cause,
-        request: stream.request,
-      });
-    }
-    return stream;
+    return response.body;
   } catch (error) {
     if (error instanceof WorkflowWebAPIError) {
       throw error;

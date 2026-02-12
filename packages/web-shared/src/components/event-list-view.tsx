@@ -2,16 +2,11 @@
 
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
 import type { Event, Step, WorkflowRun } from '@workflow/world';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, Copy } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import {
-  deserializeByteObjects,
-  formatDuration,
-  tryDeserializeSerializedData,
-} from '../lib/utils';
+import { formatDuration } from '../lib/utils';
 import { Skeleton } from './ui/skeleton';
 
 const BUTTON_RESET_STYLE: React.CSSProperties = {
@@ -426,9 +421,7 @@ function PayloadBlock({ data }: { data: unknown }): ReactNode {
   const [copied, setCopied] = useState(false);
 
   const formatted = useMemo(() => {
-    const cleaned = deepParseJson(
-      deserializeByteObjects(tryDeserializeSerializedData(data))
-    );
+    const cleaned = deepParseJson(data);
     return JSON.stringify(cleaned, null, 2);
   }, [data]);
 

@@ -4,8 +4,8 @@ import {
   unwrapServerActionResult,
   WorkflowWebAPIError,
 } from '@/lib/workflow-api-client';
-import type { EnvMap } from '@/server/workflow-server-actions';
-import { fetchWorkflowsManifest } from '@/server/workflow-server-actions';
+import { fetchWorkflowsManifest } from '@/lib/rpc-client';
+import type { EnvMap } from '@/lib/types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adaptManifest } from '@/lib/flow-graph/manifest-adapter';
 import type { WorkflowGraphManifest } from '@/lib/flow-graph/workflow-graph-types';

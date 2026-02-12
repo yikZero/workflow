@@ -1,19 +1,20 @@
 'use client';
 
-import { Activity, Loader2 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
-import { toast } from 'sonner';
 import type {
   HealthCheckEndpoint,
   HealthCheckResult,
 } from '@workflow/core/runtime/helpers';
+import { Activity, Loader2 } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { type EnvMap, runHealthCheck } from '@/server/workflow-server-actions';
+import { runHealthCheck } from '@/lib/rpc-client';
+import type { EnvMap } from '@/lib/types';
 
 interface EndpointResult {
   endpoint: HealthCheckEndpoint;

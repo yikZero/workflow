@@ -1,7 +1,6 @@
 'use client';
 
 import { TooltipProvider } from '@radix-ui/react-tooltip';
-import type { PublicServerConfig } from '@/server/workflow-server-actions';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ThemeProvider, useTheme } from 'next-themes';
@@ -11,6 +10,7 @@ import { HealthCheckButton } from '@/components/display-utils/health-check-butto
 import { ThemePicker } from '@/components/theme-dropdown';
 import { DocsLink } from '@/components/top-nav/docs-link';
 import { Toaster } from '@/components/ui/sonner';
+import type { PublicServerConfig } from '@/lib/types';
 import { ServerConfigProvider } from '@/lib/world-config-context';
 import { Logo } from '../icons/logo';
 

@@ -22,13 +22,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import type { EnvMap } from '@/lib/types';
 import {
   cancelRun,
   recreateRun,
   reenqueueRun,
   wakeUpRun,
 } from '@/lib/workflow-api-client';
-import type { EnvMap } from '@/server/workflow-server-actions';
 import { Button } from './ui/button';
 
 // ============================================================================

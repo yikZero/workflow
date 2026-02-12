@@ -1,13 +1,14 @@
 'use client';
 
 import { parseWorkflowName } from '@workflow/utils/parse-name';
+import type { SpanSelectionInfo } from '@workflow/web-shared';
 import {
   ErrorBoundary,
   EventListView,
+  hydrateResourceIO,
   StreamViewer,
   WorkflowTraceViewer,
 } from '@workflow/web-shared';
-import type { SpanSelectionInfo } from '@workflow/web-shared';
 import type { Event, Step, WorkflowRun } from '@workflow/world';
 import {
   AlertCircle,
@@ -49,6 +50,9 @@ import {
 } from '@/components/ui/tooltip';
 import { mapRunToExecution } from '@/lib/flow-graph/graph-execution-mapper';
 import { useWorkflowGraphManifest } from '@/lib/flow-graph/use-workflow-graph';
+import { useStreamReader } from '@/lib/hooks/use-stream-reader';
+import { fetchEventsByCorrelationId } from '@/lib/rpc-client';
+import type { EnvMap } from '@/lib/types';
 import {
   cancelRun,
   recreateRun,
@@ -59,9 +63,6 @@ import {
   useWorkflowTraceViewerData,
   wakeUpRun,
 } from '@/lib/workflow-api-client';
-import type { EnvMap } from '@/server/workflow-server-actions';
-import { fetchEventsByCorrelationId } from '@/server/workflow-server-actions';
-import { useStreamReader } from '@/lib/hooks/use-stream-reader';
 import { useServerConfig } from '@/lib/world-config-context';
 
 import { CopyableText } from './display-utils/copyable-text';
@@ -309,7 +310,8 @@ export function RunDetailView({
       if (error) {
         throw error;
       }
-      const fullEvent = result.data.find((e) => e.eventId === event.eventId);
+      const rawEvent = result.data.find((e) => e.eventId === event.eventId);
+      const fullEvent = rawEvent ? hydrateResourceIO(rawEvent) : null;
       if (fullEvent && 'eventData' in fullEvent) {
         return fullEvent.eventData;
       }

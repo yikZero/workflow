@@ -7,7 +7,6 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { deserializeByteObjects } from '../lib/utils';
 import { Skeleton } from './ui/skeleton';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -17,11 +16,10 @@ import { Skeleton } from './ui/skeleton';
 function deserializeChunkText(text: string): string {
   try {
     const parsed = JSON.parse(text);
-    const deserialized = deserializeByteObjects(parsed);
-    if (typeof deserialized === 'string') {
-      return deserialized;
+    if (typeof parsed === 'string') {
+      return parsed;
     }
-    return JSON.stringify(deserialized, null, 2);
+    return JSON.stringify(parsed, null, 2);
   } catch {
     return text;
   }

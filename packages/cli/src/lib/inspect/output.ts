@@ -1,8 +1,8 @@
-import { hydrateResourceIO } from '@workflow/core/observability';
 import {
   getDeserializeStream,
   getExternalRevivers,
 } from '@workflow/core/serialization';
+import { hydrateResourceIO } from './hydration.js';
 import { VERCEL_403_ERROR_MESSAGE } from '@workflow/errors';
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
 import type {

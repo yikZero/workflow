@@ -5,14 +5,9 @@ import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
 import type { ModelMessage } from 'ai';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo, useState } from 'react';
-import { ErrorCard } from '../ui/error-card';
 import { useDarkMode } from '../../hooks/use-dark-mode';
-import {
-  deserializeByteObjects,
-  extractConversation,
-  isDoStreamStep,
-  tryDeserializeSerializedData,
-} from '../../lib/utils';
+import { extractConversation, isDoStreamStep } from '../../lib/utils';
+import { ErrorCard } from '../ui/error-card';
 import { ConversationView } from './conversation-view';
 import { DetailCard } from './detail-card';
 
@@ -284,7 +279,7 @@ const ClassInstanceRefDisplay = ({
         className="px-2 py-1.5 overflow-x-auto whitespace-pre-wrap"
         style={{ color: colors.text }}
       >
-        {JSON.stringify(deserializeByteObjects(classInstanceRef.data), null, 2)}
+        {JSON.stringify(classInstanceRef.data, null, 2)}
       </pre>
     </div>
   );
@@ -387,9 +382,8 @@ const transformValueForDisplay = (
 };
 
 const JsonBlock = (value: unknown) => {
-  const { json, streamRefs, classInstanceRefs } = transformValueForDisplay(
-    deserializeByteObjects(value)
-  );
+  const { json, streamRefs, classInstanceRefs } =
+    transformValueForDisplay(value);
 
   // If no special refs, just render plain JSON
   if (streamRefs.size === 0 && classInstanceRefs.size === 0) {
@@ -612,9 +606,7 @@ const attributeToDisplayFn: Record<
   resumeAt: localMillisecondTime,
   // Resolved attributes, won't actually use this function
   metadata: JsonBlock,
-  input: (rawValue: unknown, context?: DisplayContext) => {
-    const value = tryDeserializeSerializedData(rawValue);
-
+  input: (value: unknown, context?: DisplayContext) => {
     // Check if input has args + closure vars structure
     if (value && typeof value === 'object' && 'args' in value) {
       const { args, closureVars } = value as {
@@ -675,8 +667,7 @@ const attributeToDisplayFn: Record<
       </DetailCard>
     );
   },
-  output: (rawValue: unknown) => {
-    const value = tryDeserializeSerializedData(rawValue);
+  output: (value: unknown) => {
     return <DetailCard summary="Output">{JsonBlock(value)}</DetailCard>;
   },
   error: (value: unknown) => {

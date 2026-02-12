@@ -37,16 +37,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { CopyableText } from './display-utils/copyable-text';
-import { RelativeTime } from './display-utils/relative-time';
-import { TableSkeleton } from './display-utils/table-skeleton';
+import { fetchEventsByCorrelationId } from '@/lib/rpc-client';
+import type { EnvMap } from '@/lib/types';
 import {
   getErrorMessage,
   resumeHook,
   useWorkflowHooks,
 } from '@/lib/workflow-api-client';
-import type { EnvMap } from '@/server/workflow-server-actions';
-import { fetchEventsByCorrelationId } from '@/server/workflow-server-actions';
+import { CopyableText } from './display-utils/copyable-text';
+import { RelativeTime } from './display-utils/relative-time';
+import { TableSkeleton } from './display-utils/table-skeleton';
 
 interface HooksTableProps {
   runId?: string;

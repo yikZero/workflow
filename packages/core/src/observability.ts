@@ -248,6 +248,55 @@ const isBinaryFormat = (data: unknown): data is Uint8Array => {
 };
 
 /**
+ * Reconstitute a JSON-degraded Uint8Array back to a real Uint8Array.
+ *
+ * When a Uint8Array passes through JSON serialization (e.g. the Vercel API
+ * returns JSON instead of CBOR, or an intermediate layer stringifies), it
+ * becomes a plain object with sequential numeric string keys:
+ *   { "0": 100, "1": 101, "2": 118, "3": 108, … }
+ *
+ * This function detects that pattern and converts it back so that the
+ * downstream `isBinaryFormat` check succeeds and normal hydration runs.
+ */
+const reconstituteBinary = (data: unknown): unknown => {
+  if (!data || typeof data !== 'object' || data instanceof Uint8Array) {
+    return data;
+  }
+
+  // Only match plain objects (not arrays, Dates, etc.)
+  if (Array.isArray(data) || Object.getPrototypeOf(data) !== Object.prototype) {
+    return data;
+  }
+
+  const record = data as Record<string, unknown>;
+  const keys = Object.keys(record);
+  const len = keys.length;
+
+  // Need a reasonable number of bytes to be worth reconstituting
+  if (len < 4) {
+    return data;
+  }
+
+  // Quick check: first key must be "0" and all values must be byte-range numbers
+  for (let i = 0; i < len; i++) {
+    if (keys[i] !== String(i)) {
+      return data;
+    }
+    const val = record[keys[i]!];
+    if (
+      typeof val !== 'number' ||
+      val < 0 ||
+      val > 255 ||
+      !Number.isInteger(val)
+    ) {
+      return data;
+    }
+  }
+
+  return new Uint8Array(keys.map((k) => record[k] as number));
+};
+
+/**
  * Hydrate legacy format data (array) using unflatten.
  */
 const hydrateLegacyData = (data: any[]): unknown => {
@@ -259,31 +308,32 @@ const hydrateStepIO = <
 >(
   step: T
 ): T => {
-  let hydratedInput = step.input;
-  let hydratedOutput = step.output;
+  // Reconstitute JSON-degraded byte objects before format checks
+  let hydratedInput = reconstituteBinary(step.input);
+  let hydratedOutput = reconstituteBinary(step.output);
 
   // Hydrate input - handle both binary (specVersion 2) and legacy (specVersion 1) formats
-  if (isBinaryFormat(step.input) && step.input.byteLength > 0) {
+  if (isBinaryFormat(hydratedInput) && hydratedInput.byteLength > 0) {
     hydratedInput = hydrateStepArguments(
-      step.input,
+      hydratedInput,
       [],
       step.runId as string,
       globalThis,
       streamPrintRevivers
     );
-  } else if (isLegacyFormat(step.input) && step.input.length > 0) {
-    hydratedInput = hydrateLegacyData(step.input);
+  } else if (isLegacyFormat(hydratedInput) && hydratedInput.length > 0) {
+    hydratedInput = hydrateLegacyData(hydratedInput);
   }
 
   // Hydrate output - handle both binary (specVersion 2) and legacy (specVersion 1) formats
-  if (isBinaryFormat(step.output)) {
+  if (isBinaryFormat(hydratedOutput)) {
     hydratedOutput = hydrateStepReturnValue(
-      step.output,
+      hydratedOutput,
       globalThis,
       streamPrintRevivers
     );
-  } else if (isLegacyFormat(step.output) && step.output.length > 0) {
-    hydratedOutput = hydrateLegacyData(step.output);
+  } else if (isLegacyFormat(hydratedOutput) && hydratedOutput.length > 0) {
+    hydratedOutput = hydrateLegacyData(hydratedOutput);
   }
 
   return {
@@ -298,31 +348,32 @@ const hydrateWorkflowIO = <
 >(
   workflow: T
 ): T => {
-  let hydratedInput = workflow.input;
-  let hydratedOutput = workflow.output;
+  // Reconstitute JSON-degraded byte objects before format checks
+  let hydratedInput = reconstituteBinary(workflow.input);
+  let hydratedOutput = reconstituteBinary(workflow.output);
 
   // Hydrate input - handle both binary (specVersion 2) and legacy (specVersion 1) formats
-  if (isBinaryFormat(workflow.input) && workflow.input.byteLength > 0) {
+  if (isBinaryFormat(hydratedInput) && hydratedInput.byteLength > 0) {
     hydratedInput = hydrateWorkflowArguments(
-      workflow.input,
+      hydratedInput,
       globalThis,
       streamPrintRevivers
     );
-  } else if (isLegacyFormat(workflow.input) && workflow.input.length > 0) {
-    hydratedInput = hydrateLegacyData(workflow.input);
+  } else if (isLegacyFormat(hydratedInput) && hydratedInput.length > 0) {
+    hydratedInput = hydrateLegacyData(hydratedInput);
   }
 
   // Hydrate output - handle both binary (specVersion 2) and legacy (specVersion 1) formats
-  if (isBinaryFormat(workflow.output)) {
+  if (isBinaryFormat(hydratedOutput)) {
     hydratedOutput = hydrateWorkflowReturnValue(
-      workflow.output,
+      hydratedOutput,
       [],
       workflow.runId as string,
       globalThis,
       streamPrintRevivers
     );
-  } else if (isLegacyFormat(workflow.output) && workflow.output.length > 0) {
-    hydratedOutput = hydrateLegacyData(workflow.output);
+  } else if (isLegacyFormat(hydratedOutput) && hydratedOutput.length > 0) {
+    hydratedOutput = hydrateLegacyData(hydratedOutput);
   }
 
   return {
@@ -341,23 +392,34 @@ const hydrateEventData = <
     return event;
   }
   const eventData = { ...event.eventData };
-  // Events can have various eventData with non-devalued keys.
-  // So far, only eventData.result is devalued (though this may change),
-  // so we need to hydrate it specifically.
   try {
+    // Hydrate eventData.result (step output / return value)
     if ('result' in eventData && typeof eventData.result === 'object') {
-      // Handle both binary (specVersion 2) and legacy (specVersion 1) formats
-      if (isBinaryFormat(eventData.result)) {
+      const result = reconstituteBinary(eventData.result);
+      if (isBinaryFormat(result)) {
         eventData.result = hydrateStepReturnValue(
-          eventData.result,
+          result,
           globalThis,
           streamPrintRevivers
         );
-      } else if (
-        isLegacyFormat(eventData.result) &&
-        eventData.result.length > 0
-      ) {
-        eventData.result = hydrateLegacyData(eventData.result);
+      } else if (isLegacyFormat(result) && result.length > 0) {
+        eventData.result = hydrateLegacyData(result);
+      }
+    }
+
+    // Hydrate eventData.input (step input / arguments)
+    if ('input' in eventData && typeof eventData.input === 'object') {
+      const input = reconstituteBinary(eventData.input);
+      if (isBinaryFormat(input) && input.byteLength > 0) {
+        eventData.input = hydrateStepArguments(
+          input,
+          [],
+          event.runId as string,
+          globalThis,
+          streamPrintRevivers
+        );
+      } else if (isLegacyFormat(input) && input.length > 0) {
+        eventData.input = hydrateLegacyData(input);
       }
     }
   } catch (error) {
@@ -372,20 +434,24 @@ const hydrateEventData = <
 const hydrateHookMetadata = <T extends { hookId?: string; metadata?: any }>(
   hook: T
 ): T => {
-  let hydratedMetadata = hook.metadata;
+  // Reconstitute JSON-degraded byte objects before format checks
+  let hydratedMetadata = reconstituteBinary(hook.metadata);
 
-  if (hook.metadata && 'runId' in hook) {
+  if (hydratedMetadata && 'runId' in hook) {
     // Handle both binary (specVersion 2) and legacy (specVersion 1) formats
-    if (isBinaryFormat(hook.metadata)) {
+    if (isBinaryFormat(hydratedMetadata)) {
       hydratedMetadata = hydrateStepArguments(
-        hook.metadata,
+        hydratedMetadata,
         [],
         hook.runId as string,
         globalThis,
         streamPrintRevivers
       );
-    } else if (isLegacyFormat(hook.metadata) && hook.metadata.length > 0) {
-      hydratedMetadata = hydrateLegacyData(hook.metadata);
+    } else if (
+      isLegacyFormat(hydratedMetadata) &&
+      hydratedMetadata.length > 0
+    ) {
+      hydratedMetadata = hydrateLegacyData(hydratedMetadata);
     }
   }
 

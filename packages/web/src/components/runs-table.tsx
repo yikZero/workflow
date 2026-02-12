@@ -46,14 +46,14 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useTableSelection } from '@/lib/hooks/use-table-selection';
+import { fetchEvents, fetchRun } from '@/lib/rpc-client';
+import type { EnvMap } from '@/lib/types';
 import {
   cancelRun,
   getErrorMessage,
   reenqueueRun,
   useWorkflowRuns,
 } from '@/lib/workflow-api-client';
-import type { EnvMap } from '@/server/workflow-server-actions';
-import { fetchEvents, fetchRun } from '@/server/workflow-server-actions';
 import { useServerConfig } from '@/lib/world-config-context';
 import { CopyableText } from './display-utils/copyable-text';
 import { RelativeTime } from './display-utils/relative-time';
