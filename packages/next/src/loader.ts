@@ -2,6 +2,12 @@ import { connect, type Socket } from 'node:net';
 import { relative } from 'node:path';
 import { transform } from '@swc/core';
 import { type SocketMessage, serializeMessage } from './socket-server.js';
+import {
+  DEFERRED_STEP_SOURCE_METADATA_PREFIX,
+  isDeferredStepCopyFilePath,
+  parseInlineSourceMapComment,
+  parseDeferredStepSourceMetadata,
+} from './step-copy-utils.js';
 
 type DecoratorOptions = import('@workflow/builders').DecoratorOptions;
 type WorkflowPatternMatch = import('@workflow/builders').WorkflowPatternMatch;
@@ -231,55 +237,10 @@ async function resolveWorkflowAliasPath(
   return resolveWorkflowAliasRelativePath(filePath, workingDir);
 }
 
-// This loader applies the "use workflow"/"use step"
-// client transformation
-export default async function workflowLoader(
-  this: {
-    resourcePath: string;
-  },
-  source: string | Buffer,
-  sourceMap: any
+async function getRelativeFilenameForSwc(
+  filename: string,
+  workingDir: string
 ): Promise<string> {
-  const filename = this.resourcePath;
-  const normalizedSource = source.toString();
-
-  // Skip generated workflow route files to avoid re-processing them
-  if (await checkGeneratedFile(filename)) {
-    return normalizedSource;
-  }
-
-  // Detect workflow patterns in the source code
-  const patterns = await detectPatterns(normalizedSource);
-  // Always notify discovery tracking, even for `false/false`, so files that
-  // previously had workflow/step usage are removed from the tracked sets.
-  await notifySocketServer(
-    filename,
-    patterns.hasUseWorkflow,
-    patterns.hasUseStep,
-    patterns.hasSerde
-  );
-
-  // For @workflow SDK packages, only transform files with actual directives,
-  // not files that just match serde patterns (which are internal SDK implementation files)
-  const isSdkFile = await checkSdkFile(filename);
-  if (isSdkFile && !patterns.hasDirective) {
-    return normalizedSource;
-  }
-
-  // Check if file needs transformation based on patterns and path
-  if (!(await checkShouldTransform(filename, patterns))) {
-    return normalizedSource;
-  }
-
-  const isTypeScript =
-    filename.endsWith('.ts') ||
-    filename.endsWith('.tsx') ||
-    filename.endsWith('.mts') ||
-    filename.endsWith('.cts');
-
-  // Calculate relative filename for SWC plugin
-  // The SWC plugin uses filename to generate workflowId, so it must be relative
-  const workingDir = process.cwd();
   const normalizedWorkingDir = workingDir
     .replace(/\\/g, '/')
     .replace(/\/$/, '');
@@ -290,7 +251,7 @@ export default async function workflowLoader(
   const lowerPath = normalizedFilepath.toLowerCase();
 
   let relativeFilename: string;
-  if (lowerPath.startsWith(lowerWd + '/')) {
+  if (lowerPath.startsWith(`${lowerWd}/`)) {
     // File is under working directory - manually calculate relative path
     relativeFilename = normalizedFilepath.substring(
       normalizedWorkingDir.length + 1
@@ -324,51 +285,165 @@ export default async function workflowLoader(
     relativeFilename = normalizedFilepath.split('/').pop() || 'unknown.ts';
   }
 
-  // Get decorator options from tsconfig (cached per working directory)
-  const decoratorOptions = await getDecoratorOptions(workingDir);
+  return relativeFilename;
+}
 
-  // Resolve module specifier for packages (node_modules or workspace packages)
-  const moduleSpecifier = await getModuleSpecifier(filename, workingDir);
+function stripDeferredStepSourceMetadataComment(source: string): string {
+  const metadataPattern = new RegExp(
+    `^\\s*//\\s*${DEFERRED_STEP_SOURCE_METADATA_PREFIX}[A-Za-z0-9+/=]+\\s*\\r?\\n?`
+  );
+  return source.replace(metadataPattern, '');
+}
 
-  // Transform with SWC
-  const result = await transform(normalizedSource, {
-    filename: relativeFilename,
-    jsc: {
-      parser: {
-        ...(isTypeScript
-          ? {
-              syntax: 'typescript',
-              tsx: filename.endsWith('.tsx'),
-              decorators: decoratorOptions.decorators,
-            }
-          : {
-              syntax: 'ecmascript',
-              jsx: filename.endsWith('.jsx'),
-              decorators: decoratorOptions.decorators,
-            }),
-      },
-      target: 'es2022',
-      experimental: {
-        plugins: [
-          [
-            require.resolve('@workflow/swc-plugin'),
-            { mode: 'client', moduleSpecifier },
-          ],
-        ],
-      },
-      transform: {
-        react: {
-          runtime: 'preserve',
+// This loader applies the "use workflow"/"use step" transform.
+// Deferred step-copy files are transformed in step mode; all other files use client mode.
+export default function workflowLoader(
+  this: {
+    resourcePath: string;
+    async?: () => (
+      error: Error | null,
+      content?: string,
+      sourceMap?: any
+    ) => void;
+  },
+  source: string | Buffer,
+  sourceMap: any
+): string | Promise<string> | void {
+  const callback = this.async?.();
+  const run = async (): Promise<{ code: string; map: any }> => {
+    const filename = this.resourcePath;
+    const normalizedSource = source.toString();
+    const isDeferredStepCopyFile = isDeferredStepCopyFilePath(filename);
+    const deferredStepSourceMetadata = isDeferredStepCopyFile
+      ? parseDeferredStepSourceMetadata(normalizedSource)
+      : null;
+    const sourceWithoutDeferredMetadata = isDeferredStepCopyFile
+      ? stripDeferredStepSourceMetadataComment(normalizedSource)
+      : normalizedSource;
+    const deferredSourceMapResult = isDeferredStepCopyFile
+      ? parseInlineSourceMapComment(sourceWithoutDeferredMetadata)
+      : {
+          sourceWithoutMapComment: sourceWithoutDeferredMetadata,
+          sourceMap: null,
+        };
+    const sourceForTransform = deferredSourceMapResult.sourceWithoutMapComment;
+
+    // Skip generated workflow route files to avoid re-processing them
+    if ((await checkGeneratedFile(filename)) && !isDeferredStepCopyFile) {
+      return { code: normalizedSource, map: sourceMap };
+    }
+
+    // Detect workflow patterns in the source code
+    const patterns = await detectPatterns(normalizedSource);
+    // Always notify discovery tracking, even for `false/false`, so files that
+    // previously had workflow/step usage are removed from the tracked sets.
+    if (!isDeferredStepCopyFile) {
+      await notifySocketServer(
+        filename,
+        patterns.hasUseWorkflow,
+        patterns.hasUseStep,
+        patterns.hasSerde
+      );
+
+      // For @workflow SDK packages, only transform files with actual directives,
+      // not files that just match serde patterns (which are internal SDK implementation files)
+      const isSdkFile = await checkSdkFile(filename);
+      if (isSdkFile && !patterns.hasDirective) {
+        return { code: normalizedSource, map: sourceMap };
+      }
+
+      // Check if file needs transformation based on patterns and path
+      if (!(await checkShouldTransform(filename, patterns))) {
+        return { code: normalizedSource, map: sourceMap };
+      }
+    }
+
+    const isTypeScript =
+      filename.endsWith('.ts') ||
+      filename.endsWith('.tsx') ||
+      filename.endsWith('.mts') ||
+      filename.endsWith('.cts');
+
+    // Calculate relative filename for SWC plugin
+    // The SWC plugin uses filename to generate workflowId, so it must be relative
+    const workingDir = process.cwd();
+    const relativeFilename =
+      deferredStepSourceMetadata?.relativeFilename ||
+      (await getRelativeFilenameForSwc(filename, workingDir));
+
+    // Get decorator options from tsconfig (cached per working directory)
+    const decoratorOptions = await getDecoratorOptions(workingDir);
+
+    // Resolve module specifier for packages (node_modules or workspace packages)
+    const moduleSpecifier = await getModuleSpecifier(
+      deferredStepSourceMetadata?.absolutePath || filename,
+      workingDir
+    );
+    const mode = isDeferredStepCopyFile ? 'step' : 'client';
+
+    // Transform with SWC
+    const result = await transform(sourceForTransform, {
+      filename: relativeFilename,
+      jsc: {
+        parser: {
+          ...(isTypeScript
+            ? {
+                syntax: 'typescript',
+                tsx: filename.endsWith('.tsx'),
+                decorators: decoratorOptions.decorators,
+              }
+            : {
+                syntax: 'ecmascript',
+                jsx: filename.endsWith('.jsx'),
+                decorators: decoratorOptions.decorators,
+              }),
         },
-        legacyDecorator: decoratorOptions.legacyDecorator,
-        decoratorMetadata: decoratorOptions.decoratorMetadata,
+        target: 'es2022',
+        experimental: {
+          plugins: [
+            [
+              require.resolve('@workflow/swc-plugin'),
+              { mode, moduleSpecifier },
+            ],
+          ],
+        },
+        transform: {
+          react: {
+            runtime: 'preserve',
+          },
+          legacyDecorator: decoratorOptions.legacyDecorator,
+          decoratorMetadata: decoratorOptions.decoratorMetadata,
+        },
       },
-    },
-    minify: false,
-    inputSourceMap: sourceMap,
-    sourceMaps: true,
-    inlineSourcesContent: true,
-  });
+      minify: false,
+      inputSourceMap: isDeferredStepCopyFile
+        ? deferredSourceMapResult.sourceMap || sourceMap
+        : sourceMap,
+      sourceMaps: true,
+      inlineSourcesContent: true,
+    });
 
-  return result.code;
+    let transformedMap = sourceMap;
+    if (typeof result.map === 'string') {
+      try {
+        transformedMap = JSON.parse(result.map);
+      } catch {
+        transformedMap = result.map;
+      }
+    } else if (result.map) {
+      transformedMap = result.map;
+    }
+
+    return { code: result.code, map: transformedMap };
+  };
+
+  if (!callback) {
+    return run().then((result) => result.code);
+  }
+
+  void run()
+    .then((result) => callback(null, result.code, result.map))
+    .catch((error: unknown) => {
+      callback(error instanceof Error ? error : new Error(String(error)));
+    });
 }
