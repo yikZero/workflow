@@ -701,13 +701,13 @@ function EventRow({
   totalLanes,
   isFirst,
   isLast,
-  activeLane,
-  selectedLane,
+  activeGroupKey,
+  selectedGroupKey,
   correlationNameMap,
   workflowName,
   durationMap,
-  onSelectLane,
-  onHoverLane,
+  onSelectGroup,
+  onHoverGroup,
   onLoadEventData,
 }: {
   event: Event;
@@ -715,18 +715,18 @@ function EventRow({
   totalLanes: number;
   isFirst: boolean;
   isLast: boolean;
-  /** The currently active lane (from click or hover). undefined = no focus. */
-  activeLane?: number;
+  /** The currently active group (from click or hover). undefined = no focus. */
+  activeGroupKey?: string;
   /** The clicked/locked selection (needed for toggle logic). */
-  selectedLane?: number;
+  selectedGroupKey?: string;
   /** Map from correlationId → display name */
   correlationNameMap: Map<string, string>;
   /** Workflow name for run-level events */
   workflowName: string | null;
   /** Map from correlationId → duration info */
   durationMap: Map<string, DurationInfo>;
-  onSelectLane: (lane: number | undefined) => void;
-  onHoverLane: (lane: number | undefined) => void;
+  onSelectGroup: (groupKey: string | undefined) => void;
+  onHoverGroup: (groupKey: string | undefined) => void;
   onLoadEventData?: (event: Event) => Promise<unknown | null>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -735,12 +735,16 @@ function EventRow({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
 
-  // Collapse when a different lane gets selected
+  const rowGroupKey =
+    event.correlationId ??
+    (isRunLevel(event.eventType) ? '__run__' : undefined);
+
+  // Collapse when a different group gets selected
   useEffect(() => {
-    if (selectedLane !== undefined && selectedLane !== node.lane) {
+    if (selectedGroupKey !== undefined && selectedGroupKey !== rowGroupKey) {
       setIsExpanded(false);
     }
-  }, [selectedLane, node.lane]);
+  }, [selectedGroupKey, rowGroupKey]);
 
   const statusDotColor = getStatusDotColor(event.eventType);
   const createdAt = new Date(event.createdAt);
@@ -755,10 +759,11 @@ function EventRow({
   const durationKey = event.correlationId ?? (isRun ? '__run__' : '');
   const durationInfo = durationKey ? durationMap.get(durationKey) : undefined;
 
-  const hasActive = activeLane !== undefined;
-  const isRelated = node.lane === activeLane;
+  const hasActive = activeGroupKey !== undefined;
+  const isRelated = rowGroupKey !== undefined && rowGroupKey === activeGroupKey;
   const isDimmed = hasActive && !isRelated;
   const isPulsing = hasActive && isRelated;
+  const highlightedLane = isRelated && node.lane >= 0 ? node.lane : undefined;
 
   const loadEventDetails = useCallback(async () => {
     if (
@@ -807,13 +812,13 @@ function EventRow({
   );
 
   const handleRowClick = useCallback(() => {
-    // Toggle selection: click same lane deselects, click different lane selects
-    if (selectedLane === node.lane) {
-      onSelectLane(undefined);
+    // Toggle selection: click same group deselects, click different group selects
+    if (selectedGroupKey === rowGroupKey) {
+      onSelectGroup(undefined);
     } else {
-      onSelectLane(node.lane);
+      onSelectGroup(rowGroupKey);
     }
-  }, [selectedLane, node.lane, onSelectLane]);
+  }, [selectedGroupKey, rowGroupKey, onSelectGroup]);
 
   const eventData = hasExistingEventData
     ? (event as Event & { eventData: unknown }).eventData
@@ -824,8 +829,8 @@ function EventRow({
   return (
     <div
       data-event-id={event.eventId}
-      onMouseEnter={() => onHoverLane(node.lane)}
-      onMouseLeave={() => onHoverLane(undefined)}
+      onMouseEnter={() => onHoverGroup(rowGroupKey)}
+      onMouseLeave={() => onHoverGroup(undefined)}
     >
       {/* Row */}
       <div
@@ -844,7 +849,7 @@ function EventRow({
           totalLanes={totalLanes}
           isFirst={isFirst}
           isLast={isLast && !isExpanded}
-          selectedLane={activeLane}
+          selectedLane={highlightedLane}
           statusDotColor={statusDotColor}
           pulse={isPulsing}
         />
@@ -948,7 +953,7 @@ function EventRow({
             totalLanes={totalLanes}
             isFirst={false}
             isLast={isLast}
-            selectedLane={activeLane}
+            selectedLane={highlightedLane}
             continuationOnly
           />
           {/* Spacer for chevron column */}
@@ -1067,19 +1072,21 @@ export function EventListView({
   }, [treeNodes]);
 
   // Click a row to lock selection; hover to temporarily highlight.
-  const [selectedLane, setSelectedLane] = useState<number | undefined>(
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | undefined>(
     undefined
   );
-  const [hoveredLane, setHoveredLane] = useState<number | undefined>(undefined);
-  const onSelectLane = useCallback((lane: number | undefined) => {
-    setSelectedLane(lane);
+  const [hoveredGroupKey, setHoveredGroupKey] = useState<string | undefined>(
+    undefined
+  );
+  const onSelectGroup = useCallback((groupKey: string | undefined) => {
+    setSelectedGroupKey(groupKey);
   }, []);
-  const onHoverLane = useCallback((lane: number | undefined) => {
-    setHoveredLane(lane);
+  const onHoverGroup = useCallback((groupKey: string | undefined) => {
+    setHoveredGroupKey(groupKey);
   }, []);
 
-  // Active lane: locked selection takes priority, otherwise hover.
-  const activeLane = selectedLane ?? hoveredLane;
+  // Active group: locked selection takes priority, otherwise hover.
+  const activeGroupKey = selectedGroupKey ?? hoveredGroupKey;
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -1087,29 +1094,31 @@ export function EventListView({
 
   // Build a search index: only event ID and correlation ID
   const searchIndex = useMemo(() => {
-    const entries: { text: string; lane: number; eventId: string }[] = [];
+    const entries: { text: string; groupKey?: string; eventId: string }[] = [];
     for (const node of treeNodes) {
       const ev = node.event;
       entries.push({
         text: [ev.eventId, ev.correlationId ?? ''].join(' ').toLowerCase(),
-        lane: node.lane,
+        groupKey:
+          ev.correlationId ??
+          (isRunLevel(ev.eventType) ? '__run__' : undefined),
         eventId: ev.eventId,
       });
     }
     return entries;
   }, [treeNodes]);
 
-  // When search query changes, find the first match, select its lane, and scroll to it.
+  // When search query changes, find the first match, select its group, and scroll to it.
   useEffect(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) {
-      setSelectedLane(undefined);
+      setSelectedGroupKey(undefined);
       return;
     }
     const match = searchIndex.find((entry) => entry.text.includes(q));
     if (match) {
-      setSelectedLane(match.lane);
-      // Defer scroll to next frame so the DOM has updated after lane selection
+      setSelectedGroupKey(match.groupKey);
+      // Defer scroll to next frame so the DOM has updated after group selection
       requestAnimationFrame(() => {
         const container = scrollContainerRef.current;
         if (container) {
@@ -1239,13 +1248,13 @@ export function EventListView({
             totalLanes={totalLanes}
             isFirst={idx === 0}
             isLast={idx === treeNodes.length - 1}
-            activeLane={activeLane}
-            selectedLane={selectedLane}
+            activeGroupKey={activeGroupKey}
+            selectedGroupKey={selectedGroupKey}
             correlationNameMap={correlationNameMap}
             workflowName={workflowName}
             durationMap={durationMap}
-            onSelectLane={onSelectLane}
-            onHoverLane={onHoverLane}
+            onSelectGroup={onSelectGroup}
+            onHoverGroup={onHoverGroup}
             onLoadEventData={onLoadEventData}
           />
         ))}
