@@ -1,7 +1,8 @@
 ---
 "@workflow/web-shared": patch
-"@workflow/builders": patch
 "@workflow/web": patch
+"@workflow/core": patch
+"@workflow/cli": patch
 ---
 
-Fix styling issues for web-shared components, redesign event logs, fix graph manifest generation code path
+Align observability hydration and RPC transport across web, web-shared, core, and cli.
