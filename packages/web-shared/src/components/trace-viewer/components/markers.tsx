@@ -71,10 +71,22 @@ export function Markers({
 
   // Calculate a marker interval that gives reasonable spacing at any zoom level.
   // We target ~50px per notch mark; labels appear on every Nth notch via labelSpacing.
+  // When scale is <= 0 (e.g. the initial -1 sentinel), fall back to a safe default
+  // to avoid generating an absurd number of markers.
+  const effectiveScale =
+    scale > 0 ? scale : fullDuration > 0 ? 1 / fullDuration : 1;
   const targetNotchPx = 50;
-  let markerDuration = snapToNice(targetNotchPx / scale);
+  let markerDuration = snapToNice(targetNotchPx / effectiveScale);
   markerDuration = Math.max(1, markerDuration);
-  let markerWidth = markerDuration * scale;
+  let markerWidth = markerDuration * effectiveScale;
+
+  // Cap marker count to avoid creating too many DOM elements at extreme zoom
+  // on very long traces.  Only the visible portion is shown on screen anyway.
+  const MAX_MARKERS = 1000;
+  if (fullDuration / markerDuration > MAX_MARKERS) {
+    markerDuration = snapToNice(fullDuration / MAX_MARKERS);
+    markerWidth = markerDuration * effectiveScale;
+  }
   const markerCount = Math.ceil(fullDuration / markerDuration);
 
   // How often labels should appear for markers, e.g. 3 === one label for every third marker
