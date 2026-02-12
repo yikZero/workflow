@@ -31,7 +31,21 @@ import {
 import { useImmediateStyle } from '../util/use-immediate-style';
 import { useTrackpadZoom } from '../util/use-trackpad-zoom';
 
-const DIVISORS = [1, 2, 4, 5, 8, 10];
+/**
+ * Snap a raw duration to the nearest "nice" number in the 1-2-5 × 10^n
+ * sequence (e.g. …, 0.5, 1, 2, 5, 10, 20, 50, 100, …).
+ */
+function snapToNice(raw: number): number {
+  if (raw <= 0) return 1;
+  const log10 = Math.floor(Math.log10(raw));
+  const pow = 10 ** log10;
+  const normalized = raw / pow;
+
+  if (normalized <= 1.5) return pow;
+  if (normalized <= 3.5) return 2 * pow;
+  if (normalized <= 7.5) return 5 * pow;
+  return 10 * pow;
+}
 
 export function Markers({
   scale,
@@ -54,20 +68,13 @@ export function Markers({
   }, [isLive]);
 
   const fullDuration = root.duration;
-  const logFull = Math.floor(Math.log10(fullDuration));
-  const logHalf = Math.floor(Math.log10(fullDuration * 0.5));
-  let markerDuration = Math.max(
-    2,
-    10 ** logFull * (logHalf === logFull ? 1 : 0.5)
-  );
+
+  // Calculate a marker interval that gives reasonable spacing at any zoom level.
+  // We target ~50px per notch mark; labels appear on every Nth notch via labelSpacing.
+  const targetNotchPx = 50;
+  let markerDuration = snapToNice(targetNotchPx / scale);
+  markerDuration = Math.max(1, markerDuration);
   let markerWidth = markerDuration * scale;
-  let divisor = 1;
-  for (const d of DIVISORS) {
-    if (markerDuration / d < 24) break;
-    divisor = d;
-  }
-  markerDuration /= divisor;
-  markerWidth /= divisor;
   const markerCount = Math.ceil(fullDuration / markerDuration);
 
   // How often labels should appear for markers, e.g. 3 === one label for every third marker
