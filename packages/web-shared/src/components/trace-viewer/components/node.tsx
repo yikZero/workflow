@@ -157,10 +157,16 @@ export const SpanComponent = memo(function SpanComponent({
   // Generic OTEL spans use diamond event markers
   const isWorkflowSpan = resourceType !== 'default';
 
-  // Determine if this span is still active (live)
+  // Determine if this span is still active (live).
+  // A span is only "live" when the overall trace is still growing, i.e. the
+  // root's endTime is being advanced by useLiveTick (within a few seconds of
+  // now).  For completed runs root.endTime is a past timestamp, so no span
+  // receives the live-growth animation — this prevents hooks that were never
+  // explicitly disposed from expanding to infinity.
   const data = span.attributes?.data as Record<string, unknown> | undefined;
+  const rootIsLive = root.endTime >= Date.now() - 10_000;
   const isLive =
-    isWorkflowSpan && data
+    rootIsLive && isWorkflowSpan && data
       ? resourceType === 'hook'
         ? !data.disposedAt
         : !data.completedAt
