@@ -262,7 +262,11 @@ export function TraceViewerTimeline({
     [dispatch]
   );
 
-  // Zoom helper
+  // Zoom helper — apply the scroll snapshot once after a zoom operation so
+  // the anchor point stays at the same screen position, then clear it.
+  // Without clearing, live runs (where scale changes every frame via
+  // detectBaseScale) would continuously reset scrollLeft and prevent the
+  // user from scrolling horizontally.
   useLayoutEffect(() => {
     const $timeline = timelineRef.current;
     if (!$timeline) return;
@@ -270,6 +274,7 @@ export function TraceViewerTimeline({
     const snapshot = scrollSnapshotRef.current;
     if (snapshot) {
       $timeline.scrollLeft = snapshot.anchorT * scale - snapshot.anchorX;
+      scrollSnapshotRef.current = undefined;
     }
   }, [scrollSnapshotRef, timelineRef, scale]);
 

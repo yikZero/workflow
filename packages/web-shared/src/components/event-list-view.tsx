@@ -6,6 +6,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, Copy } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
   deserializeByteObjects,
   formatDuration,
@@ -1071,7 +1072,6 @@ export function EventListView({
     return max;
   }, [treeNodes]);
 
-  // Click a row to lock selection; hover to temporarily highlight.
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | undefined>(
     undefined
   );
@@ -1085,30 +1085,32 @@ export function EventListView({
     setHoveredGroupKey(groupKey);
   }, []);
 
-  // Active group: locked selection takes priority, otherwise hover.
   const activeGroupKey = selectedGroupKey ?? hoveredGroupKey;
 
-  // Search
   const [searchQuery, setSearchQuery] = useState('');
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
-  // Build a search index: only event ID and correlation ID
   const searchIndex = useMemo(() => {
-    const entries: { text: string; groupKey?: string; eventId: string }[] = [];
-    for (const node of treeNodes) {
-      const ev = node.event;
+    const entries: {
+      text: string;
+      groupKey?: string;
+      eventId: string;
+      index: number;
+    }[] = [];
+    for (let i = 0; i < treeNodes.length; i++) {
+      const ev = treeNodes[i].event;
       entries.push({
         text: [ev.eventId, ev.correlationId ?? ''].join(' ').toLowerCase(),
         groupKey:
           ev.correlationId ??
           (isRunLevel(ev.eventType) ? '__run__' : undefined),
         eventId: ev.eventId,
+        index: i,
       });
     }
     return entries;
   }, [treeNodes]);
 
-  // When search query changes, find the first match, select its group, and scroll to it.
   useEffect(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) {
@@ -1118,17 +1120,10 @@ export function EventListView({
     const match = searchIndex.find((entry) => entry.text.includes(q));
     if (match) {
       setSelectedGroupKey(match.groupKey);
-      // Defer scroll to next frame so the DOM has updated after group selection
-      requestAnimationFrame(() => {
-        const container = scrollContainerRef.current;
-        if (container) {
-          const el = container.querySelector(
-            `[data-event-id="${CSS.escape(match.eventId)}"]`
-          );
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }
+      virtuosoRef.current?.scrollToIndex({
+        index: match.index,
+        align: 'center',
+        behavior: 'smooth',
       });
     }
   }, [searchQuery, searchIndex]);
@@ -1145,13 +1140,10 @@ export function EventListView({
   }
 
   return (
-    <div className="h-full overflow-auto" ref={scrollContainerRef}>
+    <div className="h-full flex flex-col">
       <style>{`@keyframes workflow-dot-pulse{0%{transform:scale(1);opacity:.7}70%,100%{transform:scale(2.2);opacity:0}}`}</style>
       {/* Search bar */}
-      <div
-        className="sticky top-0 z-20"
-        style={{ padding: 6, backgroundColor: 'var(--ds-background-100)' }}
-      >
+      <div style={{ padding: 6, backgroundColor: 'var(--ds-background-100)' }}>
         <label
           style={{
             display: 'flex',
@@ -1219,7 +1211,7 @@ export function EventListView({
 
       {/* Header */}
       <div
-        className="flex items-center gap-0 text-sm font-medium sticky top-[52px] z-10 h-10 border-b"
+        className="flex items-center gap-0 text-sm font-medium h-10 border-b flex-shrink-0"
         style={{
           borderColor: 'var(--ds-gray-alpha-200)',
           color: 'var(--ds-gray-900)',
@@ -1238,38 +1230,48 @@ export function EventListView({
         <div className="flex-1 min-w-0 px-4">Event ID</div>
       </div>
 
-      {/* Event rows */}
-      <div className="flex flex-col">
-        {treeNodes.map((node, idx) => (
-          <EventRow
-            key={node.event.eventId}
-            event={node.event}
-            node={node}
-            totalLanes={totalLanes}
-            isFirst={idx === 0}
-            isLast={idx === treeNodes.length - 1}
-            activeGroupKey={activeGroupKey}
-            selectedGroupKey={selectedGroupKey}
-            correlationNameMap={correlationNameMap}
-            workflowName={workflowName}
-            durationMap={durationMap}
-            onSelectGroup={onSelectGroup}
-            onHoverGroup={onHoverGroup}
-            onLoadEventData={onLoadEventData}
-          />
-        ))}
-      </div>
-
-      {/* Summary */}
-      <div
-        className="mt-4 pt-3 border-t text-xs px-3"
-        style={{
-          borderColor: 'var(--ds-gray-alpha-200)',
-          color: 'var(--ds-gray-900)',
+      {/* Virtualized event rows */}
+      <Virtuoso
+        ref={virtuosoRef}
+        totalCount={treeNodes.length}
+        overscan={200}
+        defaultItemHeight={40}
+        itemContent={(index) => {
+          const node = treeNodes[index];
+          return (
+            <EventRow
+              event={node.event}
+              node={node}
+              totalLanes={totalLanes}
+              isFirst={index === 0}
+              isLast={index === treeNodes.length - 1}
+              activeGroupKey={activeGroupKey}
+              selectedGroupKey={selectedGroupKey}
+              correlationNameMap={correlationNameMap}
+              workflowName={workflowName}
+              durationMap={durationMap}
+              onSelectGroup={onSelectGroup}
+              onHoverGroup={onHoverGroup}
+              onLoadEventData={onLoadEventData}
+            />
+          );
         }}
-      >
-        {sortedEvents.length} event{sortedEvents.length !== 1 ? 's' : ''} total
-      </div>
+        components={{
+          Footer: () => (
+            <div
+              className="mt-4 pt-3 border-t text-xs px-3"
+              style={{
+                borderColor: 'var(--ds-gray-alpha-200)',
+                color: 'var(--ds-gray-900)',
+              }}
+            >
+              {sortedEvents.length} event
+              {sortedEvents.length !== 1 ? 's' : ''} total
+            </div>
+          ),
+        }}
+        style={{ flex: 1 }}
+      />
     </div>
   );
 }
