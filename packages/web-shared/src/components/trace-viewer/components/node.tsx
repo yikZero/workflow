@@ -90,17 +90,20 @@ function getSpanStyle(
   root: RootNode,
   scale: number
 ): CSSProperties {
+  // Use isExpanded (hovered or selected) for width expansion so that
+  // selected small spans stay expanded and show their name.
+  const expanded = layout.isExpanded;
   return {
     // Use actualWidth for CSS variable so hover expansion is accurate
     '--span-width': `${Math.max(layout.actualWidth, 1)}px`,
-    minWidth: layout.isHovered ? layout.width : undefined,
-    width: layout.isHovered ? undefined : layout.width,
+    minWidth: expanded ? layout.width : undefined,
+    width: expanded ? undefined : layout.width,
     height: layout.height,
     maxWidth:
-      layout.isHovered && !layout.isNearRightSide
+      expanded && !layout.isNearRightSide
         ? (root.endTime - node.startTime) * scale
         : undefined,
-    containIntrinsicWidth: layout.isHovered ? undefined : layout.width,
+    containIntrinsicWidth: expanded ? undefined : layout.width,
     containIntrinsicHeight: layout.height,
     left: layout.isNearRightSide ? undefined : layout.left,
     right: layout.isNearRightSide
@@ -218,7 +221,7 @@ export const SpanComponent = memo(function SpanComponent({
           styles.spanNode,
           layout.isHuge && styles.huge,
           layout.isSmall && styles.small,
-          layout.isHovered && styles.xHover,
+          layout.isExpanded && styles.xHover,
           node.isHighlighted
             ? styles.colorHighlight
             : getSpanColorClassName(node),

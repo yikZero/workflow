@@ -32,6 +32,8 @@ export interface SpanLayout {
   isHuge: boolean;
   /** Whether the span is currently hovered (with hover eligibility) */
   isHovered: boolean;
+  /** Whether the span is expanded (hovered or selected) — controls sizing */
+  isExpanded: boolean;
   /** Whether the span is near the right side of the visible area */
   isNearRightSide: boolean;
 }
@@ -105,8 +107,9 @@ function computeDefaultLayout(
   const isHuge = computeIsHuge(actualWidth);
   const isSmall = computeIsSmall(actualWidth);
   const isHovered = computeIsHovered(node, isHuge);
+  const isExpanded = isHovered || Boolean(node.isSelected);
 
-  if (isSmall && !isHovered) {
+  if (isSmall && !isExpanded) {
     height *= 0.4;
     top += (ROW_HEIGHT - height) * 0.5;
   }
@@ -115,7 +118,7 @@ function computeDefaultLayout(
     node,
     root,
     scrollSnapshotRef,
-    isHovered
+    isExpanded
   );
 
   return {
@@ -127,6 +130,7 @@ function computeDefaultLayout(
     isSmall,
     isHuge,
     isHovered,
+    isExpanded,
     isNearRightSide,
   };
 }
