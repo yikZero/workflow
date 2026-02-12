@@ -93,27 +93,6 @@ function getStatusDotColor(eventType: string): string {
   return 'var(--ds-gray-600)';
 }
 
-/** Whether this event starts a new correlation lifecycle */
-function isLifecycleStart(eventType: string): boolean {
-  return (
-    eventType === 'step_created' ||
-    eventType === 'step_started' ||
-    eventType === 'hook_created' ||
-    eventType === 'wait_created'
-  );
-}
-
-/** Whether this event terminates a correlation lifecycle */
-function isLifecycleEnd(eventType: string): boolean {
-  return (
-    eventType === 'step_completed' ||
-    eventType === 'step_failed' ||
-    eventType === 'hook_disposed' ||
-    eventType === 'wait_completed'
-  );
-}
-
-/** Whether this event is a run-level event (no correlation) */
 /**
  * Build a map from correlationId (stepId) → display name using step entities,
  * and parse the workflow name from the run.
@@ -227,158 +206,57 @@ function isRunLevel(eventType: string): boolean {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Tree structure computation
+// Tree gutter — fixed-width, shows branch lines only for the selected group
 // ──────────────────────────────────────────────────────────────────────────
 
-interface EventTreeNode {
-  event: Event;
-  /** The lane index this event's correlation occupies (-1 for run-level) */
-  lane: number;
-  /** Which lanes have active vertical lines at this row */
-  activeLanes: Set<number>;
-  /** Whether this event starts a new branch (horizontal line from root) */
-  isBranchStart: boolean;
-  /** Whether this event ends a branch */
-  isBranchEnd: boolean;
-}
-
-function buildEventTree(events: Event[]): EventTreeNode[] {
-  const correlationToLane = new Map<string, number>();
-  const activeLanes = new Set<number>();
-  const reusableLanes: number[] = [];
-  let nextLane = 0;
-
-  const nodes: EventTreeNode[] = [];
-
-  // Pre-compute the last event index for each correlation so we can
-  // terminate lanes that never receive a proper lifecycle-end event
-  // (e.g. hook_received with no subsequent hook_disposed because the run failed).
-  const lastEventIndexByCorrelation = new Map<string, number>();
-  for (let i = events.length - 1; i >= 0; i--) {
-    const corrId = events[i].correlationId;
-    if (corrId && !lastEventIndexByCorrelation.has(corrId)) {
-      lastEventIndexByCorrelation.set(corrId, i);
-    }
-  }
-
-  for (let i = 0; i < events.length; i++) {
-    const event = events[i];
-    const corrId = event.correlationId;
-    const isRun = isRunLevel(event.eventType);
-
-    let lane = -1;
-    let isBranchStart = false;
-    let isBranchEnd = false;
-
-    if (!isRun && corrId) {
-      // Start a lane on lifecycle-start events, but only if this
-      // correlation doesn't already have a lane (step_started should
-      // not create a second lane if step_created already opened one).
-      if (isLifecycleStart(event.eventType) && !correlationToLane.has(corrId)) {
-        if (reusableLanes.length > 0) {
-          let smallestIdx = 0;
-          for (let i = 1; i < reusableLanes.length; i++) {
-            if (reusableLanes[i] < reusableLanes[smallestIdx]) {
-              smallestIdx = i;
-            }
-          }
-          lane = reusableLanes[smallestIdx];
-          reusableLanes.splice(smallestIdx, 1);
-        } else {
-          lane = nextLane++;
-        }
-        correlationToLane.set(corrId, lane);
-        activeLanes.add(lane);
-        isBranchStart = true;
-      } else {
-        lane = correlationToLane.get(corrId) ?? -1;
-        if (isLifecycleEnd(event.eventType) && lane >= 0) {
-          isBranchEnd = true;
-        }
-      }
-
-      // If this is the last event for this correlation and it wasn't
-      // already marked as a branch end, terminate the lane here to
-      // avoid an orphan gutter line extending past the last event.
-      if (
-        !isBranchEnd &&
-        lane >= 0 &&
-        lastEventIndexByCorrelation.get(corrId) === i
-      ) {
-        isBranchEnd = true;
-      }
-    }
-
-    nodes.push({
-      event,
-      lane,
-      activeLanes: new Set(activeLanes),
-      isBranchStart,
-      isBranchEnd,
-    });
-
-    if (isBranchEnd && lane >= 0) {
-      if (corrId) {
-        correlationToLane.delete(corrId);
-      }
-      activeLanes.delete(lane);
-      reusableLanes.push(lane);
-    }
-  }
-
-  return nodes;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Tree gutter — draws vertical/horizontal lines for a single row slice
-// ──────────────────────────────────────────────────────────────────────────
-
-const LANE_WIDTH = 16;
-const LINE_COLOR = 'var(--ds-gray-400)';
-const LINE_COLOR_DIM = 'var(--ds-gray-200)';
+/** Fixed gutter width: 20px root area + 16px for one branch lane */
+const GUTTER_WIDTH = 36;
+/** X position of the single branch lane line */
+const LANE_X = 20;
 const ROOT_LINE_COLOR = 'var(--ds-gray-500)';
 
 function TreeGutter({
-  node,
-  totalLanes,
   isFirst,
   isLast,
-  selectedLane,
+  isRunLevel: isRun,
   statusDotColor,
   pulse = false,
+  hasSelection,
+  showBranch,
+  showLaneLine,
+  isLaneStart,
+  isLaneEnd,
   continuationOnly = false,
 }: {
-  node: EventTreeNode;
-  totalLanes: number;
   isFirst: boolean;
   isLast: boolean;
-  selectedLane?: number;
-  /** CSS color for the status dot (Geist design token) */
+  isRunLevel: boolean;
   statusDotColor?: string;
-  /** Whether dots should pulse (group is selected and this row belongs to it) */
   pulse?: boolean;
+  /** Whether any group is currently active (selected or hovered) */
+  hasSelection: boolean;
+  /** Whether to show a horizontal branch line for this row (event belongs to active group) */
+  showBranch: boolean;
+  /** Whether the vertical lane line passes through this row */
+  showLaneLine: boolean;
+  /** Whether the vertical lane line starts at this row (top clipped to 50%) */
+  isLaneStart: boolean;
+  /** Whether the vertical lane line ends at this row (bottom clipped to 50%) */
+  isLaneEnd: boolean;
   continuationOnly?: boolean;
 }) {
-  const gutterWidth = 20 + totalLanes * LANE_WIDTH;
-  const hasSelection = selectedLane !== undefined;
-
-  // Root line never dims
-  const rootColor = ROOT_LINE_COLOR;
-  const laneColor = (laneIdx: number): string => {
-    if (!hasSelection) return LINE_COLOR;
-    return laneIdx === selectedLane ? ROOT_LINE_COLOR : LINE_COLOR_DIM;
-  };
-  const thisLaneColor = node.lane >= 0 ? laneColor(node.lane) : LINE_COLOR;
+  const dotSize = isRun ? 8 : 6;
+  const dotLeft = isRun ? 5 : 6;
 
   return (
     <div
       className="relative flex-shrink-0 self-stretch"
       style={{
-        width: gutterWidth,
+        width: GUTTER_WIDTH,
         minHeight: continuationOnly ? 0 : undefined,
       }}
     >
-      {/* Root vertical line (leftmost) */}
+      {/* Root vertical line (leftmost, always visible) */}
       <div
         style={{
           position: 'absolute',
@@ -386,163 +264,77 @@ function TreeGutter({
           top: continuationOnly ? 0 : isFirst ? '50%' : 0,
           bottom: continuationOnly ? 0 : isLast ? '50%' : 0,
           width: 2,
-          backgroundColor: rootColor,
-          transition: 'background-color 150ms',
+          backgroundColor: ROOT_LINE_COLOR,
         }}
       />
 
       {!continuationOnly && (
         <>
-          {/* Root dot on run-level events */}
-          {node.lane === -1 && (
-            <div
-              style={{
-                position: 'absolute',
-                left: 5,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                width: 8,
-                height: 8,
-                zIndex: 2,
-              }}
-            >
-              {pulse && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    borderRadius: '50%',
-                    backgroundColor: statusDotColor,
-                    opacity: 0.75,
-                    animation: DOT_PULSE_ANIMATION,
-                  }}
-                />
-              )}
+          {/* Status dot on the root line for every event */}
+          <div
+            style={{
+              position: 'absolute',
+              left: dotLeft,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: dotSize,
+              height: dotSize,
+              zIndex: 2,
+              opacity: hasSelection && !showBranch && !isRun ? 0.3 : 1,
+              transition: 'opacity 150ms',
+            }}
+          >
+            {pulse && (
               <div
                 style={{
-                  width: '100%',
-                  height: '100%',
+                  position: 'absolute',
+                  inset: 0,
                   borderRadius: '50%',
                   backgroundColor: statusDotColor,
+                  opacity: 0.75,
+                  animation: DOT_PULSE_ANIMATION,
                 }}
               />
-            </div>
-          )}
+            )}
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                backgroundColor: statusDotColor,
+              }}
+            />
+          </div>
 
-          {/* Horizontal branch from root to this event's lane */}
-          {node.isBranchStart && node.lane >= 0 && (
+          {/* Horizontal branch from root to gutter edge (selected group events only) */}
+          {showBranch && (
             <div
               style={{
                 position: 'absolute',
                 left: 9,
                 top: '50%',
-                width: 11 + node.lane * LANE_WIDTH,
+                width: GUTTER_WIDTH - 9,
                 height: 2,
-                backgroundColor: thisLaneColor,
-                transition: 'background-color 150ms',
-                zIndex: hasSelection && node.lane === selectedLane ? 1 : 0,
+                backgroundColor: ROOT_LINE_COLOR,
               }}
             />
-          )}
-
-          {/* Horizontal connector from lane line to event content */}
-          {node.lane >= 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                left: 20 + node.lane * LANE_WIDTH,
-                top: '50%',
-                width: gutterWidth - (20 + node.lane * LANE_WIDTH),
-                height: 2,
-                backgroundColor: thisLaneColor,
-                transition: 'background-color 150ms',
-                zIndex: hasSelection && node.lane === selectedLane ? 1 : 0,
-              }}
-            />
-          )}
-
-          {/* Dot at the junction */}
-          {node.lane >= 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                left: 20 + node.lane * LANE_WIDTH - 2,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                width: 6,
-                height: 6,
-                zIndex: 2,
-                opacity: hasSelection && node.lane !== selectedLane ? 0.3 : 1,
-                transition: 'opacity 150ms',
-              }}
-            >
-              {pulse && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    borderRadius: '50%',
-                    backgroundColor: statusDotColor,
-                    opacity: 0.75,
-                    animation: DOT_PULSE_ANIMATION,
-                  }}
-                />
-              )}
-              <div
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  borderRadius: '50%',
-                  backgroundColor: statusDotColor,
-                }}
-              />
-            </div>
           )}
         </>
       )}
 
-      {/* Lane vertical lines for active correlations */}
-      {Array.from(node.activeLanes)
-        .filter((laneIdx) => {
-          if (!continuationOnly) return true;
-          // In continuation mode (expanded details), only show this node's lane
-          // — and only if it's NOT the last event in the group (nothing to connect to below)
-          if (laneIdx === node.lane && node.isBranchEnd) return false;
-          if (laneIdx !== node.lane) return false;
-          return true;
-        })
-        .map((laneIdx) => {
-          const x = 20 + laneIdx * LANE_WIDTH;
-          const isThisLane = laneIdx === node.lane;
-
-          let top: string | number = 0;
-          let bottom: string | number = 0;
-          if (!continuationOnly) {
-            if (isThisLane && node.isBranchStart) {
-              top = '50%';
-            }
-            if (isThisLane && node.isBranchEnd) {
-              bottom = '50%';
-            }
-          }
-
-          const isSelected = hasSelection && laneIdx === selectedLane;
-          return (
-            <div
-              key={laneIdx}
-              style={{
-                position: 'absolute',
-                left: x,
-                top,
-                bottom,
-                width: 2,
-                backgroundColor: laneColor(laneIdx),
-                transition: 'background-color 150ms',
-                zIndex: isSelected ? 1 : 0,
-              }}
-            />
-          );
-        })}
+      {/* Vertical lane line connecting the selected group's events */}
+      {showLaneLine && (
+        <div
+          style={{
+            position: 'absolute',
+            left: LANE_X,
+            top: continuationOnly ? 0 : isLaneStart ? '50%' : 0,
+            bottom: continuationOnly ? 0 : isLaneEnd ? '50%' : 0,
+            width: 2,
+            backgroundColor: ROOT_LINE_COLOR,
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -694,16 +486,19 @@ interface EventsListProps {
   steps?: Step[] | null;
   run?: WorkflowRun | null;
   onLoadEventData?: (event: Event) => Promise<unknown | null>;
+  hasMoreEvents?: boolean;
+  isLoadingMoreEvents?: boolean;
+  onLoadMoreEvents?: () => Promise<void> | void;
 }
 
 function EventRow({
   event,
-  node,
-  totalLanes,
+  index,
   isFirst,
   isLast,
   activeGroupKey,
   selectedGroupKey,
+  selectedGroupRange,
   correlationNameMap,
   workflowName,
   durationMap,
@@ -712,19 +507,14 @@ function EventRow({
   onLoadEventData,
 }: {
   event: Event;
-  node: EventTreeNode;
-  totalLanes: number;
+  index: number;
   isFirst: boolean;
   isLast: boolean;
-  /** The currently active group (from click or hover). undefined = no focus. */
   activeGroupKey?: string;
-  /** The clicked/locked selection (needed for toggle logic). */
   selectedGroupKey?: string;
-  /** Map from correlationId → display name */
+  selectedGroupRange: { first: number; last: number } | null;
   correlationNameMap: Map<string, string>;
-  /** Workflow name for run-level events */
   workflowName: string | null;
-  /** Map from correlationId → duration info */
   durationMap: Map<string, DurationInfo>;
   onSelectGroup: (groupKey: string | undefined) => void;
   onHoverGroup: (groupKey: string | undefined) => void;
@@ -764,7 +554,17 @@ function EventRow({
   const isRelated = rowGroupKey !== undefined && rowGroupKey === activeGroupKey;
   const isDimmed = hasActive && !isRelated;
   const isPulsing = hasActive && isRelated;
-  const highlightedLane = isRelated && node.lane >= 0 ? node.lane : undefined;
+
+  // Gutter state derived from selectedGroupRange
+  const showBranch = hasActive && isRelated && !isRun;
+  const showLaneLine =
+    selectedGroupRange !== null &&
+    index >= selectedGroupRange.first &&
+    index <= selectedGroupRange.last;
+  const isLaneStart =
+    selectedGroupRange !== null && index === selectedGroupRange.first;
+  const isLaneEnd =
+    selectedGroupRange !== null && index === selectedGroupRange.last;
 
   const loadEventDetails = useCallback(async () => {
     if (
@@ -813,7 +613,6 @@ function EventRow({
   );
 
   const handleRowClick = useCallback(() => {
-    // Toggle selection: click same group deselects, click different group selects
     if (selectedGroupKey === rowGroupKey) {
       onSelectGroup(undefined);
     } else {
@@ -844,15 +643,17 @@ function EventRow({
         className="w-full text-left flex items-center gap-0 text-sm hover:bg-[var(--ds-gray-alpha-100)] transition-colors cursor-pointer"
         style={{ minHeight: 40 }}
       >
-        {/* Tree gutter — never dimmed by row opacity */}
         <TreeGutter
-          node={node}
-          totalLanes={totalLanes}
           isFirst={isFirst}
           isLast={isLast && !isExpanded}
-          selectedLane={highlightedLane}
+          isRunLevel={isRun}
           statusDotColor={statusDotColor}
           pulse={isPulsing}
+          hasSelection={hasActive}
+          showBranch={showBranch}
+          showLaneLine={showLaneLine}
+          isLaneStart={isLaneStart}
+          isLaneEnd={isLaneEnd}
         />
 
         {/* Content area — dims when unrelated */}
@@ -865,7 +666,10 @@ function EventRow({
             type="button"
             onClick={handleExpandToggle}
             className="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded hover:bg-[var(--ds-gray-alpha-200)] transition-colors"
-            style={BUTTON_RESET_STYLE}
+            style={{
+              ...BUTTON_RESET_STYLE,
+              border: '1px solid var(--ds-gray-alpha-400)',
+            }}
             aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
           >
             <ChevronRight
@@ -948,13 +752,16 @@ function EventRow({
       {/* Expanded details — tree lines continue through this area */}
       {isExpanded && (
         <div className="flex">
-          {/* Continuation gutter — keeps lane lines flowing */}
+          {/* Continuation gutter — lane line continues if not at lane end */}
           <TreeGutter
-            node={node}
-            totalLanes={totalLanes}
             isFirst={false}
             isLast={isLast}
-            selectedLane={highlightedLane}
+            isRunLevel={isRun}
+            hasSelection={hasActive}
+            showBranch={false}
+            showLaneLine={showLaneLine && !isLaneEnd}
+            isLaneStart={false}
+            isLaneEnd={false}
             continuationOnly
           />
           {/* Spacer for chevron column */}
@@ -1041,6 +848,9 @@ export function EventListView({
   steps,
   run,
   onLoadEventData,
+  hasMoreEvents = false,
+  isLoadingMoreEvents = false,
+  onLoadMoreEvents,
 }: EventsListProps) {
   const sortedEvents = useMemo(() => {
     if (!events || events.length === 0) return [];
@@ -1049,8 +859,6 @@ export function EventListView({
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
   }, [events]);
-
-  const treeNodes = useMemo(() => buildEventTree(sortedEvents), [sortedEvents]);
 
   const { correlationNameMap, workflowName } = useMemo(
     () => buildNameMaps(steps ?? null, run ?? null),
@@ -1061,16 +869,6 @@ export function EventListView({
     () => buildDurationMap(sortedEvents),
     [sortedEvents]
   );
-
-  const totalLanes = useMemo(() => {
-    let max = 0;
-    for (const node of treeNodes) {
-      for (const lane of node.activeLanes) {
-        max = Math.max(max, lane + 1);
-      }
-    }
-    return max;
-  }, [treeNodes]);
 
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | undefined>(
     undefined
@@ -1087,6 +885,21 @@ export function EventListView({
 
   const activeGroupKey = selectedGroupKey ?? hoveredGroupKey;
 
+  // Compute the row-index range for the active group's connecting lane line.
+  // Only applies to non-run groups (step/hook/wait correlations).
+  const selectedGroupRange = useMemo(() => {
+    if (!activeGroupKey || activeGroupKey === '__run__') return null;
+    let first = -1;
+    let last = -1;
+    for (let i = 0; i < sortedEvents.length; i++) {
+      if (sortedEvents[i].correlationId === activeGroupKey) {
+        if (first === -1) first = i;
+        last = i;
+      }
+    }
+    return first >= 0 ? { first, last } : null;
+  }, [activeGroupKey, sortedEvents]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
@@ -1097,8 +910,8 @@ export function EventListView({
       eventId: string;
       index: number;
     }[] = [];
-    for (let i = 0; i < treeNodes.length; i++) {
-      const ev = treeNodes[i].event;
+    for (let i = 0; i < sortedEvents.length; i++) {
+      const ev = sortedEvents[i];
       entries.push({
         text: [ev.eventId, ev.correlationId ?? ''].join(' ').toLowerCase(),
         groupKey:
@@ -1109,7 +922,7 @@ export function EventListView({
       });
     }
     return entries;
-  }, [treeNodes]);
+  }, [sortedEvents]);
 
   useEffect(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1218,10 +1031,7 @@ export function EventListView({
           backgroundColor: 'var(--ds-background-100)',
         }}
       >
-        <div
-          className="flex-shrink-0"
-          style={{ width: 20 + totalLanes * LANE_WIDTH }}
-        />
+        <div className="flex-shrink-0" style={{ width: GUTTER_WIDTH }} />
         <div className="w-5 flex-shrink-0" />
         <div className="flex-1 min-w-0 px-4">Time</div>
         <div className="flex-1 min-w-0 px-4">Event Type</div>
@@ -1233,20 +1043,25 @@ export function EventListView({
       {/* Virtualized event rows */}
       <Virtuoso
         ref={virtuosoRef}
-        totalCount={treeNodes.length}
+        totalCount={sortedEvents.length}
         overscan={200}
         defaultItemHeight={40}
+        endReached={() => {
+          if (!hasMoreEvents || isLoadingMoreEvents) {
+            return;
+          }
+          void onLoadMoreEvents?.();
+        }}
         itemContent={(index) => {
-          const node = treeNodes[index];
           return (
             <EventRow
-              event={node.event}
-              node={node}
-              totalLanes={totalLanes}
+              event={sortedEvents[index]}
+              index={index}
               isFirst={index === 0}
-              isLast={index === treeNodes.length - 1}
+              isLast={index === sortedEvents.length - 1}
               activeGroupKey={activeGroupKey}
               selectedGroupKey={selectedGroupKey}
+              selectedGroupRange={selectedGroupRange}
               correlationNameMap={correlationNameMap}
               workflowName={workflowName}
               durationMap={durationMap}
@@ -1258,16 +1073,37 @@ export function EventListView({
         }}
         components={{
           Footer: () => (
-            <div
-              className="mt-4 pt-3 border-t text-xs px-3"
-              style={{
-                borderColor: 'var(--ds-gray-alpha-200)',
-                color: 'var(--ds-gray-900)',
-              }}
-            >
-              {sortedEvents.length} event
-              {sortedEvents.length !== 1 ? 's' : ''} total
-            </div>
+            <>
+              {hasMoreEvents && (
+                <div className="px-3 pt-3 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => void onLoadMoreEvents?.()}
+                    disabled={isLoadingMoreEvents}
+                    className="h-8 px-3 text-xs rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: 'var(--ds-gray-alpha-400)',
+                      color: 'var(--ds-gray-900)',
+                      backgroundColor: 'var(--ds-background-100)',
+                    }}
+                  >
+                    {isLoadingMoreEvents
+                      ? 'Loading more events...'
+                      : 'Load more'}
+                  </button>
+                </div>
+              )}
+              <div
+                className="mt-4 pt-3 border-t text-xs px-3"
+                style={{
+                  borderColor: 'var(--ds-gray-alpha-200)',
+                  color: 'var(--ds-gray-900)',
+                }}
+              >
+                {sortedEvents.length} event
+                {sortedEvents.length !== 1 ? 's' : ''} total
+              </div>
+            </>
           ),
         }}
         style={{ flex: 1, minHeight: 0 }}
