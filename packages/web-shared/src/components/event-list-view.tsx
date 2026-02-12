@@ -1140,7 +1140,7 @@ export function EventListView({
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       <style>{`@keyframes workflow-dot-pulse{0%{transform:scale(1);opacity:.7}70%,100%{transform:scale(2.2);opacity:0}}`}</style>
       {/* Search bar */}
       <div style={{ padding: 6, backgroundColor: 'var(--ds-background-100)' }}>
@@ -1270,7 +1270,7 @@ export function EventListView({
             </div>
           ),
         }}
-        style={{ flex: 1 }}
+        style={{ flex: 1, minHeight: 0 }}
       />
     </div>
   );
