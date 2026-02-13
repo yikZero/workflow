@@ -1,3 +1,121 @@
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+const CANARY_PATH_PATTERNS = [
+  /^packages\/next(?:\/|$)/,
+  /^workbench\/nextjs-[^/]+(?:\/|$)/,
+];
+
+function parseChangedFiles(rawValue) {
+  if (!rawValue?.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (file) => typeof file === 'string' && file.length > 0
+      );
+    }
+  } catch {
+    // Fallback to line/comma-separated parsing below.
+  }
+
+  return rawValue
+    .split(/\r?\n|,/)
+    .map((file) => file.trim())
+    .filter(Boolean);
+}
+
+function readChangedFilesFromEnv() {
+  const rawChangedFiles =
+    process.env.CHANGED_FILES ?? process.env.GITHUB_CHANGED_FILES;
+  if (!rawChangedFiles) return null;
+
+  return parseChangedFiles(rawChangedFiles);
+}
+
+function runGit(args, options = {}) {
+  return execFileSync('git', args, {
+    encoding: 'utf8',
+    ...options,
+  }).trim();
+}
+
+function hasCommit(commitSha) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${commitSha}^{commit}`], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureCommit(commitSha) {
+  if (!commitSha || hasCommit(commitSha)) return;
+
+  execFileSync(
+    'git',
+    ['fetch', '--no-tags', '--depth=1', 'origin', commitSha],
+    {
+      stdio: 'ignore',
+    }
+  );
+}
+
+function readChangedFilesFromGitHubEvent() {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !fs.existsSync(eventPath)) return null;
+
+  try {
+    const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+    const baseSha = event?.pull_request?.base?.sha;
+    const headSha = event?.pull_request?.head?.sha;
+    if (!baseSha || !headSha) return null;
+
+    ensureCommit(baseSha);
+    ensureCommit(headSha);
+
+    // Compare base/head snapshots directly so PR-level changes are detected
+    // even in shallow checkouts where merge-base can be unavailable.
+    const output = runGit(['diff', '--name-only', baseSha, headSha]);
+    if (!output) return [];
+
+    return output.split('\n').filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function readChangedFilesFromHead() {
+  try {
+    const output = runGit(['diff', '--name-only', 'HEAD~1...HEAD']);
+    if (!output) return [];
+
+    return output.split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getChangedFiles() {
+  return (
+    readChangedFilesFromEnv() ??
+    readChangedFilesFromGitHubEvent() ??
+    readChangedFilesFromHead()
+  );
+}
+
+function shouldRunCanaryTests() {
+  if (process.env.GITHUB_REF === 'refs/heads/main') return true;
+
+  const changedFiles = getChangedFiles();
+  return changedFiles.some((file) =>
+    CANARY_PATH_PATTERNS.some((pattern) => pattern.test(file))
+  );
+}
+
 // Framework-specific dev test configurations
 const DEV_TEST_CONFIGS = {
   'nextjs-turbopack': {
@@ -86,7 +204,7 @@ const matrix = {
   ],
 };
 
-if (process.env.GITHUB_REF === 'refs/heads/main') {
+if (shouldRunCanaryTests()) {
   const newItems = [];
 
   for (const item of matrix.app) {
