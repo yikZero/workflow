@@ -4,6 +4,7 @@ import {
   getWorkflowQueueName,
   withServerErrorRetry,
   withThrottleRetry,
+  withTransientErrorRetry,
 } from './helpers.js';
 
 // Mock the logger to suppress output during tests
@@ -306,6 +307,121 @@ describe('withThrottleRetry', () => {
     const result = await withThrottleRetry(fn);
 
     expect(result).toEqual({ timeoutSeconds: 30 });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withTransientErrorRetry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('should return the result on success', async () => {
+    const fn = vi.fn().mockResolvedValue('ok');
+    const result = await withTransientErrorRetry(fn);
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should retry on 5xx errors via withServerErrorRetry', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new WorkflowAPIError('Internal Server Error', { status: 500 })
+      )
+      .mockResolvedValueOnce('recovered');
+
+    const promise = withTransientErrorRetry(fn);
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should wait and retry once for short 429 retryAfter (<10s)', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new WorkflowAPIError('Throttled', { status: 429, retryAfter: 3 })
+      )
+      .mockResolvedValueOnce('recovered');
+
+    const promise = withTransientErrorRetry(fn);
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should throw immediately for long 429 retryAfter (>=10s)', async () => {
+    const error = new WorkflowAPIError('Throttled', {
+      status: 429,
+      retryAfter: 15,
+    });
+    const fn = vi.fn().mockRejectedValue(error);
+
+    await expect(withTransientErrorRetry(fn)).rejects.toThrow('Throttled');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should default to 5s retryAfter when not provided (retries in-process)', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new WorkflowAPIError('Throttled', { status: 429 }))
+      .mockResolvedValueOnce('recovered');
+
+    const promise = withTransientErrorRetry(fn);
+    // Default is 5s, which is < 10s so it retries in-process
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should handle 5xx on retry after 429 wait', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new WorkflowAPIError('Throttled', { status: 429, retryAfter: 2 })
+      )
+      // After 429 wait, the retry hits a 5xx that withServerErrorRetry handles
+      .mockRejectedValueOnce(
+        new WorkflowAPIError('Server Error', { status: 500 })
+      )
+      .mockResolvedValueOnce('recovered');
+
+    const promise = withTransientErrorRetry(fn);
+    // Advance past the 429 wait (2s)
+    await vi.advanceTimersByTimeAsync(2000);
+    // Advance past the 5xx retry backoff (500ms)
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('should not retry non-retryable errors', async () => {
+    const error = new WorkflowAPIError('Not Found', { status: 404 });
+    const fn = vi.fn().mockRejectedValue(error);
+
+    await expect(withTransientErrorRetry(fn)).rejects.toThrow('Not Found');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not retry non-WorkflowAPIError errors', async () => {
+    const error = new Error('random failure');
+    const fn = vi.fn().mockRejectedValue(error);
+
+    await expect(withTransientErrorRetry(fn)).rejects.toThrow('random failure');
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });

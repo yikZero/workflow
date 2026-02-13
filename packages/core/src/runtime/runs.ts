@@ -5,7 +5,7 @@ import {
   SPEC_VERSION_LEGACY,
   type World,
 } from '@workflow/world';
-import { getWorkflowQueueName } from './helpers.js';
+import { getWorkflowQueueName, withTransientErrorRetry } from './helpers.js';
 import { start } from './start.js';
 
 export interface RecreateRunOptions {
@@ -126,7 +126,9 @@ export async function wakeUpRun(
   options?: StopSleepOptions
 ): Promise<StopSleepResult> {
   try {
-    const run = await world.runs.get(runId, { resolveData: 'none' });
+    const run = await withTransientErrorRetry(() =>
+      world.runs.get(runId, { resolveData: 'none' })
+    );
     const compatMode = isLegacySpecVersion(run.specVersion);
 
     // Paginate through all events to ensure we don't miss any sleeps
@@ -134,11 +136,13 @@ export async function wakeUpRun(
     const allEvents: Event[] = [];
     let cursor: string | null = null;
     do {
-      const eventsResult = await world.events.list({
-        runId,
-        pagination: { limit: 1000, ...(cursor ? { cursor } : {}) },
-        resolveData: 'none',
-      });
+      const eventsResult = await withTransientErrorRetry(() =>
+        world.events.list({
+          runId,
+          pagination: { limit: 1000, ...(cursor ? { cursor } : {}) },
+          resolveData: 'none',
+        })
+      );
       allEvents.push(...eventsResult.data);
       cursor = eventsResult.hasMore ? eventsResult.cursor : null;
     } while (cursor);
@@ -180,7 +184,9 @@ export async function wakeUpRun(
             specVersion: run.specVersion,
           };
       try {
-        await world.events.create(runId, eventData, { v1Compat: compatMode });
+        await withTransientErrorRetry(() =>
+          world.events.create(runId, eventData, { v1Compat: compatMode })
+        );
         stoppedCount++;
       } catch (err) {
         errors.push(err instanceof Error ? err : new Error(String(err)));
@@ -188,14 +194,16 @@ export async function wakeUpRun(
     }
 
     if (stoppedCount > 0) {
-      await world.queue(
-        getWorkflowQueueName(run.workflowName),
-        {
-          runId,
-        },
-        {
-          deploymentId: run.deploymentId,
-        }
+      await withTransientErrorRetry(() =>
+        world.queue(
+          getWorkflowQueueName(run.workflowName),
+          {
+            runId,
+          },
+          {
+            deploymentId: run.deploymentId,
+          }
+        )
       );
     }
 

@@ -470,6 +470,52 @@ export async function withThrottleRetry(
 }
 
 /**
+ * Retries a function when it throws a transient WorkflowAPIError (5xx or 429).
+ * Designed for non-queue contexts (e.g. API routes) where we can't defer to
+ * queue infrastructure.
+ *
+ * - 5xx errors: delegates to withServerErrorRetry (exponential backoff, 3 retries)
+ * - 429 errors with retryAfter < 10s: waits in-process, then retries once
+ *   (the retry also gets 5xx protection via withServerErrorRetry)
+ * - 429 errors with retryAfter >= 10s: re-throws (too long to wait in-process)
+ *
+ * Use this for individual API calls outside of the queue handler context
+ * (where withThrottleRetry + withServerErrorRetry are not available).
+ */
+export async function withTransientErrorRetry<T>(
+  fn: () => Promise<T>
+): Promise<T> {
+  try {
+    return await withServerErrorRetry(fn);
+  } catch (err) {
+    if (WorkflowAPIError.is(err) && err.status === 429) {
+      const retryAfterSeconds = Math.max(
+        1,
+        typeof err.retryAfter === 'number' ? err.retryAfter : 5
+      );
+
+      // Too long to wait in-process; let the caller handle it
+      if (retryAfterSeconds >= 10) {
+        throw err;
+      }
+
+      runtimeLogger.warn(
+        'Throttled by workflow-server (429), retrying in-process',
+        {
+          retryAfterSeconds,
+          url: err.url,
+        }
+      );
+      await new Promise((resolve) =>
+        setTimeout(resolve, retryAfterSeconds * 1000)
+      );
+      return await withServerErrorRetry(fn);
+    }
+    throw err;
+  }
+}
+
+/**
  * Retries a function when it throws a 5xx WorkflowAPIError.
  * Used to handle transient workflow-server errors without consuming step attempts.
  *
