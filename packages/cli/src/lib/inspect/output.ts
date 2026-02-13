@@ -21,7 +21,11 @@ import { formatDistance } from 'date-fns';
 import Table from 'easy-table';
 import { logger } from '../config/log.js';
 import type { InspectCLIOptions } from '../config/types.js';
-import { type EncryptionKeyResolver, hydrateResourceIO } from './hydration.js';
+import {
+  type EncryptionKeyResolver,
+  hydrateResourceIO,
+  isEncryptedRef,
+} from './hydration.js';
 
 /**
  * Create an EncryptionKeyResolver from a World instance.
@@ -485,6 +489,8 @@ const inlineFormatIO = <T>(io: T, topLevel: boolean = true): string => {
     value = '<empty>';
   } else if (io === null) {
     value = '<null>';
+  } else if (isEncryptedRef(io)) {
+    value = chalk.dim.yellow('\u{1F512} Encrypted');
   } else if (io && Array.isArray(io)) {
     if (io.length === 0) {
       value = '<empty>';
