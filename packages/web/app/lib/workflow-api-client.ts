@@ -1,6 +1,7 @@
 import { VERCEL_403_ERROR_MESSAGE } from '@workflow/errors';
 import {
   hydrateResourceIO,
+  hydrateResourceIOWithKey,
   waitEventsToWaitEntity,
 } from '@workflow/web-shared';
 import type {
@@ -22,6 +23,7 @@ import {
   fetchStep,
   fetchSteps,
   fetchStreams,
+  getEncryptionKeyForRun,
   recreateRun as recreateRunServerAction,
   reenqueueRun as reenqueueRunServerAction,
   resumeHook as resumeHookServerAction,
@@ -1126,12 +1128,40 @@ export function useWorkflowResourceData(
     return () => clearInterval(interval);
   }, [refreshInterval, fetchData]);
 
+  const decryptData = useCallback(async () => {
+    if (!data || !('runId' in data)) return;
+    const runId = (data as WorkflowRun | Step).runId;
+    setLoading(true);
+    setError(null);
+    try {
+      const { error: keyError, result: keyResult } =
+        await unwrapServerActionResult(getEncryptionKeyForRun(env, runId));
+      if (keyError) {
+        setError(keyError);
+        return;
+      }
+      if (!keyResult) {
+        setError(
+          new Error('Encryption is not configured for this deployment.')
+        );
+        return;
+      }
+      const decrypted = await hydrateResourceIOWithKey(data, keyResult);
+      setData(decrypted);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      setLoading(false);
+    }
+  }, [data, env]);
+
   return {
     data,
     // events,
     loading,
     error,
     refresh: fetchData,
+    decrypt: decryptData,
   };
 }
 
