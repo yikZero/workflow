@@ -3,6 +3,7 @@ import type { SpanSelectionInfo } from '@workflow/web-shared';
 import {
   ErrorBoundary,
   EventListView,
+  hydrateResourceIO,
   StreamViewer,
   WorkflowTraceViewer,
 } from '@workflow/web-shared';
@@ -252,7 +253,31 @@ export function RunDetailView({
       if (error) {
         throw error;
       }
-      const fullEvent = result.data.find((e) => e.eventId === event.eventId);
+      const rawEvent = result.data.find((e) => e.eventId === event.eventId);
+      const fullEvent = rawEvent ? hydrateResourceIO(rawEvent) : null;
+      if (fullEvent && 'eventData' in fullEvent) {
+        return fullEvent.eventData;
+      }
+      return null;
+    },
+    [env]
+  );
+
+  // Callback for sidebar EventsList — takes (correlationId, eventId)
+  const handleLoadSidebarEventData = useCallback(
+    async (correlationId: string, eventId: string) => {
+      const { error, result } = await unwrapServerActionResult(
+        fetchEventsByCorrelationId(env, correlationId, {
+          sortOrder: 'asc',
+          limit: 100,
+          withData: true,
+        })
+      );
+      if (error) {
+        throw error;
+      }
+      const rawEvent = result.data.find((e) => e.eventId === eventId);
+      const fullEvent = rawEvent ? hydrateResourceIO(rawEvent) : null;
       if (fullEvent && 'eventData' in fullEvent) {
         return fullEvent.eventData;
       }
@@ -637,6 +662,7 @@ export function RunDetailView({
                     onStreamClick={handleStreamClick}
                     onWakeUpSleep={handleWakeUpSleep}
                     onResolveHook={handleResolveHook}
+                    onLoadEventData={handleLoadSidebarEventData}
                   />
                 </div>
               </ErrorBoundary>
