@@ -26,10 +26,9 @@ import { version } from './version.js';
  * Set this to test against a different workflow-server version.
  * Leave empty string for production (uses default vercel-workflow.com).
  *
- * Example: 'https://workflow-server-git-branch-name.vercel.sh'
  */
 const WORKFLOW_SERVER_URL_OVERRIDE =
-  'https://workflow-server-23wv5pp8u.vercel.sh';
+  'https://workflow-server-duxqncq4l.vercel.sh';
 
 export interface APIConfig {
   token?: string;
