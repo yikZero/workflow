@@ -84,9 +84,17 @@ export function WorkflowsList({ onWorkflowSelect }: WorkflowsListProps) {
         <CardContent className="p-12 text-center">
           <Workflow className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
           <h3 className="text-lg font-semibold mb-2">No Workflows Found</h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground mb-6">
             No workflow definitions were found in the graph manifest.
           </p>
+          <div className="bg-muted rounded-lg p-4 max-w-md mx-auto">
+            <p className="text-xs text-muted-foreground mb-2">
+              Get started with Cursor Skills:
+            </p>
+            <code className="text-sm bg-background px-3 py-2 rounded border block overflow-x-auto">
+              npx skills add https://github.com/vercel/workflow --skill workflow
+            </code>
+          </div>
         </CardContent>
       </Card>
     );
