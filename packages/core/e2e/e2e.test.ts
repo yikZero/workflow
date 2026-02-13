@@ -729,8 +729,8 @@ describe('e2e', () => {
             // Workflow catches the error and returns it
             expect(result.caught).toBe(true);
             expect(result.message).toContain('Step error message');
-            // Stack trace contains function name and source file
-            expect(result.stack).toContain('errorStepFn');
+            // Stack trace can show either the original step function or its transformed wrapper name
+            expect(result.stack).toMatch(/errorStepFn|registerStepFunction/);
             expect(result.stack).not.toContain('evalmachine');
 
             // Source maps are not supported everyhwere. Check the definition
@@ -751,8 +751,10 @@ describe('e2e', () => {
             expect(failedStep.status).toBe('failed');
             expect(failedStep.error.message).toContain('Step error message');
 
-            // Step error also has function name and source file in stack
-            expect(failedStep.error.stack).toContain('errorStepFn');
+            // Step error stack can show either the original step function or its transformed wrapper name
+            expect(failedStep.error.stack).toMatch(
+              /errorStepFn|registerStepFunction/
+            );
             expect(failedStep.error.stack).not.toContain('evalmachine');
 
             // Source maps are not supported everyhwere. Check the definition
@@ -783,7 +785,9 @@ describe('e2e', () => {
             );
             // Stack trace propagates to caught error with function names and source file
             expect(result.stack).toContain('throwErrorFromStep');
-            expect(result.stack).toContain('stepThatThrowsFromHelper');
+            expect(result.stack).toMatch(
+              /stepThatThrowsFromHelper|registerStepFunction/
+            );
             expect(result.stack).not.toContain('evalmachine');
 
             // Source maps are not supported everyhwere. Check the definition
@@ -803,8 +807,8 @@ describe('e2e', () => {
             );
             expect(failedStep.status).toBe('failed');
             expect(failedStep.error.stack).toContain('throwErrorFromStep');
-            expect(failedStep.error.stack).toContain(
-              'stepThatThrowsFromHelper'
+            expect(failedStep.error.stack).toMatch(
+              /stepThatThrowsFromHelper|registerStepFunction/
             );
             expect(failedStep.error.stack).not.toContain('evalmachine');
             // Source maps are not supported everyhwere. Check the definition
@@ -885,6 +889,33 @@ describe('e2e', () => {
         expect(result.failed).toBe(true);
         expect(result.attempt).toBe(1);
       });
+
+      test(
+        'workflow completes despite transient 5xx on step_completed',
+        { timeout: 120_000 },
+        async () => {
+          const run = await start(
+            await e2e('serverError5xxRetryWorkflow'),
+            [42]
+          );
+          const result = await run.returnValue;
+
+          // Correct result proves workflow completed successfully
+          expect(result.result).toBe(84); // 42 * 2
+
+          // retryCount > 0 proves the fault injection actually triggered
+          expect(result.retryCount).toBe(2);
+
+          // attempt === 1 proves no step attempt was consumed by the 5xx retries
+          const { json: steps } = await cliInspectJson(
+            `steps --runId ${run.runId}`
+          );
+          const doWorkStep = steps.find((s: any) =>
+            s.stepName.includes('doWork')
+          );
+          expect(doWorkStep.attempt).toBe(1);
+        }
+      );
     });
 
     describe('catchability', () => {

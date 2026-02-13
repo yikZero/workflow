@@ -1,5 +1,20 @@
 # @workflow/rollup
 
+## 4.0.0-beta.13
+
+### Patch Changes
+
+- Updated dependencies [[`94760b4`](https://github.com/vercel/workflow/commit/94760b4640dde4ed84ff0932994ce9a47b1954ad)]:
+  - @workflow/builders@4.0.1-beta.47
+
+## 4.0.0-beta.12
+
+### Patch Changes
+
+- Updated dependencies [[`3d770d5`](https://github.com/vercel/workflow/commit/3d770d53855ce7c8522d4f0afbdbc123eae6c1ee), [`054e40c`](https://github.com/vercel/workflow/commit/054e40c91be615809c71d3ad29573c78c4491825), [`a5935ab`](https://github.com/vercel/workflow/commit/a5935abec7c7e57b2a89c629203d567cd7ac76a7), [`1adcc6a`](https://github.com/vercel/workflow/commit/1adcc6a618562e0b31ae53d10f9f6aa797107705)]:
+  - @workflow/builders@4.0.1-beta.46
+  - @workflow/swc-plugin@4.1.0-beta.18
+
 ## 4.0.0-beta.11
 
 ### Patch Changes
@@ -15,7 +30,6 @@
 - [#899](https://github.com/vercel/workflow/pull/899) [`73bf7be`](https://github.com/vercel/workflow/commit/73bf7be925a8ffc0c6fce0cc75b6092243882088) Thanks [@TooTallNate](https://github.com/TooTallNate)! - Change compiler ID generation logic to use Node.js import specifiers
 
   IDs for workflows, steps, and classes now use module specifiers:
-
   - Local files use `./path/to/file` format instead of `path/to/file.ext`
   - Package files use `packageName@version` format (e.g., `workflow@4.0.1`)
 
@@ -53,7 +67,6 @@
 ### Patch Changes
 
 - 21cff15: Add support for `.mjs`, `.mts`, `.cjs`, and `.cts` file extensions in the SWC transform
-
   - Updated turbopack rules to include `*.mjs`, `*.mts`, `*.cjs`, `*.cts` in addition to existing extensions
   - Fixed TypeScript detection for `.mts` and `.cts` files across all transform plugins
   - Updated esbuild `resolveExtensions` to include `.mts` and `.cts`
