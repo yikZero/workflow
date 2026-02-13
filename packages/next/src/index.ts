@@ -17,6 +17,7 @@ export function withWorkflow(
     workflows,
   }: {
     workflows?: {
+      lazyDiscovery?: boolean;
       local?: {
         port?: number;
         dataDir?: string;
@@ -24,6 +25,10 @@ export function withWorkflow(
     };
   } = {}
 ) {
+  if (workflows?.lazyDiscovery) {
+    process.env.WORKFLOW_NEXT_LAZY_DISCOVERY = '1';
+  }
+
   if (!process.env.VERCEL_DEPLOYMENT_ID) {
     if (!process.env.WORKFLOW_TARGET_WORLD) {
       process.env.WORKFLOW_TARGET_WORLD = 'local';
@@ -67,6 +72,7 @@ export function withWorkflow(
     const nextVersion = require('next/package.json').version;
     const supportsTurboCondition = semver.gte(nextVersion, 'v16.0.0');
     const useDeferredBuilder = shouldUseDeferredBuilder(nextVersion);
+
     // Deferred builder discovers files via loader socket notifications, so
     // turbopack content conditions are only needed with the eager builder.
     const shouldApplyTurboCondition =
