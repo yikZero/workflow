@@ -772,6 +772,7 @@ export function RunDetailView({
                     onResolveHook={handleResolveHook}
                     onLoadEventData={handleLoadSidebarEventData}
                     onDecrypt={handleDecrypt}
+                    encryptionKey={encryptionKey ?? undefined}
                   />
                 </div>
               </ErrorBoundary>
