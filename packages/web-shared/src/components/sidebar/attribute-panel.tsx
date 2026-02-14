@@ -3,9 +3,11 @@
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
 import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
 import type { ModelMessage } from 'ai';
+import { Lock } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
+import { isEncryptedMarker } from '../../lib/hydration';
 import { extractConversation, isDoStreamStep } from '../../lib/utils';
 import { DataInspector, StreamClickContext } from '../ui/data-inspector';
 import { ErrorCard } from '../ui/error-card';
@@ -115,6 +117,26 @@ function ConversationWithTabs({
  * Render a value with the shared DataInspector (ObjectInspector with
  * custom theming, nodeRenderer for StreamRef/ClassInstanceRef, etc.)
  */
+/**
+ * Inline display for an encrypted field — no expand, just a flat label
+ * with the lucide Lock icon matching the title bar Decrypt button.
+ */
+function EncryptedFieldBlock() {
+  return (
+    <div
+      className="flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs"
+      style={{
+        borderColor: 'var(--ds-gray-300)',
+        backgroundColor: 'var(--ds-gray-100)',
+        color: 'var(--ds-gray-700)',
+      }}
+    >
+      <Lock className="h-3 w-3" />
+      <span className="font-medium">Encrypted</span>
+    </div>
+  );
+}
+
 function JsonBlock(value: unknown) {
   return (
     <div
@@ -273,8 +295,12 @@ const attributeToDisplayFn: Record<
   retryAfter: localMillisecondTime,
   resumeAt: localMillisecondTime,
   // Resolved attributes, won't actually use this function
-  metadata: JsonBlock,
+  metadata: (value: unknown) => {
+    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
+    return JsonBlock(value);
+  },
   input: (value: unknown, context?: DisplayContext) => {
+    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
     // Check if input has args + closure vars structure
     if (value && typeof value === 'object' && 'args' in value) {
       const { args, closureVars } = value as {
@@ -336,6 +362,7 @@ const attributeToDisplayFn: Record<
     );
   },
   output: (value: unknown) => {
+    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
     return <DetailCard summary="Output">{JsonBlock(value)}</DetailCard>;
   },
   error: (value: unknown) => {
@@ -402,6 +429,7 @@ const attributeToDisplayFn: Record<
     );
   },
   eventData: (value: unknown) => {
+    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
     return <DetailCard summary="Event Data">{JsonBlock(value)}</DetailCard>;
   },
 };
