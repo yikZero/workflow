@@ -1128,40 +1128,49 @@ export function useWorkflowResourceData(
     return () => clearInterval(interval);
   }, [refreshInterval, fetchData]);
 
+  const [encryptionKey, setEncryptionKey] = useState<Uint8Array | null>(null);
+
   const decryptData = useCallback(async () => {
     if (!data || !('runId' in data)) return;
     const runId = (data as WorkflowRun | Step).runId;
     setLoading(true);
     setError(null);
     try {
-      const { error: keyError, result: keyResult } =
-        await unwrapServerActionResult(getEncryptionKeyForRun(env, runId));
-      if (keyError) {
-        setError(keyError);
-        return;
+      // Reuse previously fetched key, or fetch a new one
+      let key = encryptionKey;
+      if (!key) {
+        const { error: keyError, result: keyResult } =
+          await unwrapServerActionResult(getEncryptionKeyForRun(env, runId));
+        if (keyError) {
+          setError(keyError);
+          return;
+        }
+        if (!keyResult) {
+          setError(
+            new Error('Encryption is not configured for this deployment.')
+          );
+          return;
+        }
+        key = keyResult;
+        setEncryptionKey(key);
       }
-      if (!keyResult) {
-        setError(
-          new Error('Encryption is not configured for this deployment.')
-        );
-        return;
-      }
-      const decrypted = await hydrateResourceIOWithKey(data, keyResult);
+      const decrypted = await hydrateResourceIOWithKey(data, key);
       setData(decrypted);
     } catch (err: unknown) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setLoading(false);
     }
-  }, [data, env]);
+  }, [data, env, encryptionKey]);
 
   return {
     data,
-    // events,
     loading,
     error,
     refresh: fetchData,
     decrypt: decryptData,
+    /** The encryption key, available after decrypt() has been called */
+    encryptionKey,
   };
 }
 
