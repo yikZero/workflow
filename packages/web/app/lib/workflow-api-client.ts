@@ -1062,9 +1062,10 @@ export function useWorkflowResourceData(
       );
       if (error) {
         setError(error);
-        return;
+      } else {
+        setData(hydrateResourceIO(result));
       }
-      setData(hydrateResourceIO(result));
+      setLoading(false);
       return;
     }
     if (resource === 'sleep') {
@@ -1077,6 +1078,7 @@ export function useWorkflowResourceData(
       );
       if (error) {
         setError(error);
+        setLoading(false);
         return;
       }
       const events = (result.data as unknown as Event[]).map(hydrateResourceIO);
@@ -1087,9 +1089,11 @@ export function useWorkflowResourceData(
             `Failed to load ${resource} details: missing required event data`
           )
         );
+        setLoading(false);
         return;
       }
       setData(data as unknown as Hook | Event);
+      setLoading(false);
       return;
     }
     setLoading(true);
