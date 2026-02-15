@@ -1,6 +1,7 @@
 'use client';
 
 import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
+import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
 import { Clock, Copy, Info, Send, Type, X, XCircle } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -898,13 +899,17 @@ export const WorkflowTraceViewer = ({
     setPanelWidth((w) => Math.max(MIN_PANEL_WIDTH, w + deltaX));
   }, []);
 
-  // Get the selected span name and duration for the panel header
+  // Get the selected span name for the panel header
   const selectedSpanName = useMemo(() => {
     if (!selectedSpan?.data) return undefined;
     const data = selectedSpan.data as Record<string, unknown>;
+    const stepName = data.stepName as string | undefined;
+    const workflowName = data.workflowName as string | undefined;
     return (
-      (data.stepName as string) ??
-      (data.workflowName as string) ??
+      (stepName ? parseStepName(stepName)?.shortName : undefined) ??
+      (workflowName ? parseWorkflowName(workflowName)?.shortName : undefined) ??
+      stepName ??
+      workflowName ??
       (data.hookId as string) ??
       'Details'
     );
@@ -970,12 +975,15 @@ export const WorkflowTraceViewer = ({
             className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0"
             style={{ borderColor: 'var(--ds-gray-200)' }}
           >
-            <span
-              className="text-sm font-medium truncate"
-              style={{ color: 'var(--ds-gray-1000)' }}
-            >
-              {selectedSpanName}
-            </span>
+            <div className="min-w-0 flex-1">
+              <div
+                className="text-sm font-medium truncate"
+                style={{ color: 'var(--ds-gray-1000)' }}
+                title={selectedSpanName}
+              >
+                {selectedSpanName}
+              </div>
+            </div>
             <button
               type="button"
               aria-label="Close panel"
