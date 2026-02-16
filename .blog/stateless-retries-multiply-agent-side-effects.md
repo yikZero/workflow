@@ -1,83 +1,134 @@
-# Stateless retries multiply agent side effects
+# Workflow DevKit keeps Agents' tool-call volume linear under retries
 
 ## Headline finding
 
-Stateless architectures turn agent reliability problems into duplication problems. Any restart — timeout, crash, deploy, scale event — pushes you toward re-executing earlier tool calls unless you built a persistence layer that can prove what already happened.
+Stateless retries turn an Agent's tool calls into repeated work. As the number of tool calls per run grows, the expected number of executed calls grows faster than linearly because a single failure forces a full replay of the prefix.
 
-Durable execution flips that. It records step inputs and outputs in an event log and deterministically replays the agent loop, so restarts rehydrate state instead of repeating side effects.
+Workflow DevKit changes the unit of retry. The workflow replays deterministically, but completed steps return recorded results. A transient failure retries one step, not the entire Agent turn.
 
 ## Methodology
 
-Model an agent run as a sequence of `n` tool calls. Each call succeeds with probability `s` and fails transiently with probability `p = 1 - s`.
+Model an Agent run as `N` sequential tool calls. Each call fails transiently with probability `p` and succeeds with probability `q = 1 - p`.
 
-Compare two implementations:
+Compare two retry strategies:
 
-- **Stateless restart:** on any failure (or timeout that looks like failure), rerun the whole function from the beginning. This matches the common "retry the request" approach when you lack per-call checkpointing.
-- **Durable steps:** isolate each tool call in a step (`'use step'`). If a call fails transiently, retry that step. The workflow (`'use workflow'`) replays from the event log and skips completed steps.
+* **Stateless retry:** a failure restarts the whole run from tool call 1.
+* **Durable step retry:** a failure retries only the failed call; prior successful calls do not re-execute.
 
-This is a simplified model. It ignores correlated failures and assumes you can retry until success. In the real system you cap retries (Workflow DevKit defaults to 3 retries unless you override `stepFn.maxRetries`) and you may delay retries with `RetryableError`.
+This isolates the retry surface area. It does not assume anything about the LLM or tools beyond an independent per-call failure rate.
 
 ## Data
 
-The cost metric is "how many tool calls do we execute to finish one successful run," because tool calls dominate agent cost and risk (tokens, rate limits, side effects).
+With stateless retry, the run completes only after it achieves `N` consecutive successful calls. The expected number of executed calls is:
 
-For the stateless restart model, the run succeeds only after `n` consecutive successes. The expected number of calls until that happens is:
+`E_stateless = (1 - q^N) / (p * q^N)`
 
-`E[calls] = (1 - s^n) / (p * s^n)`
+With durable step retry, each call is a geometric retry until success, so:
 
-For durable steps, each call retries independently. The expected number of call attempts is:
+`E_durable = N / q`
 
-`E[calls] = n / s`
+Concrete numbers:
 
-| Steps in run (`n`) | Transient failure rate (`p`) | Stateless restart: expected calls | Durable steps: expected calls | Restart overhead | Durable overhead |
-| --: | --: | --: | --: | --: | --: |
-| 10 | 1% | 10.57 | 10.10 | 1.06x | 1.01x |
-| 20 | 1% | 22.26 | 20.20 | 1.11x | 1.01x |
-| 40 | 1% | 49.48 | 40.40 | 1.24x | 1.01x |
-| 10 | 5% | 13.40 | 10.53 | 1.34x | 1.05x |
-| 20 | 5% | 35.79 | 21.05 | 1.79x | 1.05x |
-| 40 | 5% | 135.63 | 42.11 | 3.39x | 1.05x |
+* `p = 0.02`, `N = 40`: stateless `62.2` calls vs durable `40.8` calls (1.52x).
+* `p = 0.05`, `N = 20`: stateless `35.8` calls vs durable `21.1` calls (1.70x).
+* `p = 0.10`, `N = 40`: stateless `666.5` calls vs durable `44.4` calls (15.0x).
 
-The gap grows with run length. At a 5% transient failure rate across 40 calls, the stateless restart model executes ~3.4x the work, on average, to get one successful completion.
-
-That "extra work" is not free retries. It is duplicated tool calls. If any of those tool calls write to external systems, you also created duplicated side effects unless you designed every tool integration to be idempotent.
+The ratio compounds because stateless retry forces the run to finish the entire chain without a single transient failure. Durable steps turn that into independent retries per call.
 
 ## Core insight
 
-Agent workflows compound failure probability. A single run touches many systems, and each system has its own tail latency and transient errors.
+In agent workloads, the expensive part is not the control flow. It is the tool boundary: API calls, database writes, emails, payments, rate-limited endpoints. Stateless retry replays those boundaries unless the application builds its own ledger of what already executed.
 
-Stateless runtimes give you one recovery primitive: re-execute code. That works for pure functions. Agents are not pure. They read and write external state, and they do it many times per run.
-
-Workflow DevKit uses a different recovery primitive: replay. The workflow function runs in a deterministic sandbox. Steps isolate side effects and persist their results to an append-only event log. On restart, the workflow replays and step calls resolve from recorded outputs. A transient failure retries only the failing step.
-
-This is the practical difference between "retry is correct" and "retry is dangerous."
+That ledger is the same thing a durable runtime provides: an event log keyed by stable correlation ids. Workflow DevKit already emits a correlation id per step and records its lifecycle (`created`, `started`, `retrying`, `completed`, `failed`). Replay rehydrates the workflow and returns step results without re-executing successful calls.
 
 ## Practical takeaway
 
-If your agent touches external systems, treat every tool call as a durable step. Keep orchestration in the workflow and error policy in steps (`FatalError` for permanent failures, `RetryableError` for transient failures with backoff).
+Use durable steps for every side-effecting tool call. Keep the workflow function deterministic and let the runtime handle replay and selective retry. If a tool supports idempotency keys, derive the key from the step correlation id instead of inventing your own scheme.
 
-```bash
-npx workflow inspect run <run_id>
+### Stateless retry duplicates work
+
+**Before: retrying an Agent turn replays the full prefix**
+
+```ts
+export async function agentTurn(input: Input) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const a = await toolA(input);
+      const b = await toolB(a);
+      const c = await toolC(b);
+      return { a, b, c };
+    } catch (err) {
+      if (attempt === 5) throw err;
+      await sleepMs(1000 * attempt);
+    }
+  }
+  throw new Error("unreachable");
+}
 ```
 
----
+**After: durable steps replay successful calls and retry only the failed one**
 
-## Style justification
+```ts
+import { RetryableError } from "workflow";
 
-**What works extremely well:**
-- Title follows the research post pattern perfectly — states the finding ("Stateless retries multiply agent side effects"), not the question. Compare to "AGENTS.md outperforms skills in our agent evals."
-- The data table is the strongest element. It follows the Vercel research pattern: simplest possible table, one clear variable, ascending values that build to the headline result (3.39x overhead). The "AGENTS.md" post used the same structure.
-- Mathematical formulas add genuine authority. This is not opinion — it is a derivable result. Vercel research posts lead with data, not argument.
-- "This is a simplified model" matches the Vercel pattern of honest difficulty: acknowledge limitations as technical facts, not apologies.
-- "retry is correct" vs. "retry is dangerous" — this closing line is the kind of quotable insight Vercel research posts end on. Compare to "Passive context beats active retrieval."
-- Paragraphs are tight. The core insight section is 4 sentences, 3 paragraphs. Maximum density.
+async function toolA(input: Input) { 'use step'; return callA(input); }
+async function toolB(a: A) { 'use step'; return callB(a); }
+async function toolC(b: B) {
+  'use step';
+  const res = await callC(b);
+  if (res.transient === true) throw new RetryableError("toolC transient", { retryAfter: "2s" });
+  return res;
+}
 
-**What could be stronger:**
-- The methodology section describes a theoretical model, not empirical data. The "AGENTS.md" post ran actual evals with pass rates. A reader might ask "did you measure this on real agent runs?" Adding even one real-world data point (e.g., "across 1,000 production agent runs, we observed a 4.2% transient failure rate") would close that gap.
-- The formulas assume geometric distributions and independence — reasonable but worth stating explicitly for a research-style post. The "simplified model" caveat partially covers this.
-- No visual. Vercel research posts with tables often benefit from a chart showing the divergence curve. The 3.39x figure at 40 steps / 5% failure rate deserves a visual.
+export async function agentTurn(input: Input) {
+  'use workflow';
+  const a = await toolA(input);
+  const b = await toolB(a);
+  return await toolC(b);
+}
+```
 
-**Alternative approaches:**
-1. **Empirical-first:** Run actual agent workloads on stateless vs. durable, measure tool call counts, and report observed overhead. Replace the theoretical model with production data. Harder to produce but more authoritative.
-2. **Side-effect focused:** Narrow the article to side-effect duplication specifically. Title: "Agent retries duplicate side effects at scale." Drop the formula and instead catalog real failure scenarios: double-charged payments, duplicate tickets, repeated emails. More visceral for engineering readers.
-3. **Comparative architecture:** Add a third column to the table — "stateless with manual checkpointing" — showing the engineering effort to approach durable performance without the framework. This makes the build-vs-buy argument explicit without stating it.
+### Stop managing idempotency keys by hand
+
+**Before: generating and persisting idempotency keys across retries**
+
+```ts
+import { sql } from "./db";
+import { randomUUID } from "crypto";
+
+export async function purchase(runId: string, userId: string) {
+  const row = await sql`SELECT charge_key, email_key FROM runs WHERE id=${runId}`;
+  const chargeKey = row.charge_key ?? randomUUID();
+  const emailKey = row.email_key ?? randomUUID();
+  await sql`UPDATE runs SET charge_key=${chargeKey}, email_key=${emailKey} WHERE id=${runId}`;
+  await stripe.charges.create({ amount: 499, customer: userId }, { idempotencyKey: chargeKey });
+  await sendReceiptEmail(userId, { idempotencyKey: emailKey });
+}
+```
+
+**After: use the step correlation id as the idempotency key**
+
+```ts
+import { getStepMetadata } from "workflow";
+
+async function chargeCard(userId: string, amount: number) {
+  'use step';
+  const { stepId } = getStepMetadata();
+  return stripe.charges.create({ amount, customer: userId }, { idempotencyKey: stepId });
+}
+async function sendReceipt(userId: string) {
+  'use step';
+  const { stepId } = getStepMetadata();
+  await mailer.sendReceipt({ userId }, { idempotencyKey: stepId });
+}
+
+export async function purchase(userId: string) {
+  'use workflow';
+  await chargeCard(userId, 499);
+  await sendReceipt(userId);
+}
+```
+
+```bash
+npx -y -p @workflow/cli wf inspect runs
+```
