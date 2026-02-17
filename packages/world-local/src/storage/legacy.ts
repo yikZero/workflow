@@ -6,6 +6,7 @@ import { writeJSON } from '../fs.js';
 import { filterEventData, filterRunData } from './filters.js';
 import { monotonicUlid } from './helpers.js';
 import { deleteAllHooksForRun } from './hooks-storage.js';
+import { deleteAllWaitsForRun } from './waits-storage.js';
 
 /**
  * Handle events for legacy runs (pre-event-sourcing, specVersion < 2).
@@ -46,7 +47,11 @@ export async function handleLegacyEvent(
       };
       const runPath = path.join(basedir, 'runs', `${runId}.json`);
       await writeJSON(runPath, run, { overwrite: true });
-      await deleteAllHooksForRun(basedir, runId);
+      // Delete all hooks and waits for this run to allow token reuse
+      await Promise.all([
+        deleteAllHooksForRun(basedir, runId),
+        deleteAllWaitsForRun(basedir, runId),
+      ]);
       // Return without event (legacy behavior skips event storage)
       // Type assertion: EventResult expects WorkflowRun, filterRunData may return WorkflowRunWithoutData
       return {

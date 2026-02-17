@@ -32,25 +32,7 @@ import { filterEventData } from './filters.js';
 import { getObjectCreatedAt, monotonicUlid } from './helpers.js';
 import { deleteAllHooksForRun } from './hooks-storage.js';
 import { handleLegacyEvent } from './legacy.js';
-
-/**
- * Helper function to delete all waits associated with a workflow run.
- * Called when a run reaches a terminal state.
- */
-async function deleteAllWaitsForRun(
-  basedir: string,
-  runId: string
-): Promise<void> {
-  const waitsDir = path.join(basedir, 'waits');
-  const files = await listJSONFiles(waitsDir);
-
-  for (const file of files) {
-    if (file.startsWith(`${runId}-`)) {
-      const waitPath = path.join(waitsDir, `${file}.json`);
-      await deleteJSON(waitPath);
-    }
-  }
-}
+import { deleteAllWaitsForRun } from './waits-storage.js';
 
 /**
  * Creates the events storage implementation using the filesystem.
