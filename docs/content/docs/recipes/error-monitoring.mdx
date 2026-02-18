@@ -1,0 +1,395 @@
+---
+title: Error Monitoring & Alerting
+description: Build workflows that triage errors, process alerts, and dispatch notifications across channels.
+type: guide
+summary: Classify errors by severity, deduplicate alerts, and fan out notifications to multiple channels.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+  - /docs/foundations/errors-and-retries
+related:
+  - /docs/foundations/hooks
+  - /docs/foundations/common-patterns
+  - /docs/api-reference/workflow/create-webhook
+---
+
+This guide covers building workflows whose purpose is to monitor external systems, classify errors, and route alerts. For handling errors that occur _inside_ your own workflows, see [Errors & Retrying](/docs/foundations/errors-and-retries).
+
+Error monitoring is one of the most common workflow use cases. A typical pipeline receives error events from external systems, classifies them, deduplicates repeat occurrences, and dispatches notifications to the right channels. Workflows are a natural fit because they survive failures, retry flaky notification APIs, and maintain state across long-running monitoring loops.
+
+## Error Triage Workflow
+
+The simplest error monitoring workflow receives an error event via webhook, classifies it by severity, and routes it to the appropriate handler.
+
+```typescript title="workflows/error-triage.ts" lineNumbers
+import { createWebhook } from "workflow";
+
+interface ErrorEvent {
+  source: string;
+  message: string;
+  stack?: string;
+  metadata?: Record<string, unknown>;
+}
+
+async function classifyError(event: ErrorEvent) {
+  "use step";
+
+  // Classify based on error patterns
+  if (event.message.includes("FATAL") || event.message.includes("OOM")) {
+    return "critical" as const;
+  }
+  if (event.message.includes("timeout") || event.message.includes("rate limit")) {
+    return "warning" as const;
+  }
+  return "info" as const;
+}
+
+async function handleCritical(event: ErrorEvent) { // [!code highlight]
+  "use step";
+  // Page on-call, create incident ticket, etc.
+  console.log(`CRITICAL: ${event.source} - ${event.message}`);
+}
+
+async function handleWarning(event: ErrorEvent) {
+  "use step";
+  // Post to team Slack channel
+  console.log(`WARNING: ${event.source} - ${event.message}`);
+}
+
+async function handleInfo(event: ErrorEvent) {
+  "use step";
+  // Log for later review
+  console.log(`INFO: ${event.source} - ${event.message}`);
+}
+
+export async function errorTriageWorkflow() {
+  "use workflow";
+
+  const webhook = createWebhook(); // [!code highlight]
+  console.log("Listening for errors at:", webhook.url);
+
+  for await (const request of webhook) { // [!code highlight]
+    const event: ErrorEvent = await request.json();
+    const severity = await classifyError(event);
+
+    if (severity === "critical") {
+      await handleCritical(event);
+    } else if (severity === "warning") {
+      await handleWarning(event);
+    } else {
+      await handleInfo(event);
+    }
+  }
+}
+```
+
+The workflow creates a persistent webhook endpoint. External systems POST error events to it. Each event is classified in a step (with full Node.js access for pattern matching, database lookups, or ML inference), then routed to the correct handler. Because the webhook uses `for await...of`, the workflow stays alive and processes errors as they arrive.
+
+<Callout type="info">
+Webhooks implement `AsyncIterable`, so a single workflow instance can process an unlimited stream of events over time. See [Hooks & Webhooks](/docs/foundations/hooks) for details on iteration and custom tokens.
+</Callout>
+
+## Alert Processing Pipeline
+
+Real alert pipelines need deduplication. When the same error fires hundreds of times in a minute, you want one alert, not hundreds. Use custom hook tokens to route duplicate events to the same workflow instance.
+
+```typescript title="workflows/alert-pipeline.ts" lineNumbers
+import { createHook } from "workflow";
+
+interface Alert {
+  alertId: string;
+  source: string;
+  message: string;
+  timestamp: number;
+}
+
+interface EnrichedAlert extends Alert {
+  service: string;
+  owner: string;
+  runbook: string;
+}
+
+async function enrichAlert(alert: Alert): Promise<EnrichedAlert> {
+  "use step";
+
+  // Look up service metadata from your registry
+  const service = alert.source.split("/")[0];
+  return {
+    ...alert,
+    service,
+    owner: `team-${service}`,
+    runbook: `https://runbooks.internal/${service}/${alert.alertId}`,
+  };
+}
+
+async function dispatchNotification(alert: EnrichedAlert) {
+  "use step";
+
+  await fetch("https://hooks.slack.com/services/...", {
+    method: "POST",
+    body: JSON.stringify({
+      text: `[${alert.source}] ${alert.message}\nOwner: ${alert.owner}\nRunbook: ${alert.runbook}`,
+    }),
+  });
+}
+
+export async function alertPipelineWorkflow(alertId: string) { // [!code highlight]
+  "use workflow";
+
+  // Custom token ensures duplicate alerts route here
+  const hook = createHook<Alert>({ token: `alert:${alertId}` }); // [!code highlight]
+
+  // Process the first alert
+  const alert = await hook;
+  const enriched = await enrichAlert(alert);
+  await dispatchNotification(enriched);
+}
+```
+
+The key pattern here is the custom hook token. When your ingestion layer receives an alert, it can use [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) to send the payload to a workflow keyed by `alertId`. If the workflow is already running for that alert, the event is delivered to the existing instance. This gives you natural deduplication: one workflow per unique alert.
+
+```typescript title="app/api/alerts/route.ts" lineNumbers
+import { start } from "workflow/api";
+import { resumeHook } from "workflow/api";
+declare function alertPipelineWorkflow(alertId: string): Promise<void>; // @setup
+
+export async function POST(request: Request) {
+  const alert = await request.json();
+
+  // Start workflow for new alerts, or deliver to existing one
+  await start(alertPipelineWorkflow, [alert.alertId]); // [!code highlight]
+  await resumeHook(`alert:${alert.alertId}`, alert); // [!code highlight]
+
+  return new Response("OK");
+}
+```
+
+## Real-Time Alert Dispatch
+
+When a critical event needs immediate attention, fan out notifications to multiple channels in parallel using `Promise.all`. Each channel is its own step, so a failure in one (e.g., Slack API is down) does not block the others, and each is retried independently.
+
+```typescript title="workflows/instant-alert.ts" lineNumbers
+import { createWebhook } from "workflow";
+
+interface CriticalEvent {
+  title: string;
+  description: string;
+  severity: "P1" | "P2";
+  source: string;
+}
+
+async function sendSlackAlert(event: CriticalEvent) {
+  "use step";
+
+  await fetch("https://hooks.slack.com/services/...", {
+    method: "POST",
+    body: JSON.stringify({
+      text: `*${event.severity}: ${event.title}*\n${event.description}`,
+    }),
+  });
+}
+
+async function sendEmailAlert(event: CriticalEvent) {
+  "use step";
+
+  await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.SENDGRID_KEY}` },
+    body: JSON.stringify({
+      to: "oncall@example.com",
+      subject: `${event.severity}: ${event.title}`,
+      text: event.description,
+    }),
+  });
+}
+
+async function createPagerDutyIncident(event: CriticalEvent) {
+  "use step";
+
+  await fetch("https://events.pagerduty.com/v2/enqueue", {
+    method: "POST",
+    body: JSON.stringify({
+      routing_key: process.env.PAGERDUTY_KEY,
+      event_action: "trigger",
+      payload: {
+        summary: `${event.severity}: ${event.title}`,
+        source: event.source,
+        severity: event.severity === "P1" ? "critical" : "error",
+      },
+    }),
+  });
+}
+
+export async function instantAlertWorkflow() {
+  "use workflow";
+
+  const webhook = createWebhook();
+
+  const request = await webhook;
+  const event: CriticalEvent = await request.json();
+
+  // Fan out to all channels in parallel
+  await Promise.all([ // [!code highlight]
+    sendSlackAlert(event), // [!code highlight]
+    sendEmailAlert(event), // [!code highlight]
+    createPagerDutyIncident(event), // [!code highlight]
+  ]); // [!code highlight]
+}
+```
+
+Because each notification is a separate step, the framework retries failures independently. If PagerDuty returns a 500, Slack and email still succeed, and the PagerDuty step retries on its own schedule.
+
+## External System Monitoring
+
+Not all monitoring is event-driven. Sometimes you need to poll external systems on a schedule. Use [`sleep()`](/docs/api-reference/workflow/sleep) in a loop to create a durable polling workflow that survives restarts and cold starts.
+
+```typescript title="workflows/monitor-service.ts" lineNumbers
+import { sleep } from "workflow";
+
+interface ServiceStatus {
+  healthy: boolean;
+  latency: number;
+  errorRate: number;
+}
+
+async function checkServiceHealth(endpoint: string): Promise<ServiceStatus> {
+  "use step";
+
+  const start = Date.now();
+  const response = await fetch(endpoint);
+  const latency = Date.now() - start;
+
+  return {
+    healthy: response.ok,
+    latency,
+    errorRate: response.ok ? 0 : 1,
+  };
+}
+
+async function sendAlert(service: string, status: ServiceStatus) {
+  "use step";
+
+  await fetch("https://hooks.slack.com/services/...", {
+    method: "POST",
+    body: JSON.stringify({
+      text: `Service ${service} is unhealthy. Latency: ${status.latency}ms`,
+    }),
+  });
+}
+
+export async function monitorServiceWorkflow(
+  service: string,
+  endpoint: string
+) {
+  "use workflow";
+
+  let consecutiveFailures = 0;
+
+  while (true) { // [!code highlight]
+    const status = await checkServiceHealth(endpoint);
+
+    if (!status.healthy) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        await sendAlert(service, status);
+        consecutiveFailures = 0;
+      }
+    } else {
+      consecutiveFailures = 0;
+    }
+
+    await sleep("5m"); // [!code highlight]
+  }
+}
+```
+
+The `sleep("5m")` call is durable - if the workflow process restarts during the sleep, it resumes at the correct time without re-running previous checks. The `while (true)` loop runs indefinitely, checking the service every 5 minutes and alerting after 3 consecutive failures.
+
+<Callout type="info">
+`sleep()` accepts duration strings like `"5m"`, `"1h"`, or `"30s"`, as well as `Date` objects for sleeping until a specific time. See the [`sleep()` API reference](/docs/api-reference/workflow/sleep) for all supported formats.
+</Callout>
+
+## Content Security Scanning
+
+Workflows can also monitor content against security or policy rules. This pattern receives content via webhook, scans it in a step, and takes action on violations.
+
+```typescript title="workflows/content-security.ts" lineNumbers
+import { createWebhook } from "workflow";
+
+interface ContentEvent {
+  contentId: string;
+  body: string;
+  author: string;
+  type: "post" | "comment" | "message";
+}
+
+interface ScanResult {
+  passed: boolean;
+  violations: string[];
+}
+
+async function scanContent(event: ContentEvent): Promise<ScanResult> {
+  "use step";
+
+  const violations: string[] = [];
+
+  // Check against policy rules
+  const blockedPatterns = [/credential/i, /api[_-]?key/i, /password\s*=/i];
+  for (const pattern of blockedPatterns) {
+    if (pattern.test(event.body)) {
+      violations.push(`Blocked pattern: ${pattern.source}`);
+    }
+  }
+
+  return { passed: violations.length === 0, violations };
+}
+
+async function quarantineContent(contentId: string, violations: string[]) {
+  "use step";
+
+  // Move content to review queue
+  await fetch("https://api.internal/content/quarantine", {
+    method: "POST",
+    body: JSON.stringify({ contentId, violations }),
+  });
+}
+
+async function notifySecurityTeam(event: ContentEvent, result: ScanResult) {
+  "use step";
+
+  await fetch("https://hooks.slack.com/services/...", {
+    method: "POST",
+    body: JSON.stringify({
+      text: `Content violation in ${event.type} by ${event.author}: ${result.violations.join(", ")}`,
+    }),
+  });
+}
+
+export async function contentSecurityWorkflow() {
+  "use workflow";
+
+  const webhook = createWebhook();
+
+  for await (const request of webhook) {
+    const event: ContentEvent = await request.json();
+    const result = await scanContent(event); // [!code highlight]
+
+    if (!result.passed) { // [!code highlight]
+      await Promise.all([
+        quarantineContent(event.contentId, result.violations),
+        notifySecurityTeam(event, result),
+      ]);
+    }
+  }
+}
+```
+
+The scanning step has full Node.js access, so it can call external scanning APIs, run regex-based rules, or invoke ML models. When a violation is found, the workflow quarantines the content and notifies the security team in parallel.
+
+## Related Documentation
+
+- [Errors & Retrying](/docs/foundations/errors-and-retries) - Handle errors inside your own steps with retry semantics
+- [Hooks & Webhooks](/docs/foundations/hooks) - Deep dive on hooks, webhooks, and custom tokens
+- [Common Patterns](/docs/foundations/common-patterns) - Sequential, parallel, timeout, and composition patterns
+- [`createWebhook()` API Reference](/docs/api-reference/workflow/create-webhook) - Full webhook API documentation
+- [`createHook()` API Reference](/docs/api-reference/workflow/create-hook) - Full hook API documentation
+- [`sleep()` API Reference](/docs/api-reference/workflow/sleep) - Sleep and scheduling API
