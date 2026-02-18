@@ -161,26 +161,24 @@ export async function approvalWorkflow(documentId: string) {
 
 ```typescript title="workflows/approval.test.ts" lineNumbers
 import { describe, it, expect } from "vitest";
-import { start, resumeHook } from "workflow/api";
+import { start, resumeHook, getHookByToken } from "workflow/api";
 import { approvalWorkflow } from "./approval";
 
 describe("approvalWorkflow", () => {
   it("resumes with approval data", async () => {
     const run = await start(approvalWorkflow, ["doc-456"]);
 
-    // Use the deterministic token to resume the hook directly
-    const token = "approval:doc-456"; // [!code highlight]
+    const token = "approval:doc-456";
 
-    // Retry until the hook is registered (workflow needs time to start)
-    let delivered = false;
-    for (let i = 0; i < 10 && !delivered; i++) {
-      try {
-        await resumeHook(token, { approved: true, comment: "Looks good" }); // [!code highlight]
-        delivered = true;
-      } catch {
-        await new Promise((r) => setTimeout(r, 1000));
-      }
+    // Poll until the hook is registered
+    let hook;
+    for (let i = 0; i < 10 && !hook; i++) {
+      hook = await getHookByToken(token).catch(() => null); // [!code highlight]
+      if (!hook) await new Promise((r) => setTimeout(r, 1000));
     }
+
+    // Resume with the payload
+    await resumeHook(token, { approved: true, comment: "Looks good" }); // [!code highlight]
 
     const result = await run.returnValue;
     expect(result).toEqual({
@@ -296,6 +294,10 @@ describe("resilientWorkflow", () => {
 });
 ```
 
+<Callout type="info">
+Use the static `is()` method for type-safe error checking: `FatalError.is(error)` returns `true` if the error is a `FatalError`, even across module boundaries. This is more reliable than `instanceof` in bundled environments.
+</Callout>
+
 ### Testing Uncaught Failures
 
 When a workflow does not catch a step error, the run fails. Use `run.returnValue` in a catch block or check `run.status` to verify failure behavior.
@@ -304,17 +306,46 @@ When a workflow does not catch a step error, the run fails. Use `run.returnValue
 ```typescript title="workflows/unhandled.test.ts" lineNumbers
 import { describe, it, expect } from "vitest";
 import { start } from "workflow/api";
+import { WorkflowRunFailedError } from "workflow/internal/errors";
 import { unhandledErrorWorkflow } from "./unhandled";
 
 describe("unhandledErrorWorkflow", () => {
   it("fails the run when error is uncaught", async () => {
     const run = await start(unhandledErrorWorkflow, []);
 
-    // returnValue rejects when the workflow fails
-    await expect(run.returnValue).rejects.toThrow(); // [!code highlight]
+    // returnValue rejects with WorkflowRunFailedError
+    try {
+      await run.returnValue;
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(WorkflowRunFailedError.is(error)).toBe(true); // [!code highlight]
+      // The original error is available via .cause
+      expect(error.cause?.message).toContain("expected error text"); // [!code highlight]
+    }
 
     const status = await run.status;
     expect(status).toBe("failed"); // [!code highlight]
+  });
+});
+```
+
+## Testing Workflow Cancellation
+
+Test that workflows can be cancelled and that the run status reflects it.
+
+```typescript title="workflows/cancel.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { longRunningWorkflow } from "./long-running";
+
+describe("cancellation", () => {
+  it("cancels a running workflow", async () => {
+    const run = await start(longRunningWorkflow, []);
+
+    await run.cancel(); // [!code highlight]
+
+    const status = await run.status;
+    expect(status).toBe("cancelled"); // [!code highlight]
   });
 });
 ```
