@@ -21,8 +21,6 @@ This guide covers the most common data ingestion patterns, starting simple and b
 The simplest data ingestion pattern receives a file, validates it, processes it, and stores the result. Each operation is a step, so a failure in any stage retries only that stage.
 
 ```typescript title="workflows/process-file.ts" lineNumbers
-import { getWritable } from "workflow";
-
 type FileResult = {
   rowCount: number;
   errors: string[];
@@ -162,12 +160,12 @@ async function writeToStore(event: Record<string, unknown>) {
   });
 }
 
-export async function ingestEventsWorkflow(batchSize: number) { // [!code highlight]
+export async function ingestEventsWorkflow() { // [!code highlight]
   "use workflow"; // [!code highlight]
 
-  for (let i = 0; i < batchSize; i++) { // [!code highlight]
-    const webhook = createWebhook<IngestEvent>(); // [!code highlight]
-    const request = await webhook; // [!code highlight]
+  const webhook = createWebhook<IngestEvent>(); // [!code highlight]
+
+  for await (const request of webhook) { // [!code highlight]
     const event = await request.json(); // [!code highlight]
 
     const enriched = await enrichEvent(event);
@@ -176,10 +174,10 @@ export async function ingestEventsWorkflow(batchSize: number) { // [!code highli
 }
 ```
 
-Each event is processed as a pair of durable steps. If enrichment succeeds but writing fails, only the write retries - the enriched data is preserved.
+The webhook is created once and iterated with `for await`. Each incoming HTTP request resumes the workflow, and the event is processed as a pair of durable steps. If enrichment succeeds but writing fails, only the write retries - the enriched data is preserved.
 
 <Callout type="info">
-For continuous event ingestion without a fixed batch size, consider using [`createHook()`](/docs/api-reference/workflow/create-hook) with a `for await` loop. Hooks allow the workflow to receive multiple events on the same endpoint.
+Webhooks implement `AsyncIterable`, so a single webhook can receive many requests over time. Use [`createHook()`](/docs/api-reference/workflow/create-hook) instead when you have your own ingestion layer that calls `resumeHook()` directly rather than sending HTTP requests.
 </Callout>
 
 ## Email Processing

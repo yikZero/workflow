@@ -25,7 +25,7 @@ import { sleep } from "workflow";
 
 declare function fetchUpdatedContacts(since: Date): Promise<Contact[]>; // @setup
 declare function upsertContacts(contacts: Contact[]): Promise<void>; // @setup
-declare type Contact = { id: string; name: string; updatedAt: Date }; // @setup
+declare type Contact = { id: string; name: string; updatedAt: string }; // @setup
 
 export async function crmPollingSync() {
   "use workflow";

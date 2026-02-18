@@ -145,23 +145,37 @@ export async function alertPipelineWorkflow(alertId: string) { // [!code highlig
 }
 ```
 
-The key pattern here is the custom hook token. When your ingestion layer receives an alert, it can use [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) to send the payload to a workflow keyed by `alertId`. If the workflow is already running for that alert, the event is delivered to the existing instance. This gives you natural deduplication: one workflow per unique alert.
+The key pattern here is the custom hook token. When your ingestion layer receives an alert, it uses [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) to deliver the payload to the waiting workflow. The hook token `alert:${alertId}` is deterministic, so the sender does not need to know the workflow's run ID.
 
 ```typescript title="app/api/alerts/route.ts" lineNumbers
-import { start } from "workflow/api";
-import { resumeHook } from "workflow/api";
+import { start, resumeHook } from "workflow/api";
 declare function alertPipelineWorkflow(alertId: string): Promise<void>; // @setup
 
 export async function POST(request: Request) {
   const alert = await request.json();
+  const token = `alert:${alert.alertId}`;
 
-  // Start workflow for new alerts, or deliver to existing one
+  // Start the workflow first, then deliver the alert data
   await start(alertPipelineWorkflow, [alert.alertId]); // [!code highlight]
-  await resumeHook(`alert:${alert.alertId}`, alert); // [!code highlight]
 
-  return new Response("OK");
+  // The hook may not be registered yet — retry until it is
+  let delivered = false;
+  for (let i = 0; i < 5 && !delivered; i++) {
+    try {
+      await resumeHook(token, alert); // [!code highlight]
+      delivered = true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+
+  return Response.json({ delivered });
 }
 ```
+
+<Callout type="info">
+The workflow needs time to register the hook after `start()` returns. The retry loop above handles this race. For high-throughput scenarios, consider using [`createWebhook()`](/docs/api-reference/workflow/create-webhook) instead, which provides an HTTP endpoint that handles delivery automatically.
+</Callout>
 
 ## Real-Time Alert Dispatch
 

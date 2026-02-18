@@ -82,7 +82,7 @@ Key points:
 GitHub sends webhooks for pushes, pull requests, issues, and other repository events. Build a workflow that receives these events, verifies the signature, and routes to the appropriate handler.
 
 ```typescript title="workflows/github-webhook.ts" lineNumbers
-import { createWebhook, type RequestWithResponse } from "workflow";
+import { createWebhook, FatalError, type RequestWithResponse } from "workflow";
 
 interface GitHubEvent {
   action?: string;
@@ -92,11 +92,11 @@ interface GitHubEvent {
 }
 
 async function verifyAndParse(
-  request: RequestWithResponse,
-  secret: string
+  request: RequestWithResponse
 ): Promise<{ eventType: string; payload: GitHubEvent }> {
   "use step"; // [!code highlight]
 
+  const secret = process.env.GITHUB_WEBHOOK_SECRET!; // [!code highlight]
   const signature = request.headers.get("x-hub-signature-256") ?? "";
   const body = await request.text();
 
@@ -115,7 +115,8 @@ async function verifyAndParse(
     .join("");
 
   if (signature !== expected) {
-    throw new Error("Invalid GitHub webhook signature");
+    await request.respondWith(new Response("Unauthorized", { status: 401 }));
+    throw new FatalError("Invalid GitHub webhook signature"); // [!code highlight]
   }
 
   await request.respondWith(new Response("OK", { status: 200 }));
@@ -145,16 +146,15 @@ async function handleIssue(payload: GitHubEvent) {
 export async function githubWebhookHandler(repoName: string) { // [!code highlight]
   "use workflow"; // [!code highlight]
 
+  // Replace slashes to keep tokens URL-safe
+  const safeRepoName = repoName.replace("/", ":"); // [!code highlight]
   const webhook = createWebhook({
-    token: `github:${repoName}`,
+    token: `github:${safeRepoName}`,
     respondWith: "manual",
   });
 
   for await (const request of webhook) {
-    const { eventType, payload } = await verifyAndParse(
-      request,
-      process.env.GITHUB_WEBHOOK_SECRET!
-    );
+    const { eventType, payload } = await verifyAndParse(request);
 
     switch (eventType) { // [!code highlight]
       case "push": // [!code highlight]

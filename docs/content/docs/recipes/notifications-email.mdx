@@ -127,17 +127,17 @@ The webhook URL is automatically routed by the framework. When the user clicks t
 When a form submission triggers multiple actions - notifying the team, creating a CRM record, confirming to the submitter - each action is a separate step. If one fails, the others still complete and the failed step retries independently.
 
 ```typescript title="workflows/contact-form.ts" lineNumbers
-declare function notifyTeam(submission: FormData): Promise<void>; // @setup
-declare function createCrmRecord(submission: FormData): Promise<string>; // @setup
+declare function notifyTeam(submission: ContactSubmission): Promise<void>; // @setup
+declare function createCrmRecord(submission: ContactSubmission): Promise<string>; // @setup
 declare function sendConfirmationEmail(email: string, crmId: string): Promise<void>; // @setup
 
-interface FormData {
+interface ContactSubmission {
   name: string;
   email: string;
   message: string;
 }
 
-export async function contactFormWorkflow(submission: FormData) {
+export async function contactFormWorkflow(submission: ContactSubmission) {
   "use workflow";
 
   // Notify team and create CRM record in parallel
@@ -157,13 +157,13 @@ export async function contactFormWorkflow(submission: FormData) {
 declare const emailClient: { send(opts: Record<string, unknown>): Promise<void> }; // @setup
 declare const crm: { create(data: Record<string, string>): Promise<{ id: string }> }; // @setup
 
-interface FormData {
+interface ContactSubmission {
   name: string;
   email: string;
   message: string;
 }
 
-export async function notifyTeam(submission: FormData) {
+export async function notifyTeam(submission: ContactSubmission) {
   "use step";
 
   await emailClient.send({
@@ -173,7 +173,7 @@ export async function notifyTeam(submission: FormData) {
   });
 }
 
-export async function createCrmRecord(submission: FormData) {
+export async function createCrmRecord(submission: ContactSubmission) {
   "use step";
 
   const record = await crm.create({
