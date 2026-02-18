@@ -17,7 +17,7 @@ Testing workflows requires thinking about two levels: testing individual step fu
 When a step function is called outside a workflow context, the `"use step"` directive is a no-op. The function runs as a normal async function in your test process with full Node.js access. This means you can test step functions directly using standard tools like [Vitest](https://vitest.dev/).
 
 ```typescript title="workflows/steps.ts" lineNumbers
-async function fetchUser(userId: string) {
+export async function fetchUser(userId: string) { // [!code highlight]
   "use step";
 
   const response = await fetch(`https://api.example.com/users/${userId}`);
@@ -27,7 +27,7 @@ async function fetchUser(userId: string) {
   return response.json();
 }
 
-async function formatName(first: string, last: string) {
+export async function formatName(first: string, last: string) { // [!code highlight]
   "use step";
 
   return `${first.trim()} ${last.trim()}`;
@@ -161,19 +161,26 @@ export async function approvalWorkflow(documentId: string) {
 
 ```typescript title="workflows/approval.test.ts" lineNumbers
 import { describe, it, expect } from "vitest";
-import { start, resumeHook, getHookByToken } from "workflow/api";
+import { start, resumeHook } from "workflow/api";
 import { approvalWorkflow } from "./approval";
 
 describe("approvalWorkflow", () => {
   it("resumes with approval data", async () => {
     const run = await start(approvalWorkflow, ["doc-456"]);
 
-    // Wait for the hook to register
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Use the deterministic token to resume the hook directly
+    const token = "approval:doc-456"; // [!code highlight]
 
-    // Look up and resume the hook
-    const hook = await getHookByToken("approval:doc-456"); // [!code highlight]
-    await resumeHook(hook, { approved: true, comment: "Looks good" }); // [!code highlight]
+    // Retry until the hook is registered (workflow needs time to start)
+    let delivered = false;
+    for (let i = 0; i < 10 && !delivered; i++) {
+      try {
+        await resumeHook(token, { approved: true, comment: "Looks good" }); // [!code highlight]
+        delivered = true;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
 
     const result = await run.returnValue;
     expect(result).toEqual({
