@@ -1,0 +1,313 @@
+---
+title: Notifications & Email
+description: Build durable notification and email workflows with drip campaigns, verification flows, fan-out delivery, and scheduled sends.
+type: guide
+summary: Patterns for email sequences, verification flows, contact forms, fan-out, and scheduled notifications.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/foundations/common-patterns
+  - /docs/api-reference/workflow/sleep
+  - /docs/foundations/hooks
+---
+
+Workflows are a natural fit for notification systems. They survive failures, support delays with [`sleep()`](/docs/api-reference/workflow/sleep), and handle complex routing logic durably. A failed email send retries automatically. A drip campaign that spans days or weeks runs without consuming compute while waiting.
+
+This guide covers the most common notification and email patterns.
+
+## Email Onboarding Sequence
+
+A drip campaign sends a series of emails spaced out over time. Each email send is a step with automatic retry, and `sleep()` pauses the workflow without consuming resources between sends.
+
+```typescript title="workflows/onboarding.ts" lineNumbers
+import { sleep } from "workflow";
+
+declare function sendWelcomeEmail(userId: string): Promise<void>; // @setup
+declare function sendTipsEmail(userId: string): Promise<void>; // @setup
+declare function sendActivationPrompt(userId: string): Promise<void>; // @setup
+
+export async function onboardingEmailWorkflow(userId: string) {
+  "use workflow";
+
+  await sendWelcomeEmail(userId);
+
+  await sleep("1 day"); // [!code highlight]
+  await sendTipsEmail(userId);
+
+  await sleep("3 days"); // [!code highlight]
+  await sendActivationPrompt(userId);
+}
+```
+
+```typescript title="workflows/onboarding-steps.ts" lineNumbers
+import { FatalError } from "workflow";
+
+declare const db: { getUser(id: string): Promise<{ name: string; email: string }> }; // @setup
+declare const emailClient: { send(opts: { to: string; template: string; data: Record<string, string> }): Promise<void> }; // @setup
+
+export async function sendWelcomeEmail(userId: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  if (!user.email) throw new FatalError("User has no email address"); // [!code highlight]
+
+  await emailClient.send({
+    to: user.email,
+    template: "welcome",
+    data: { name: user.name },
+  });
+}
+
+export async function sendTipsEmail(userId: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  await emailClient.send({
+    to: user.email,
+    template: "tips",
+    data: { name: user.name },
+  });
+}
+
+export async function sendActivationPrompt(userId: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  await emailClient.send({
+    to: user.email,
+    template: "activation",
+    data: { name: user.name },
+  });
+}
+```
+
+The workflow sleeps for real calendar time between sends. If the process restarts during a sleep, the workflow resumes at the correct point. Use [`FatalError`](/docs/api-reference/workflow/fatal-error) to skip retries for permanent failures like a missing email address.
+
+<Callout type="info">
+Email sends are side effects. Make sure your email provider supports idempotency keys or deduplication to avoid sending duplicate emails on retry. See [Idempotency](/docs/foundations/idempotency) for more details.
+</Callout>
+
+## Email Verification Flow
+
+A common pattern is sending a verification email, then waiting for the user to click a link. Use [`createWebhook()`](/docs/api-reference/workflow/create-webhook) to generate a unique URL, then `Promise.race` with `sleep()` to set an expiration deadline.
+
+```typescript title="workflows/verify-email.ts" lineNumbers
+import { sleep, createWebhook } from "workflow";
+
+declare function sendVerificationEmail(email: string, verifyUrl: string): Promise<void>; // @setup
+declare function markEmailVerified(userId: string): Promise<void>; // @setup
+
+export async function emailVerificationWorkflow(userId: string, email: string) {
+  "use workflow";
+
+  const webhook = createWebhook();
+
+  // Send the verification link
+  await sendVerificationEmail(email, webhook.url); // [!code highlight]
+
+  // Wait for the click or expire after 24 hours
+  const result = await Promise.race([ // [!code highlight]
+    webhook.then(() => "verified" as const), // [!code highlight]
+    sleep("1 day").then(() => "expired" as const), // [!code highlight]
+  ]); // [!code highlight]
+
+  if (result === "verified") {
+    await markEmailVerified(userId);
+    return { status: "verified" };
+  }
+
+  return { status: "expired" };
+}
+```
+
+The webhook URL is automatically routed by the framework. When the user clicks the link, the webhook resolves and the workflow continues. If 24 hours pass first, the sleep wins the race and the workflow returns an expired status.
+
+## Contact Form Processing
+
+When a form submission triggers multiple actions - notifying the team, creating a CRM record, confirming to the submitter - each action is a separate step. If one fails, the others still complete and the failed step retries independently.
+
+```typescript title="workflows/contact-form.ts" lineNumbers
+declare function notifyTeam(submission: FormData): Promise<void>; // @setup
+declare function createCrmRecord(submission: FormData): Promise<string>; // @setup
+declare function sendConfirmationEmail(email: string, crmId: string): Promise<void>; // @setup
+
+interface FormData {
+  name: string;
+  email: string;
+  message: string;
+}
+
+export async function contactFormWorkflow(submission: FormData) {
+  "use workflow";
+
+  // Notify team and create CRM record in parallel
+  const [, crmId] = await Promise.all([ // [!code highlight]
+    notifyTeam(submission), // [!code highlight]
+    createCrmRecord(submission), // [!code highlight]
+  ]); // [!code highlight]
+
+  // Confirm to the submitter with the CRM reference
+  await sendConfirmationEmail(submission.email, crmId);
+
+  return { crmId, status: "processed" };
+}
+```
+
+```typescript title="workflows/contact-form-steps.ts" lineNumbers
+declare const emailClient: { send(opts: Record<string, unknown>): Promise<void> }; // @setup
+declare const crm: { create(data: Record<string, string>): Promise<{ id: string }> }; // @setup
+
+interface FormData {
+  name: string;
+  email: string;
+  message: string;
+}
+
+export async function notifyTeam(submission: FormData) {
+  "use step";
+
+  await emailClient.send({
+    to: "team@example.com",
+    subject: `New contact: ${submission.name}`,
+    body: submission.message,
+  });
+}
+
+export async function createCrmRecord(submission: FormData) {
+  "use step";
+
+  const record = await crm.create({
+    name: submission.name,
+    email: submission.email,
+    message: submission.message,
+  });
+
+  return record.id;
+}
+
+export async function sendConfirmationEmail(email: string, crmId: string) {
+  "use step";
+
+  await emailClient.send({
+    to: email,
+    template: "contact-confirmation",
+    data: { referenceId: crmId },
+  });
+}
+```
+
+## Notification Fan-Out
+
+When you need to send the same notification across multiple channels - email, Slack, push notifications - use `Promise.all` with a separate step for each channel. Each channel retries independently if it fails.
+
+```typescript title="workflows/notify.ts" lineNumbers
+declare function sendEmailNotification(userId: string, message: string): Promise<void>; // @setup
+declare function sendSlackNotification(userId: string, message: string): Promise<void>; // @setup
+declare function sendPushNotification(userId: string, message: string): Promise<void>; // @setup
+
+export async function notifyAllChannelsWorkflow(userId: string, message: string) {
+  "use workflow";
+
+  await Promise.all([ // [!code highlight]
+    sendEmailNotification(userId, message), // [!code highlight]
+    sendSlackNotification(userId, message), // [!code highlight]
+    sendPushNotification(userId, message), // [!code highlight]
+  ]); // [!code highlight]
+}
+```
+
+```typescript title="workflows/notify-steps.ts" lineNumbers
+declare const db: { getUser(id: string): Promise<{ name: string; email: string; slackId?: string; pushToken?: string }> }; // @setup
+declare const emailClient: { send(opts: Record<string, unknown>): Promise<void> }; // @setup
+declare const slack: { postMessage(opts: { channel: string; text: string }): Promise<void> }; // @setup
+declare const pushService: { send(opts: { token: string; title: string; body: string }): Promise<void> }; // @setup
+
+export async function sendEmailNotification(userId: string, message: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  await emailClient.send({
+    to: user.email,
+    subject: "New Notification",
+    body: message,
+  });
+}
+
+export async function sendSlackNotification(userId: string, message: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  if (!user.slackId) return; // Skip if no Slack configured
+
+  await slack.postMessage({
+    channel: user.slackId,
+    text: message,
+  });
+}
+
+export async function sendPushNotification(userId: string, message: string) {
+  "use step";
+
+  const user = await db.getUser(userId);
+  if (!user.pushToken) return; // Skip if no push token
+
+  await pushService.send({
+    token: user.pushToken,
+    title: "Notification",
+    body: message,
+  });
+}
+```
+
+To fan out to many recipients, map over the list and run each send as a step:
+
+```typescript title="workflows/broadcast.ts" lineNumbers
+declare function sendNotification(userId: string, message: string): Promise<void>; // @setup
+
+export async function broadcastWorkflow(userIds: string[], message: string) {
+  "use workflow";
+
+  await Promise.all( // [!code highlight]
+    userIds.map((userId) => sendNotification(userId, message)) // [!code highlight]
+  ); // [!code highlight]
+}
+```
+
+## Scheduled Notifications
+
+Use `sleep()` with a `Date` to send notifications at a specific future time. The workflow suspends until that moment arrives.
+
+```typescript title="workflows/scheduled-reminder.ts" lineNumbers
+import { sleep } from "workflow";
+
+declare function sendReminderEmail(userId: string, eventName: string): Promise<void>; // @setup
+
+export async function scheduledReminderWorkflow(
+  userId: string,
+  eventName: string,
+  eventDate: Date
+) {
+  "use workflow";
+
+  // Calculate reminder time: 1 day before the event
+  const reminderDate = new Date(eventDate.getTime() - 24 * 60 * 60 * 1000);
+
+  await sleep(reminderDate); // [!code highlight]
+  await sendReminderEmail(userId, eventName);
+
+  return { status: "reminder_sent", sentAt: reminderDate };
+}
+```
+
+<Callout type="info">
+When you pass a `Date` to `sleep()`, the workflow suspends until that exact moment. If the date is in the past, `sleep()` resolves immediately. This is useful for scheduling reminders, deadline notifications, or any time-based trigger.
+</Callout>
+
+## Related Documentation
+
+- [Common Patterns](/docs/foundations/common-patterns) - Sequential, parallel, and timeout patterns
+- [Hooks & Webhooks](/docs/foundations/hooks) - Pause and resume workflows with external data
+- [Errors & Retrying](/docs/foundations/errors-and-retries) - Customize retry behavior for steps
+- [Idempotency](/docs/foundations/idempotency) - Ensure side effects run exactly once
+- [`sleep()` API Reference](/docs/api-reference/workflow/sleep) - Sleep function details
+- [`createWebhook()` API Reference](/docs/api-reference/workflow/create-webhook) - Webhook creation details
