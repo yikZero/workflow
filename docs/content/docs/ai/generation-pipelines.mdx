@@ -22,13 +22,13 @@ Process multiple items through an AI pipeline by combining `Promise.all` with st
 
 ```typescript title="workflows/batch-generate.ts" lineNumbers
 import { generateText } from "ai";
-declare function getModel(): Parameters<typeof generateText>[0]["model"]; // @setup
+import { openai } from "@workflow/ai/openai"; // [!code highlight]
 
 async function generateContent(prompt: string) {
   "use step";
 
   const { text } = await generateText({ // [!code highlight]
-    model: getModel(),
+    model: openai("gpt-4o"),
     prompt,
   });
 
@@ -53,7 +53,7 @@ Each call to `generateContent` runs as an independent step. If one fails, it ret
 For workflows that call third-party generation services, use [`getWritable()`](/docs/api-reference/workflow/get-writable) to stream progress updates back to the client while the generation runs.
 
 ```typescript title="workflows/image-generate.ts" lineNumbers
-import { getWritable } from "workflow";
+import { getWritable, getStepMetadata } from "workflow";
 
 type ProgressUpdate = {
   status: string;
@@ -63,6 +63,7 @@ type ProgressUpdate = {
 async function generateImage(prompt: string) {
   "use step";
 
+  const { stepId } = getStepMetadata(); // [!code highlight]
   const writable = getWritable<ProgressUpdate>(); // [!code highlight]
   const writer = writable.getWriter();
 
@@ -73,7 +74,7 @@ async function generateImage(prompt: string) {
     const response = await fetch("https://api.example.com/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, requestId: stepId }), // [!code highlight]
     });
     const { jobId } = await response.json() as { jobId: string };
 
@@ -109,13 +110,13 @@ Chain AI steps to build processing pipelines where each stage transforms the out
 
 ```typescript title="workflows/analyze-pipeline.ts" lineNumbers
 import { generateText } from "ai";
-declare function getModel(): Parameters<typeof generateText>[0]["model"]; // @setup
+import { openai } from "@workflow/ai/openai"; // [!code highlight]
 
 async function extractEntities(text: string) {
   "use step";
 
   const { text: entities } = await generateText({
-    model: getModel(),
+    model: openai("gpt-4o"),
     system: "Extract all named entities from the text. Return as JSON array.",
     prompt: text,
   });
@@ -127,7 +128,7 @@ async function analyzeSentiment(text: string) {
   "use step";
 
   const { text: sentiment } = await generateText({
-    model: getModel(),
+    model: openai("gpt-4o"),
     system: "Analyze the sentiment. Return: positive, negative, or neutral.",
     prompt: text,
   });
@@ -143,7 +144,7 @@ async function generateSummary(
   "use step";
 
   const { text: summary } = await generateText({
-    model: getModel(),
+    model: openai("gpt-4o"),
     system: "Write a brief summary incorporating the extracted entities and sentiment analysis.",
     prompt: `Text: ${text}\nEntities: ${entities.join(", ")}\nSentiment: ${sentiment}`,
   });
