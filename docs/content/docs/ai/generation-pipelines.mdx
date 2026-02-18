@@ -66,29 +66,31 @@ async function generateImage(prompt: string) {
   const writable = getWritable<ProgressUpdate>(); // [!code highlight]
   const writer = writable.getWriter();
 
-  await writer.write({ status: "Submitting generation request..." });
+  try {
+    await writer.write({ status: "Submitting generation request..." });
 
-  // Call your image generation service
-  const response = await fetch("https://api.example.com/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
-  const { jobId } = await response.json() as { jobId: string };
+    // Call your image generation service
+    const response = await fetch("https://api.example.com/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    const { jobId } = await response.json() as { jobId: string };
 
-  // Poll for completion
-  let result: { status: string; url?: string } | undefined;
-  while (!result?.url) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const poll = await fetch(`https://api.example.com/status/${jobId}`);
-    result = await poll.json() as { status: string; url?: string };
-    await writer.write({ status: `Generation ${result.status}...` }); // [!code highlight]
+    // Poll for completion
+    let result: { status: string; url?: string } | undefined;
+    while (!result?.url) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const poll = await fetch(`https://api.example.com/status/${jobId}`);
+      result = await poll.json() as { status: string; url?: string };
+      await writer.write({ status: `Generation ${result.status}...` }); // [!code highlight]
+    }
+
+    await writer.write({ status: "complete", imageUrl: result.url }); // [!code highlight]
+    return result.url;
+  } finally {
+    writer.releaseLock(); // [!code highlight]
   }
-
-  await writer.write({ status: "complete", imageUrl: result.url }); // [!code highlight]
-  writer.releaseLock();
-
-  return result.url;
 }
 
 export async function imageGenerationWorkflow(prompt: string) {
@@ -226,22 +228,25 @@ async function processItem(item: string, index: number, total: number) {
   const writable = getWritable<GenerationProgress>();
   const writer = writable.getWriter();
 
-  // Report progress before processing
-  await writer.write({ // [!code highlight]
-    completed: index,
-    total,
-    currentItem: item,
-  });
+  try {
+    // Report progress before processing
+    await writer.write({ // [!code highlight]
+      completed: index,
+      total,
+      currentItem: item,
+    });
 
-  // Do the actual work
-  const result = await fetch("https://api.example.com/process", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item }),
-  });
+    // Do the actual work
+    const result = await fetch("https://api.example.com/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item }),
+    });
 
-  writer.releaseLock();
-  return result.json();
+    return result.json();
+  } finally {
+    writer.releaseLock(); // [!code highlight]
+  }
 }
 
 async function closeProgressStream() {
