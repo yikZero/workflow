@@ -110,7 +110,7 @@ export async function endOfMonthReportWorkflow(year: number, monthNumber: number
 Periodic health monitoring is a natural fit for durable workflows. The workflow checks a service, takes action if something is wrong, and sleeps before checking again.
 
 ```typescript title="workflows/health-check.ts" lineNumbers
-import { sleep } from "workflow";
+import { sleep, FatalError } from "workflow";
 declare function checkServiceHealth(serviceUrl: string): Promise<{ healthy: boolean; latencyMs: number }>; // @setup
 declare function sendAlert(serviceUrl: string, latencyMs: number): Promise<void>; // @setup
 declare function restartService(serviceUrl: string): Promise<void>; // @setup
@@ -128,9 +128,12 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 
       await sendAlert(serviceUrl, status.latencyMs);
 
+      if (consecutiveFailures >= 10) { // [!code highlight]
+        throw new FatalError(`${serviceUrl} unrecoverable after 10 consecutive failures`); // [!code highlight]
+      }
+
       if (consecutiveFailures >= 3) { // [!code highlight]
         await restartService(serviceUrl); // [!code highlight]
-        consecutiveFailures = 0;
       }
     } else {
       consecutiveFailures = 0;
@@ -141,7 +144,7 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 }
 ```
 
-The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart. All of this state survives server restarts because the workflow is durable.
+The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart. After ten consecutive failures, a `FatalError` permanently stops the workflow to prevent infinite restart loops. All of this state survives server restarts because the workflow is durable.
 
 ## Cron-Like Dispatching
 
@@ -178,6 +181,8 @@ import { start } from "workflow/api";
 export async function triggerDailyReport() {
   "use step";
 
+  // stepId is stable across retries — use it if the child workflow
+  // needs deduplication (e.g., as an idempotency key for external APIs)
   const run = await start(dailyReportWorkflow, []); // [!code highlight]
   return run.runId;
 }
@@ -185,6 +190,8 @@ export async function triggerDailyReport() {
 export async function triggerCleanup() {
   "use step";
 
+  // stepId is stable across retries — use it if the child workflow
+  // needs deduplication (e.g., as an idempotency key for external APIs)
   const run = await start(cleanupWorkflow, []);
   return run.runId;
 }
@@ -244,6 +251,10 @@ export async function POST() {
 ```
 
 The custom token `"stop-recurring-job"` lets external code address the hook without needing to know the workflow's run ID. See [Custom Tokens for Deterministic Hooks](/docs/foundations/hooks#custom-tokens-for-deterministic-hooks) for more on this pattern.
+
+<Callout type="info">
+If you don't need to pass data when stopping the workflow, you can cancel a run directly using the `Run` object from [`start()`](/docs/api-reference/workflow-api/start): `await run.cancel()`. The hook-based approach above is more flexible since it lets the workflow receive a reason or other data before stopping.
+</Callout>
 
 ## Related Documentation
 
