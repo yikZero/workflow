@@ -1,0 +1,252 @@
+---
+title: Scheduling & Cron
+description: Implement recurring jobs and scheduled tasks using durable workflow patterns.
+type: guide
+summary: Build scheduled and recurring execution patterns with durable sleep loops.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/foundations/common-patterns
+  - /docs/api-reference/workflow/sleep
+  - /docs/foundations/hooks
+---
+
+Workflows naturally support scheduling through [`sleep()`](/docs/api-reference/workflow/sleep). Unlike traditional cron systems that require external infrastructure, workflow-based scheduling is durable - if the server restarts, the schedule resumes without missing a beat. And because `sleep()` suspends the workflow without consuming compute resources, a workflow sleeping for one minute costs the same as one sleeping for a month.
+
+## Recurring Job Execution
+
+The simplest scheduling pattern is an infinite loop that runs a job and sleeps between iterations. This replaces traditional cron jobs with a single workflow function.
+
+```typescript title="workflows/recurring-job.ts" lineNumbers
+import { sleep } from "workflow";
+declare function runJob(): Promise<{ success: boolean }>; // @setup
+
+export async function recurringJobWorkflow() {
+  "use workflow";
+
+  while (true) { // [!code highlight]
+    const result = await runJob();
+
+    if (!result.success) {
+      break;
+    }
+
+    await sleep("1 hour"); // [!code highlight]
+  }
+}
+```
+
+```typescript title="workflows/steps.ts" lineNumbers
+export async function runJob() {
+  "use step";
+
+  // Full Node.js access - call APIs, query databases, etc.
+  const response = await fetch("https://api.example.com/process");
+  return { success: response.ok };
+}
+```
+
+The workflow runs the job, sleeps for one hour, and repeats. If the server restarts during the sleep, the workflow resumes at the correct time. The `break` condition lets you stop the loop based on the job's result.
+
+<Callout type="info">
+`sleep()` consumes no compute resources while waiting. A workflow sleeping for one hour is effectively free until it wakes up.
+</Callout>
+
+## Polling External Systems
+
+A common use case is periodically checking an external system for changes. The workflow maintains state between polls, so it can detect what changed since the last check.
+
+```typescript title="workflows/poll-changes.ts" lineNumbers
+import { sleep } from "workflow";
+declare function fetchCurrentState(): Promise<{ data: string; updatedAt: string }>; // @setup
+declare function processChanges(previous: string, current: string): Promise<void>; // @setup
+
+export async function pollForChangesWorkflow() {
+  "use workflow";
+
+  let previousState = "";
+
+  while (true) {
+    const current = await fetchCurrentState(); // [!code highlight]
+
+    if (current.data !== previousState) { // [!code highlight]
+      await processChanges(previousState, current.data);
+      previousState = current.data;
+    }
+
+    await sleep("5 minutes");
+  }
+}
+```
+
+Because workflow state persists across suspensions, `previousState` survives restarts and replays. This makes durable polling straightforward - no external state store needed.
+
+## Scheduled Tasks at Specific Times
+
+Pass a `Date` object to `sleep()` to wait until a specific point in time. This is useful for tasks that must run at exact times rather than fixed intervals.
+
+```typescript title="workflows/scheduled-task.ts" lineNumbers
+import { sleep } from "workflow";
+declare function sendReport(period: string): Promise<void>; // @setup
+
+export async function endOfMonthReportWorkflow(year: number, month: number) {
+  "use workflow";
+
+  // Wait until midnight on the first of next month
+  const reportDate = new Date(year, month, 1, 0, 0, 0); // [!code highlight]
+  await sleep(reportDate); // [!code highlight]
+
+  await sendReport(`${year}-${String(month).padStart(2, "0")}`);
+}
+```
+
+<Callout type="info">
+`Date` constructors are deterministic inside workflow functions - the framework ensures consistent values across replays.
+</Callout>
+
+## Health Checks and Keep-Alive
+
+Periodic health monitoring is a natural fit for durable workflows. The workflow checks a service, takes action if something is wrong, and sleeps before checking again.
+
+```typescript title="workflows/health-check.ts" lineNumbers
+import { sleep } from "workflow";
+declare function checkServiceHealth(serviceUrl: string): Promise<{ healthy: boolean; latencyMs: number }>; // @setup
+declare function sendAlert(serviceUrl: string, latencyMs: number): Promise<void>; // @setup
+declare function restartService(serviceUrl: string): Promise<void>; // @setup
+
+export async function healthCheckWorkflow(serviceUrl: string) {
+  "use workflow";
+
+  let consecutiveFailures = 0;
+
+  while (true) {
+    const status = await checkServiceHealth(serviceUrl);
+
+    if (!status.healthy) {
+      consecutiveFailures++;
+
+      await sendAlert(serviceUrl, status.latencyMs);
+
+      if (consecutiveFailures >= 3) { // [!code highlight]
+        await restartService(serviceUrl); // [!code highlight]
+        consecutiveFailures = 0;
+      }
+    } else {
+      consecutiveFailures = 0;
+    }
+
+    await sleep("30 seconds");
+  }
+}
+```
+
+The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart. All of this state survives server restarts because the workflow is durable.
+
+## Cron-Like Dispatching
+
+For more complex scheduling, a long-running "dispatcher" workflow can start independent child workflows on a schedule. Each scheduled task runs as its own workflow with its own event log.
+
+```typescript title="workflows/cron-dispatcher.ts" lineNumbers
+import { sleep } from "workflow";
+declare function triggerDailyReport(): Promise<string>; // @setup
+declare function triggerCleanup(): Promise<string>; // @setup
+
+export async function cronDispatcherWorkflow() {
+  "use workflow";
+
+  let iteration = 0;
+
+  while (true) {
+    // Run daily report every iteration
+    await triggerDailyReport();
+
+    // Run cleanup every 7 iterations (weekly)
+    if (iteration % 7 === 0) { // [!code highlight]
+      await triggerCleanup(); // [!code highlight]
+    }
+
+    iteration++;
+    await sleep("1 day");
+  }
+}
+```
+
+```typescript title="workflows/steps.ts" lineNumbers
+import { start } from "workflow/api";
+
+export async function triggerDailyReport() {
+  "use step";
+
+  const run = await start(dailyReportWorkflow, []); // [!code highlight]
+  return run.runId;
+}
+
+export async function triggerCleanup() {
+  "use step";
+
+  const run = await start(cleanupWorkflow, []);
+  return run.runId;
+}
+
+// These are independent workflows started by the dispatcher
+export async function dailyReportWorkflow() {
+  "use workflow";
+  // Generate and send daily report
+}
+
+export async function cleanupWorkflow() {
+  "use workflow";
+  // Clean up old data
+}
+```
+
+Each child workflow runs independently. If a daily report fails, it does not affect the dispatcher or the cleanup workflow. You can monitor each run separately using its `runId`.
+
+## Graceful Shutdown
+
+To stop a recurring workflow from the outside, use a [hook](/docs/foundations/hooks). Race the sleep against the hook in each iteration - when external code sends data to the hook, the loop breaks.
+
+```typescript title="workflows/stoppable-job.ts" lineNumbers
+import { sleep, createHook } from "workflow";
+declare function runJob(): Promise<void>; // @setup
+
+export async function stoppableJobWorkflow() {
+  "use workflow";
+
+  const stopHook = createHook<{ reason: string }>({ // [!code highlight]
+    token: "stop-recurring-job", // [!code highlight]
+  }); // [!code highlight]
+
+  let stopped = false;
+
+  while (!stopped) {
+    await runJob();
+
+    // Race: either sleep completes or someone sends a stop signal
+    await Promise.race([ // [!code highlight]
+      sleep("1 hour"), // [!code highlight]
+      stopHook.then(() => { stopped = true; }), // [!code highlight]
+    ]); // [!code highlight]
+  }
+}
+```
+
+To stop the workflow, call `resumeHook()` with the custom token from any external context:
+
+```typescript title="app/api/stop-job/route.ts" lineNumbers
+import { resumeHook } from "workflow/api";
+
+export async function POST() {
+  await resumeHook("stop-recurring-job", { reason: "Manual shutdown" });
+  return Response.json({ stopped: true });
+}
+```
+
+The custom token `"stop-recurring-job"` lets external code address the hook without needing to know the workflow's run ID. See [Custom Tokens for Deterministic Hooks](/docs/foundations/hooks#custom-tokens-for-deterministic-hooks) for more on this pattern.
+
+## Related Documentation
+
+- [`sleep()` API Reference](/docs/api-reference/workflow/sleep) - Full documentation on duration formats and date-based sleep
+- [Common Patterns](/docs/foundations/common-patterns) - Sequential, parallel, timeout, and composition patterns
+- [Hooks & Webhooks](/docs/foundations/hooks) - Pause workflows and resume them with external data
+- [Starting Workflows](/docs/foundations/starting-workflows) - Trigger workflows with `start()` and track execution
