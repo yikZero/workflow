@@ -89,14 +89,15 @@ Pass a `Date` object to `sleep()` to wait until a specific point in time. This i
 import { sleep } from "workflow";
 declare function sendReport(period: string): Promise<void>; // @setup
 
-export async function endOfMonthReportWorkflow(year: number, month: number) {
+export async function endOfMonthReportWorkflow(year: number, monthNumber: number) {
   "use workflow";
 
-  // Wait until midnight on the first of next month
-  const reportDate = new Date(year, month, 1, 0, 0, 0); // [!code highlight]
+  // monthNumber is 1-12; Date constructor uses 0-based months
+  // new Date(2025, 6, 1) = July 1st 2025 (month index 6 = July)
+  const reportDate = new Date(year, monthNumber, 1, 0, 0, 0); // [!code highlight]
   await sleep(reportDate); // [!code highlight]
 
-  await sendReport(`${year}-${String(month).padStart(2, "0")}`);
+  await sendReport(`${year}-${String(monthNumber).padStart(2, "0")}`);
 }
 ```
 
@@ -160,12 +161,12 @@ export async function cronDispatcherWorkflow() {
     // Run daily report every iteration
     await triggerDailyReport();
 
-    // Run cleanup every 7 iterations (weekly)
+    // Run cleanup every 7 iterations (weekly), skipping the first run
+    iteration++;
     if (iteration % 7 === 0) { // [!code highlight]
       await triggerCleanup(); // [!code highlight]
     }
 
-    iteration++;
     await sleep("1 day");
   }
 }
