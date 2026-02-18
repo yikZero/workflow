@@ -93,7 +93,7 @@ Webhooks implement `AsyncIterable`, so a single workflow instance can process an
 Real alert pipelines need deduplication. When the same error fires hundreds of times in a minute, you want one alert, not hundreds. Use custom hook tokens to route duplicate events to the same workflow instance.
 
 ```typescript title="workflows/alert-pipeline.ts" lineNumbers
-import { createHook } from "workflow";
+import { createHook, getStepMetadata } from "workflow";
 
 interface Alert {
   alertId: string;
@@ -124,8 +124,11 @@ async function enrichAlert(alert: Alert): Promise<EnrichedAlert> {
 async function dispatchNotification(alert: EnrichedAlert) {
   "use step";
 
+  const { stepId } = getStepMetadata(); // [!code highlight]
+
   await fetch("https://hooks.slack.com/services/...", {
     method: "POST",
+    headers: { "Idempotency-Key": stepId }, // [!code highlight]
     body: JSON.stringify({
       text: `[${alert.source}] ${alert.message}\nOwner: ${alert.owner}\nRunbook: ${alert.runbook}`,
     }),
@@ -182,7 +185,7 @@ The workflow needs time to register the hook after `start()` returns. The retry 
 When a critical event needs immediate attention, fan out notifications to multiple channels in parallel using `Promise.all`. Each channel is its own step, so a failure in one (e.g., Slack API is down) does not block the others, and each is retried independently.
 
 ```typescript title="workflows/instant-alert.ts" lineNumbers
-import { createWebhook } from "workflow";
+import { createWebhook, FatalError, RetryableError, getStepMetadata } from "workflow";
 
 interface CriticalEvent {
   title: string;
@@ -194,12 +197,23 @@ interface CriticalEvent {
 async function sendSlackAlert(event: CriticalEvent) {
   "use step";
 
-  await fetch("https://hooks.slack.com/services/...", {
+  const { stepId } = getStepMetadata(); // [!code highlight]
+
+  const response = await fetch("https://hooks.slack.com/services/...", {
     method: "POST",
+    headers: { "Idempotency-Key": stepId }, // [!code highlight]
     body: JSON.stringify({
       text: `*${event.severity}: ${event.title}*\n${event.description}`,
     }),
   });
+
+  if (response.status === 429) {
+    throw new RetryableError("Slack rate limited", { retryAfter: "30s" }); // [!code highlight]
+  }
+
+  if (!response.ok) {
+    throw new FatalError(`Slack API error: ${response.status}`); // [!code highlight]
+  }
 }
 
 async function sendEmailAlert(event: CriticalEvent) {

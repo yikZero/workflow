@@ -21,6 +21,8 @@ This guide covers the most common data ingestion patterns, starting simple and b
 The simplest data ingestion pattern receives a file, validates it, processes it, and stores the result. Each operation is a step, so a failure in any stage retries only that stage.
 
 ```typescript title="workflows/process-file.ts" lineNumbers
+import { getStepMetadata } from "workflow";
+
 type FileResult = {
   rowCount: number;
   errors: string[];
@@ -55,10 +57,15 @@ async function transformRows(content: string) {
 async function storeResults(rows: string[]) { // [!code highlight]
   "use step"; // [!code highlight]
 
+  const { stepId } = getStepMetadata(); // [!code highlight]
+
   // Write to your database or storage service
   await fetch("https://api.example.com/import", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": stepId, // [!code highlight]
+    },
     body: JSON.stringify({ rows }),
   });
 

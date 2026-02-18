@@ -84,7 +84,7 @@ export async function sendActivationPrompt(userId: string) {
 The workflow sleeps for real calendar time between sends. If the process restarts during a sleep, the workflow resumes at the correct point. Use [`FatalError`](/docs/api-reference/workflow/fatal-error) to skip retries for permanent failures like a missing email address.
 
 <Callout type="info">
-Email sends are side effects. Make sure your email provider supports idempotency keys or deduplication to avoid sending duplicate emails on retry. See [Idempotency](/docs/foundations/idempotency) for more details.
+Email sends are side effects. Use [`getStepMetadata()`](/docs/api-reference/workflow/get-step-metadata) to pass a stable `stepId` as an idempotency key to your email provider, as shown in `sendConfirmationEmail` above. This prevents duplicate emails on retry. See [Idempotency](/docs/foundations/idempotency) for more details.
 </Callout>
 
 ## Email Verification Flow
@@ -154,6 +154,8 @@ export async function contactFormWorkflow(submission: ContactSubmission) {
 ```
 
 ```typescript title="workflows/contact-form-steps.ts" lineNumbers
+import { getStepMetadata } from "workflow";
+
 declare const emailClient: { send(opts: Record<string, unknown>): Promise<void> }; // @setup
 declare const crm: { create(data: Record<string, string>): Promise<{ id: string }> }; // @setup
 
@@ -188,10 +190,14 @@ export async function createCrmRecord(submission: ContactSubmission) {
 export async function sendConfirmationEmail(email: string, crmId: string) {
   "use step";
 
+  const { stepId } = getStepMetadata(); // [!code highlight]
+
+  // Use stepId as idempotency key to prevent duplicate emails on retry
   await emailClient.send({
     to: email,
     template: "contact-confirmation",
     data: { referenceId: crmId },
+    idempotencyKey: stepId, // [!code highlight]
   });
 }
 ```

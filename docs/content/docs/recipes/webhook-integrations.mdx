@@ -180,7 +180,7 @@ Signature verification runs as a step so it has full access to Node.js crypto AP
 Some integrations require forwarding a single webhook to multiple downstream systems. Use `Promise.all` to fan out in parallel, with each forwarding call as an independent retryable step.
 
 ```typescript title="workflows/webhook-forwarder.ts" lineNumbers
-import { createWebhook, type RequestWithResponse } from "workflow";
+import { createWebhook, FatalError, RetryableError, getStepMetadata, type RequestWithResponse } from "workflow";
 
 async function acknowledgeRequest(request: RequestWithResponse) {
   "use step";
@@ -196,14 +196,28 @@ async function forwardToEndpoint( // [!code highlight]
 ): Promise<{ url: string; status: number }> { // [!code highlight]
   "use step"; // [!code highlight]
 
+  const { stepId } = getStepMetadata(); // [!code highlight]
+
   const response = await fetch(url, {
     method: "POST",
     body: payload,
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": stepId, // [!code highlight]
+      ...headers,
+    },
   });
 
+  if (response.status === 429) {
+    throw new RetryableError("Rate limited", { retryAfter: "30s" }); // [!code highlight]
+  }
+
+  if (response.status >= 400 && response.status < 500) {
+    throw new FatalError(`Permanent rejection: ${response.status}`); // [!code highlight]
+  }
+
   if (!response.ok) {
-    // Throwing here triggers automatic retry
+    // 5xx — default retry behavior
     throw new Error(`Forward to ${url} failed: ${response.status}`);
   }
 

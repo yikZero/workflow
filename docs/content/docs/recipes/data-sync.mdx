@@ -48,6 +48,8 @@ export async function crmPollingSync() {
 The step functions handle the actual I/O with full Node.js access:
 
 ```typescript title="workflows/crm-poll-steps.ts" lineNumbers
+import { FatalError, RetryableError } from "workflow";
+
 declare const db: { contacts: { upsert(opts: any): Promise<void> } }; // @setup
 
 async function fetchUpdatedContacts(since: Date) {
@@ -56,6 +58,14 @@ async function fetchUpdatedContacts(since: Date) {
   const response = await fetch(
     `https://api.example-crm.com/contacts?updated_since=${since.toISOString()}`
   );
+
+  if (response.status === 429) {
+    throw new RetryableError("Rate limited", { retryAfter: "30s" }); // [!code highlight]
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new FatalError(`CRM auth error: ${response.status}`); // [!code highlight]
+  }
 
   if (!response.ok) {
     throw new Error(`CRM API error: ${response.status}`);
