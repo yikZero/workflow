@@ -1,0 +1,387 @@
+---
+title: Testing
+description: Strategies for testing workflow and step functions at every level.
+type: guide
+summary: Unit test step functions, integration test workflows, and verify error handling.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/foundations/errors-and-retries
+  - /docs/foundations/common-patterns
+---
+
+Testing workflows requires thinking about two levels: testing individual step functions (unit tests) and testing the full orchestration logic (integration tests). Since step functions behave like regular async functions when called outside a workflow, they are straightforward to test with any test framework.
+
+## Testing Step Functions
+
+When a step function is called outside a workflow context, the `"use step"` directive is a no-op. The function runs as a normal async function in your test process with full Node.js access. This means you can test step functions directly using standard tools like [Vitest](https://vitest.dev/).
+
+```typescript title="workflows/steps.ts" lineNumbers
+async function fetchUser(userId: string) {
+  "use step";
+
+  const response = await fetch(`https://api.example.com/users/${userId}`);
+  if (!response.ok) {
+    throw new Error(`User not found: ${userId}`);
+  }
+  return response.json();
+}
+
+async function formatName(first: string, last: string) {
+  "use step";
+
+  return `${first.trim()} ${last.trim()}`;
+}
+```
+
+```typescript title="workflows/steps.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { fetchUser, formatName } from "./steps";
+
+describe("formatName", () => {
+  it("trims and joins names", async () => {
+    const result = await formatName("  Alice ", " Smith  "); // [!code highlight]
+    expect(result).toBe("Alice Smith");
+  });
+});
+```
+
+No special setup is required. Call the step, assert on the result.
+
+### Mocking External Services
+
+Use Vitest's mocking to isolate steps from external dependencies.
+
+```typescript title="workflows/steps.test.ts" lineNumbers
+import { describe, it, expect, vi } from "vitest";
+import { fetchUser } from "./steps";
+
+// Mock the global fetch
+vi.stubGlobal("fetch", vi.fn()); // [!code highlight]
+
+describe("fetchUser", () => {
+  it("returns user data on success", async () => {
+    const mockUser = { id: "123", name: "Alice" };
+    vi.mocked(fetch).mockResolvedValueOnce( // [!code highlight]
+      new Response(JSON.stringify(mockUser), { status: 200 })
+    );
+
+    const user = await fetchUser("123");
+    expect(user).toEqual(mockUser);
+  });
+
+  it("throws on not found", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response("", { status: 404 })
+    );
+
+    await expect(fetchUser("missing")).rejects.toThrow("User not found");
+  });
+});
+```
+
+<Callout type="info">
+Step functions called outside a workflow do not have retry semantics or observability. If you need to test retry behavior, use an integration test that runs the full workflow. See [Testing Error Handling](#testing-error-handling) below.
+</Callout>
+
+## Testing Workflow Orchestration
+
+To test a workflow end-to-end, use [`start()`](/docs/api-reference/workflow-api/start) to run it against a live workflow runtime and assert on the `Run` object. This requires a running workflow environment (for example, the local world via `pnpm dev` or `pnpm workflow dev`).
+
+```typescript title="workflows/order.ts" lineNumbers
+async function validateOrder(orderId: string) {
+  "use step";
+  return { orderId, valid: true };
+}
+
+async function chargePayment(orderId: string) {
+  "use step";
+  return { orderId, charged: true };
+}
+
+export async function processOrderWorkflow(orderId: string) {
+  "use workflow";
+
+  const validation = await validateOrder(orderId);
+  if (!validation.valid) {
+    throw new Error("Invalid order");
+  }
+
+  const payment = await chargePayment(orderId);
+  return { orderId, status: "completed", charged: payment.charged };
+}
+```
+
+```typescript title="workflows/order.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { processOrderWorkflow } from "./order";
+
+describe("processOrderWorkflow", () => {
+  it("processes a valid order", async () => {
+    const run = await start(processOrderWorkflow, ["order-123"]); // [!code highlight]
+
+    const result = await run.returnValue; // [!code highlight]
+    expect(result).toEqual({
+      orderId: "order-123",
+      status: "completed",
+      charged: true,
+    });
+
+    const status = await run.status;
+    expect(status).toBe("completed");
+  });
+});
+```
+
+<Callout type="info">
+Integration tests that call `start()` need a running workflow runtime. Start your dev server before running these tests. For example, with the CLI: `pnpm workflow dev`, or with Next.js: `pnpm dev`.
+</Callout>
+
+## Testing Hooks and Webhooks
+
+Workflows that pause for external input can be tested by starting the workflow, then programmatically resuming it with [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) or sending an HTTP request to the webhook URL.
+
+### Testing Hooks
+
+```typescript title="workflows/approval.ts" lineNumbers
+import { createHook } from "workflow";
+
+export async function approvalWorkflow(documentId: string) {
+  "use workflow";
+
+  const hook = createHook<{ approved: boolean; comment: string }>({
+    token: `approval:${documentId}`,
+  });
+
+  const result = await hook;
+  return { documentId, approved: result.approved, comment: result.comment };
+}
+```
+
+```typescript title="workflows/approval.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start, resumeHook, getHookByToken } from "workflow/api";
+import { approvalWorkflow } from "./approval";
+
+describe("approvalWorkflow", () => {
+  it("resumes with approval data", async () => {
+    const run = await start(approvalWorkflow, ["doc-456"]);
+
+    // Wait for the hook to register
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // Look up and resume the hook
+    const hook = await getHookByToken("approval:doc-456"); // [!code highlight]
+    await resumeHook(hook, { approved: true, comment: "Looks good" }); // [!code highlight]
+
+    const result = await run.returnValue;
+    expect(result).toEqual({
+      documentId: "doc-456",
+      approved: true,
+      comment: "Looks good",
+    });
+  });
+});
+```
+
+### Testing Webhooks
+
+For webhooks, send an HTTP request to the generated `webhook.url`.
+
+```typescript title="workflows/webhook.ts" lineNumbers
+import { createWebhook } from "workflow";
+
+async function extractBody(request: Request) {
+  "use step";
+  return request.json();
+}
+
+export async function webhookWorkflow(token: string) {
+  "use workflow";
+
+  const webhook = createWebhook({ token });
+  const request = await webhook;
+  const body = await extractBody(request);
+
+  return { method: request.method, body };
+}
+```
+
+{/* @skip-typecheck: test file with fetch to local server */}
+```typescript title="workflows/webhook.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { webhookWorkflow } from "./webhook";
+
+describe("webhookWorkflow", () => {
+  it("receives webhook data", async () => {
+    const token = `test-${Math.random().toString(36).slice(2)}`;
+    const run = await start(webhookWorkflow, [token]);
+
+    // Wait for the webhook to register
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // Send an HTTP request to the webhook endpoint
+    const webhookUrl = `${process.env.DEPLOYMENT_URL}/.well-known/workflow/v1/webhook/${token}`;
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "payment.completed" }),
+    });
+    expect(res.status).toBe(202);
+
+    const result = await run.returnValue;
+    expect(result.method).toBe("POST");
+    expect(result.body).toEqual({ event: "payment.completed" });
+  });
+});
+```
+
+## Testing Error Handling
+
+Test that workflows correctly handle step failures, including `FatalError` and `RetryableError`.
+
+```typescript title="workflows/resilient.ts" lineNumbers
+import { FatalError } from "workflow";
+
+async function riskyStep(shouldFail: boolean) {
+  "use step";
+
+  if (shouldFail) {
+    throw new FatalError("Permanent failure - do not retry");
+  }
+
+  return "success";
+}
+
+export async function resilientWorkflow(shouldFail: boolean) {
+  "use workflow";
+
+  try {
+    const result = await riskyStep(shouldFail);
+    return { status: "completed", result };
+  } catch (error) {
+    return { status: "failed", error: String(error) };
+  }
+}
+```
+
+```typescript title="workflows/resilient.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { resilientWorkflow } from "./resilient";
+
+describe("resilientWorkflow", () => {
+  it("completes when step succeeds", async () => {
+    const run = await start(resilientWorkflow, [false]);
+    const result = await run.returnValue;
+    expect(result.status).toBe("completed");
+    expect(result.result).toBe("success");
+  });
+
+  it("catches FatalError from step", async () => {
+    const run = await start(resilientWorkflow, [true]); // [!code highlight]
+    const result = await run.returnValue;
+    expect(result.status).toBe("failed"); // [!code highlight]
+    expect(result.error).toContain("Permanent failure");
+  });
+});
+```
+
+### Testing Uncaught Failures
+
+When a workflow does not catch a step error, the run fails. Use `run.returnValue` in a catch block or check `run.status` to verify failure behavior.
+
+{/* @skip-typecheck: WorkflowRunFailedError import from internal package */}
+```typescript title="workflows/unhandled.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { unhandledErrorWorkflow } from "./unhandled";
+
+describe("unhandledErrorWorkflow", () => {
+  it("fails the run when error is uncaught", async () => {
+    const run = await start(unhandledErrorWorkflow, []);
+
+    // returnValue rejects when the workflow fails
+    await expect(run.returnValue).rejects.toThrow(); // [!code highlight]
+
+    const status = await run.status;
+    expect(status).toBe("failed"); // [!code highlight]
+  });
+});
+```
+
+## Stress Testing
+
+Run many concurrent workflows with `Promise.all` to verify behavior under load. This pattern is useful for catching race conditions and verifying that the runtime handles parallel execution correctly.
+
+```typescript title="workflows/stress.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { addTenWorkflow } from "./math";
+
+describe("stress tests", () => {
+  it("runs many workflows concurrently", async () => {
+    const count = 10;
+
+    const runs = await Promise.all( // [!code highlight]
+      Array.from({ length: count }, (_, i) => // [!code highlight]
+        start(addTenWorkflow, [i]) // [!code highlight]
+      ) // [!code highlight]
+    ); // [!code highlight]
+
+    const results = await Promise.all(
+      runs.map((run) => run.returnValue)
+    );
+
+    // Each input i should return i + 10
+    results.forEach((result, i) => {
+      expect(result).toBe(i + 10);
+    });
+  });
+});
+```
+
+For `Promise.race` stress testing, verify that the fastest step always wins regardless of concurrent execution:
+
+```typescript title="workflows/race-stress.ts" lineNumbers
+async function delayedValue(delay: number, value: number) {
+  "use step";
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  return value;
+}
+
+export async function raceStressWorkflow() {
+  "use workflow";
+
+  const results = [];
+  for (let i = 0; i < 5; i++) {
+    const winner = await Promise.race([ // [!code highlight]
+      delayedValue(100, i), // [!code highlight]
+      delayedValue(5000, -1), // [!code highlight]
+    ]); // [!code highlight]
+    results.push(winner);
+  }
+
+  return results;
+}
+```
+
+## Best Practices
+
+- **Keep steps small and focused.** Smaller steps are easier to test in isolation and produce clearer test failures.
+- **Use dependency injection for external services.** Pass API clients or configuration as step parameters rather than importing globals. This makes mocking straightforward.
+- **Test idempotency.** Run steps multiple times with the same input and verify consistent results. See [Idempotency](/docs/foundations/idempotency) for background.
+- **Test replay safety.** Workflows replay from the event log after restarts. Avoid side effects in workflow functions (only in steps) to ensure replay produces the same result.
+- **Set appropriate timeouts.** Integration tests that run full workflows may need longer timeouts than unit tests. Use Vitest's `timeout` option: `it("long test", { timeout: 60_000 }, async () => { ... })`.
+- **Use unique tokens in hook/webhook tests.** Generate random tokens to avoid conflicts between test runs.
+
+## Related Documentation
+
+- [Workflows and Steps](/docs/foundations/workflows-and-steps) - The building blocks you are testing
+- [Errors & Retrying](/docs/foundations/errors-and-retries) - Error types and retry semantics
+- [Common Patterns](/docs/foundations/common-patterns) - Patterns to test including parallel execution and timeouts
+- [Hooks & Webhooks](/docs/foundations/hooks) - How hooks and webhooks work
+- [`start()` API Reference](/docs/api-reference/workflow-api/start) - Starting workflows programmatically
+- [`resumeHook()` API Reference](/docs/api-reference/workflow-api/resume-hook) - Resuming hooks in tests
