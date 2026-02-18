@@ -233,46 +233,23 @@ Because each `forwardToEndpoint` call is a separate step, a failure to one endpo
 
 ## Scheduled Task Processing
 
-For recurring tasks, combine [`sleep()`](/docs/api-reference/workflow/sleep) with step execution to build a durable cron-like processor. Unlike traditional cron jobs, the workflow maintains state between iterations and survives restarts.
+Webhooks are often paired with scheduled polling. The core pattern combines `sleep()` with step execution in a loop:
 
 ```typescript title="workflows/scheduled-sync.ts" lineNumbers
 import { sleep } from "workflow";
+declare function fetchAndSync(): Promise<void>; // @setup
 
-async function fetchLatestData(): Promise<{ count: number; updatedAt: string }> {
-  "use step";
-
-  const response = await fetch("https://api.example.com/data");
-  const data = await response.json();
-  return data as { count: number; updatedAt: string };
-}
-
-async function syncToDatabase(data: { count: number; updatedAt: string }) {
-  "use step";
-  console.log("Syncing", data.count, "records from", data.updatedAt);
-  // Write to your database
-}
-
-export async function scheduledSync(intervalMinutes: number, maxRuns: number) {
+export async function scheduledSync() {
   "use workflow";
 
-  for (let i = 0; i < maxRuns; i++) { // [!code highlight]
-    const data = await fetchLatestData();
-    await syncToDatabase(data);
-
-    console.log(`Run ${i + 1}/${maxRuns} complete`);
-
-    if (i < maxRuns - 1) {
-      await sleep(`${intervalMinutes} minutes`); // [!code highlight]
-    }
+  while (true) {
+    await fetchAndSync(); // [!code highlight]
+    await sleep("30 minutes"); // [!code highlight]
   }
-
-  console.log("Scheduled sync complete");
 }
 ```
 
-<Callout type="info">
-`sleep()` is durable - if the workflow restarts during a sleep, it resumes when the original sleep duration expires rather than starting over. See [Common Patterns](/docs/foundations/common-patterns) for more on combining `sleep()` with `Promise.race` for timeouts.
-</Callout>
+`sleep()` is durable — if the workflow restarts during a sleep, it resumes when the original duration expires. For comprehensive scheduling patterns including cron-like dispatching, health checks, and graceful shutdown, see [Scheduling & Cron](/docs/foundations/scheduling).
 
 ## Webhook Response Patterns
 

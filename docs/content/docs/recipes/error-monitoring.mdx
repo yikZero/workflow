@@ -240,61 +240,21 @@ Because each notification is a separate step, the framework retries failures ind
 
 ## External System Monitoring
 
-Not all monitoring is event-driven. Sometimes you need to poll external systems on a schedule. Use [`sleep()`](/docs/api-reference/workflow/sleep) in a loop to create a durable polling workflow that survives restarts and cold starts.
+Not all monitoring is event-driven. Sometimes you need to poll external systems on a schedule. The core pattern is a `sleep()` loop that checks a service in a step and alerts on failure:
 
 ```typescript title="workflows/monitor-service.ts" lineNumbers
 import { sleep } from "workflow";
+declare function checkServiceHealth(endpoint: string): Promise<{ healthy: boolean; latency: number }>; // @setup
+declare function sendAlert(service: string, latency: number): Promise<void>; // @setup
 
-interface ServiceStatus {
-  healthy: boolean;
-  latency: number;
-  errorRate: number;
-}
-
-async function checkServiceHealth(endpoint: string): Promise<ServiceStatus> {
-  "use step";
-
-  const start = Date.now();
-  const response = await fetch(endpoint);
-  const latency = Date.now() - start;
-
-  return {
-    healthy: response.ok,
-    latency,
-    errorRate: response.ok ? 0 : 1,
-  };
-}
-
-async function sendAlert(service: string, status: ServiceStatus) {
-  "use step";
-
-  await fetch("https://hooks.slack.com/services/...", {
-    method: "POST",
-    body: JSON.stringify({
-      text: `Service ${service} is unhealthy. Latency: ${status.latency}ms`,
-    }),
-  });
-}
-
-export async function monitorServiceWorkflow(
-  service: string,
-  endpoint: string
-) {
+export async function monitorServiceWorkflow(service: string, endpoint: string) {
   "use workflow";
 
-  let consecutiveFailures = 0;
-
-  while (true) { // [!code highlight]
-    const status = await checkServiceHealth(endpoint);
+  while (true) {
+    const status = await checkServiceHealth(endpoint); // [!code highlight]
 
     if (!status.healthy) {
-      consecutiveFailures++;
-      if (consecutiveFailures >= 3) {
-        await sendAlert(service, status);
-        consecutiveFailures = 0;
-      }
-    } else {
-      consecutiveFailures = 0;
+      await sendAlert(service, status.latency);
     }
 
     await sleep("5m"); // [!code highlight]
@@ -302,7 +262,7 @@ export async function monitorServiceWorkflow(
 }
 ```
 
-The `sleep("5m")` call is durable - if the workflow process restarts during the sleep, it resumes at the correct time without re-running previous checks. The `while (true)` loop runs indefinitely, checking the service every 5 minutes and alerting after 3 consecutive failures.
+This uses the durable polling pattern — `sleep()` consumes no compute while waiting, and the workflow resumes at the correct time even after restarts. For more advanced scheduling patterns including consecutive failure tracking, graceful shutdown, and cron-like dispatching, see [Scheduling & Cron](/docs/foundations/scheduling).
 
 <Callout type="info">
 `sleep()` accepts duration strings like `"5m"`, `"1h"`, or `"30s"`, as well as `Date` objects for sleeping until a specific time. See the [`sleep()` API reference](/docs/api-reference/workflow/sleep) for all supported formats.
