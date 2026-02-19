@@ -18,9 +18,17 @@ function createMockEvent(overrides: Partial<Event> = {}): Event {
 // Default options for tests that don't care about onUnconsumedEvent
 const defaultOptions = { onUnconsumedEvent: vi.fn() };
 
-// Helper function to wait for next tick
-function waitForNextTick(): Promise<void> {
-  return new Promise((resolve) => process.nextTick(resolve));
+// Helper to flush all pending nextTicks and microtasks.
+// Since consume() is async and self-schedules via process.nextTick,
+// we need to drain multiple async boundaries. Each iteration yields
+// via a Promise microtask, allowing pending nextTicks and microtasks
+// to complete without firing macrotasks (like the unconsumed event
+// check's setTimeout(0)).
+async function flush(iterations = 20): Promise<void> {
+  for (let i = 0; i < iterations; i++) {
+    await Promise.resolve();
+    await new Promise((resolve) => process.nextTick(resolve));
+  }
 }
 
 // Helper to wait for setTimeout(0) macrotask (used by deferred unconsumed event check)
@@ -78,7 +86,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(callback).toHaveBeenCalledWith(event);
       expect(callback).toHaveBeenCalledTimes(1);
@@ -92,7 +100,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(callback).toHaveBeenCalledWith(event);
       expect(callback).toHaveBeenCalledTimes(1);
@@ -103,7 +111,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(callback).toHaveBeenCalledWith(null);
     });
@@ -115,7 +123,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(consumer.eventIndex).toBe(1);
       expect(consumer.callbacks).toHaveLength(0);
@@ -127,7 +135,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(consumer.eventIndex).toBe(0);
       expect(consumer.callbacks).toContain(callback);
@@ -147,7 +155,7 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback1);
       consumer.subscribe(callback2);
       consumer.subscribe(callback3);
-      await waitForNextTick();
+      await flush();
 
       expect(callback1).toHaveBeenCalledWith(event);
       expect(callback2).toHaveBeenCalledWith(event);
@@ -173,7 +181,7 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback1);
       consumer.subscribe(callback2);
       consumer.subscribe(callback3);
-      await waitForNextTick();
+      await flush();
 
       expect(callback1).toHaveBeenCalledWith(event);
       expect(callback2).toHaveBeenCalledWith(event);
@@ -195,8 +203,8 @@ describe('EventsConsumer', () => {
 
       consumer.subscribe(callback1);
       consumer.subscribe(callback2);
-      await waitForNextTick();
-      await waitForNextTick(); // Wait for recursive processing
+      await flush();
+      await flush(); // Wait for recursive processing
 
       expect(callback1).toHaveBeenCalledTimes(1);
       expect(callback1).toHaveBeenCalledWith(event1);
@@ -212,14 +220,14 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       // Now eventIndex is 1, but array only has 1 element (index 0)
       const callback2 = vi
         .fn()
         .mockReturnValue(EventConsumerResult.NotConsumed);
       consumer.subscribe(callback2);
-      await waitForNextTick();
+      await flush();
 
       expect(callback2).toHaveBeenCalledWith(null);
     });
@@ -252,9 +260,9 @@ describe('EventsConsumer', () => {
 
       consumer.subscribe(typeACallback);
       consumer.subscribe(typeBCallback);
-      await waitForNextTick();
-      await waitForNextTick(); // Wait for recursive processing
-      await waitForNextTick(); // Wait for final processing
+      await flush();
+      await flush(); // Wait for recursive processing
+      await flush(); // Wait for final processing
 
       // typeACallback processes event-1 and gets removed, so it won't process event-3
       expect(typeACallback).toHaveBeenCalledTimes(1); // Called for event-1 only
@@ -277,7 +285,7 @@ describe('EventsConsumer', () => {
 
       consumer.subscribe(throwingCallback);
       consumer.subscribe(normalCallback);
-      await waitForNextTick();
+      await flush();
 
       // Error is caught and logged via eventsLogger, processing continues to next callback
       expect(throwingCallback).toHaveBeenCalledWith(event);
@@ -298,7 +306,7 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback1);
       consumer.subscribe(callback2);
       consumer.subscribe(callback3);
-      await waitForNextTick();
+      await flush();
 
       // callback2 should be removed when it returns true
       expect(consumer.callbacks).toEqual([callback1, callback3]);
@@ -311,7 +319,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(callback).toHaveBeenCalledWith(eventWithNullData);
       expect(consumer.eventIndex).toBe(1);
@@ -326,10 +334,10 @@ describe('EventsConsumer', () => {
       const callback2 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
       consumer.subscribe(callback1);
-      await waitForNextTick();
+      await flush();
 
       consumer.subscribe(callback2);
-      await waitForNextTick();
+      await flush();
 
       expect(callback1).toHaveBeenCalledWith(event1);
       expect(callback2).toHaveBeenCalledWith(event2);
@@ -341,7 +349,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
 
       expect(callback).toHaveBeenCalledWith(null);
       expect(consumer.eventIndex).toBe(0);
@@ -356,7 +364,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
       await waitForMacrotask();
 
       expect(onUnconsumedEvent).toHaveBeenCalledWith(event);
@@ -368,7 +376,7 @@ describe('EventsConsumer', () => {
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback);
-      await waitForNextTick();
+      await flush();
       await waitForMacrotask();
 
       expect(callback).toHaveBeenCalledWith(null);
@@ -384,12 +392,12 @@ describe('EventsConsumer', () => {
         .mockReturnValue(EventConsumerResult.NotConsumed);
 
       consumer.subscribe(callback1);
-      await waitForNextTick();
+      await flush();
 
       // Before the macrotask fires, subscribe a new callback that consumes the event
       const callback2 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
       consumer.subscribe(callback2);
-      await waitForNextTick();
+      await flush();
       await waitForMacrotask();
 
       // The new callback consumed the event, so onUnconsumedEvent should NOT be called

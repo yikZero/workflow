@@ -35,19 +35,18 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
     let conflictErrorRef: WorkflowRuntimeError | null = null;
 
     webhookLogger.debug('Hook consumer setup', { correlationId, token });
-    ctx.eventsConsumer.subscribe((event) => {
-      // If there are no events and there are promises waiting,
+    ctx.eventsConsumer.subscribe(async (event) => {
+      // If `event` is null, it means there are no more events in the event log.
+      // If there are pending promises (i.e. the user code has awaited the hook),
       // it means the hook has been awaited, but an incoming payload has not yet been received.
       // In this case, the workflow should be suspended until the hook is resumed.
       if (!event) {
         eventLogEmpty = true;
 
         if (promises.length > 0) {
-          setTimeout(() => {
-            ctx.onWorkflowError(
-              new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
-            );
-          }, 0);
+          ctx.onWorkflowError(
+            new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+          );
         }
         return EventConsumerResult.NotConsumed;
       }
@@ -93,19 +92,18 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         if (promises.length > 0) {
           const next = promises.shift();
           if (next) {
-            // Reconstruct the payload from the event data
-            hydrateStepReturnValue(
-              event.eventData.payload,
-              ctx.runId,
-              ctx.encryptionKey,
-              ctx.globalThis
-            )
-              .then((payload) => {
-                next.resolve(payload as T);
-              })
-              .catch((error) => {
-                next.reject(error);
-              });
+            // Hydrate the payload (may involve async decryption)
+            try {
+              const payload = await hydrateStepReturnValue(
+                event.eventData.payload,
+                ctx.runId,
+                ctx.encryptionKey,
+                ctx.globalThis
+              );
+              next.resolve(payload as T);
+            } catch (error) {
+              next.reject(error);
+            }
           }
         } else {
           payloadsQueue.push(event);
@@ -121,13 +119,11 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       }
 
       // An unexpected event type has been received, this event log looks corrupted. Let's fail immediately.
-      setTimeout(() => {
-        ctx.onWorkflowError(
-          new WorkflowRuntimeError(
-            `Unexpected event type for hook ${correlationId} (token: ${token}) "${event.eventType}"`
-          )
-        );
-      }, 0);
+      ctx.onWorkflowError(
+        new WorkflowRuntimeError(
+          `Unexpected event type for hook ${correlationId} (token: ${token}) "${event.eventType}"`
+        )
+      );
       return EventConsumerResult.Finished;
     });
 
@@ -145,18 +141,16 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       if (payloadsQueue.length > 0) {
         const nextPayload = payloadsQueue.shift();
         if (nextPayload) {
+          // Hydrate the queued payload (may involve async decryption)
           hydrateStepReturnValue(
             nextPayload.eventData.payload,
             ctx.runId,
             ctx.encryptionKey,
             ctx.globalThis
-          )
-            .then((payload) => {
-              resolvers.resolve(payload as T);
-            })
-            .catch((error) => {
-              resolvers.reject(error);
-            });
+          ).then(
+            (payload) => resolvers.resolve(payload as T),
+            (error) => resolvers.reject(error)
+          );
           return resolvers.promise;
         }
       }
@@ -164,11 +158,9 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       if (eventLogEmpty) {
         // If the event log is already empty then we know the hook will not be resolved.
         // Treat this case as a "step not run" scenario and suspend the workflow.
-        setTimeout(() => {
-          ctx.onWorkflowError(
-            new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
-          );
-        }, 0);
+        ctx.onWorkflowError(
+          new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+        );
       }
 
       promises.push(resolvers);

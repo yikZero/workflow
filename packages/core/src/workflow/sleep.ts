@@ -1,9 +1,9 @@
+import { WorkflowRuntimeError } from '@workflow/errors';
 import { parseDurationToDate, withResolvers } from '@workflow/utils';
 import type { StringValue } from 'ms';
 import { EventConsumerResult } from '../events-consumer.js';
 import { type WaitInvocationQueueItem, WorkflowSuspension } from '../global.js';
 import type { WorkflowOrchestratorContext } from '../private.js';
-import { WorkflowRuntimeError } from '@workflow/errors';
 
 export function createSleep(ctx: WorkflowOrchestratorContext) {
   return async function sleepImpl(
@@ -27,11 +27,9 @@ export function createSleep(ctx: WorkflowOrchestratorContext) {
       // If there are no events and we're waiting for wait_completed,
       // suspend the workflow until the wait fires
       if (!event) {
-        setTimeout(() => {
-          ctx.onWorkflowError(
-            new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
-          );
-        }, 0);
+        ctx.onWorkflowError(
+          new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+        );
         return EventConsumerResult.NotConsumed;
       }
 
@@ -58,20 +56,16 @@ export function createSleep(ctx: WorkflowOrchestratorContext) {
         ctx.invocationsQueue.delete(correlationId);
 
         // Wait has elapsed, resolve the sleep
-        setTimeout(() => {
-          resolve();
-        }, 0);
+        resolve();
         return EventConsumerResult.Finished;
       }
 
       // An unexpected event type has been received, this event log looks corrupted. Let's fail immediately.
-      setTimeout(() => {
-        ctx.onWorkflowError(
-          new WorkflowRuntimeError(
-            `Unexpected event type for wait ${correlationId} "${event.eventType}"`
-          )
-        );
-      }, 0);
+      ctx.onWorkflowError(
+        new WorkflowRuntimeError(
+          `Unexpected event type for wait ${correlationId} "${event.eventType}"`
+        )
+      );
       return EventConsumerResult.Finished;
     });
 

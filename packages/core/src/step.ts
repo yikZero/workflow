@@ -47,17 +47,15 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
         stepName,
         args,
       });
-      ctx.eventsConsumer.subscribe((event) => {
+      ctx.eventsConsumer.subscribe(async (event) => {
         if (!event) {
           // We've reached the end of the events, so this step has either not been run or is currently running.
           // Crucially, if we got here, then this step Promise does
           // not resolve so that the user workflow code does not proceed any further.
           // Notify the workflow handler that this step has not been run / has not completed yet.
-          setTimeout(() => {
-            ctx.onWorkflowError(
-              new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
-            );
-          }, 0);
+          ctx.onWorkflowError(
+            new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+          );
           return EventConsumerResult.NotConsumed;
         }
 
@@ -83,13 +81,11 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           if (!queueItem || queueItem.type !== 'step') {
             // This indicates event log corruption - step_created received
             // but the step was never invoked in the workflow during replay.
-            setTimeout(() => {
-              reject(
-                new WorkflowRuntimeError(
-                  `Corrupted event log: step ${correlationId} (${stepName}) created but not found in invocation queue`
-                )
-              );
-            }, 0);
+            reject(
+              new WorkflowRuntimeError(
+                `Corrupted event log: step ${correlationId} (${stepName}) created but not found in invocation queue`
+              )
+            );
             return EventConsumerResult.Finished;
           }
           queueItem.hasCreatedEvent = true;
@@ -113,27 +109,25 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           // Terminal state - we can remove the invocationQueue item
           ctx.invocationsQueue.delete(event.correlationId);
           // Step failed - bubble up to workflow
-          setTimeout(() => {
-            const errorData = event.eventData.error;
-            const isErrorObject =
-              typeof errorData === 'object' && errorData !== null;
+          const errorData = event.eventData.error;
+          const isErrorObject =
+            typeof errorData === 'object' && errorData !== null;
 
-            const errorMessage = isErrorObject
-              ? (errorData.message ?? 'Unknown error')
-              : typeof errorData === 'string'
-                ? errorData
-                : 'Unknown error';
+          const errorMessage = isErrorObject
+            ? (errorData.message ?? 'Unknown error')
+            : typeof errorData === 'string'
+              ? errorData
+              : 'Unknown error';
 
-            const errorStack =
-              (isErrorObject ? errorData.stack : undefined) ??
-              event.eventData.stack;
+          const errorStack =
+            (isErrorObject ? errorData.stack : undefined) ??
+            event.eventData.stack;
 
-            const error = new FatalError(errorMessage);
-            if (errorStack) {
-              error.stack = errorStack;
-            }
-            reject(error);
-          }, 0);
+          const error = new FatalError(errorMessage);
+          if (errorStack) {
+            error.stack = errorStack;
+          }
+          reject(error);
           return EventConsumerResult.Finished;
         }
 
@@ -141,36 +135,27 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           // Terminal state - we can remove the invocationQueue item
           ctx.invocationsQueue.delete(event.correlationId);
 
-          // Step has completed, so resolve the Promise with the cached result.
-          // The hydration is async, so we schedule the resolve via setTimeout
-          // after hydration completes to preserve macrotask timing semantics.
-          // We use a single setTimeout that awaits hydration inside it, keeping
-          // the same scheduling order as the original synchronous code path
-          // (where setTimeout was called synchronously from this callback).
-          setTimeout(async () => {
-            try {
-              const hydratedResult = await hydrateStepReturnValue(
-                event.eventData.result,
-                ctx.runId,
-                ctx.encryptionKey,
-                ctx.globalThis
-              );
-              resolve(hydratedResult as Result);
-            } catch (error) {
-              reject(error);
-            }
-          }, 0);
+          // Hydrate the step result (may involve async decryption).
+          // The EventsConsumer awaits this callback, so it won't advance
+          // to the next event until hydration completes and the step
+          // promise resolves — ensuring the workflow code can register
+          // the next step's callback before the next event is consumed.
+          const hydratedResult = await hydrateStepReturnValue(
+            event.eventData.result,
+            ctx.runId,
+            ctx.encryptionKey,
+            ctx.globalThis
+          );
+          resolve(hydratedResult as Result);
           return EventConsumerResult.Finished;
         }
 
         // An unexpected event type has been received, this event log looks corrupted. Let's fail immediately.
-        setTimeout(() => {
-          ctx.onWorkflowError(
-            new WorkflowRuntimeError(
-              `Unexpected event type for step ${correlationId} (name: ${stepName}) "${event.eventType}"`
-            )
-          );
-        }, 0);
+        ctx.onWorkflowError(
+          new WorkflowRuntimeError(
+            `Unexpected event type for step ${correlationId} (name: ${stepName}) "${event.eventType}"`
+          )
+        );
         return EventConsumerResult.Finished;
       });
 
