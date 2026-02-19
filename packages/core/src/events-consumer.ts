@@ -16,9 +16,7 @@ export enum EventConsumerResult {
   Finished,
 }
 
-type EventConsumerCallback = (
-  event: Event | null
-) => EventConsumerResult | Promise<EventConsumerResult>;
+type EventConsumerCallback = (event: Event | null) => EventConsumerResult;
 
 export interface EventsConsumerOptions {
   /**
@@ -36,8 +34,6 @@ export class EventsConsumer {
   readonly callbacks: EventConsumerCallback[] = [];
   private onUnconsumedEvent: (event: Event) => void;
   private pendingUnconsumedCheck: ReturnType<typeof setTimeout> | null = null;
-  private consuming = false;
-  private consumeScheduled = false;
 
   constructor(events: Event[], options: EventsConsumerOptions) {
     this.events = events;
@@ -47,7 +43,7 @@ export class EventsConsumer {
 
   /**
    * Registers a callback function to be called after an event has been consumed
-   * by a different callback. The callback can return (or resolve to):
+   * by a different callback. The callback can return:
    *  - `EventConsumerResult.Consumed` the event is considered consumed and will not be passed to any other callback, but the callback will remain in the callbacks list
    *  - `EventConsumerResult.NotConsumed` the event is passed to the next callback
    *  - `EventConsumerResult.Finished` the event is considered consumed and the callback is removed from the callbacks list
@@ -61,33 +57,16 @@ export class EventsConsumer {
       clearTimeout(this.pendingUnconsumedCheck);
       this.pendingUnconsumedCheck = null;
     }
-    this.scheduleConsume();
-  }
-
-  private scheduleConsume() {
-    if (this.consumeScheduled) return;
-    this.consumeScheduled = true;
     process.nextTick(this.consume);
   }
 
-  private consume = async () => {
-    this.consumeScheduled = false;
-    if (this.consuming) return;
-    this.consuming = true;
-    try {
-      await this.consumeInner();
-    } finally {
-      this.consuming = false;
-    }
-  };
-
-  private consumeInner = async () => {
+  private consume = () => {
     const currentEvent = this.events[this.eventIndex] ?? null;
     for (let i = 0; i < this.callbacks.length; i++) {
       const callback = this.callbacks[i];
       let handled = EventConsumerResult.NotConsumed;
       try {
-        handled = await callback(currentEvent);
+        handled = callback(currentEvent);
       } catch (error) {
         eventsLogger.error('EventConsumer callback threw an error', { error });
       }
@@ -103,8 +82,8 @@ export class EventsConsumer {
           this.callbacks.splice(i, 1);
         }
 
-        // continue to the next event immediately (no scheduling delay)
-        await this.consumeInner();
+        // continue to the next event
+        process.nextTick(this.consume);
         return;
       }
     }
