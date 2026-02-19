@@ -911,14 +911,22 @@ describe('runWorkflow', () => {
     });
 
     it('should replay Promise.all with encrypted step results followed by a sequential step', async () => {
-      // This test reproduces a production race condition where:
-      // 1. Two steps run concurrently via Promise.all
-      // 2. Both complete (step_completed events with encrypted data)
-      // 3. A third step is created sequentially after Promise.all resolves
-      // The bug: with real async decryption, the setTimeout(async () => resolve(await decrypt()))
-      // in step.ts can cause the step_created event for step 3 to be flagged as
-      // "unconsumed" because the decryption delay allows the unconsumed event check
-      // to fire before the workflow code registers the next step's consumer.
+      // This test reproduces two production race conditions:
+      //
+      // Race condition 1 (args decryption):
+      // The EventsConsumer processes lifecycle events (run_created, run_started)
+      // via nextTick while workflow args are being decrypted. After consuming
+      // those, it hits step_created events with no subscriber yet (the workflow
+      // code hasn't started because hydrateWorkflowArguments is still awaiting
+      // crypto.subtle.decrypt). The unconsumed check setTimeout(0) fires before
+      // the decrypt completes. Fix: suppressUnconsumedCheck around args hydration.
+      //
+      // Race condition 2 (step result decryption):
+      // Two steps complete via Promise.all with encrypted data. The async
+      // decrypt in step.ts's enqueueResolve delays the Promise resolution,
+      // which delays the workflow code from registering the next step's
+      // consumer. The unconsumed check fires for step_created of the
+      // sequential step. Fix: enqueueResolve suppresses the unconsumed check.
       const ops: Promise<any>[] = [];
       const workflowRunId = 'wrun_123';
       const workflowRun: WorkflowRun = {
@@ -947,7 +955,22 @@ describe('runWorkflow', () => {
       // The step_created for stepC appears in the event log AFTER stepB's
       // step_completed — this is the event that gets flagged as "unconsumed"
       // in production when async decryption delays the resolve.
+      // Include run_created and run_started events to match production event logs
       const events: Event[] = [
+        {
+          eventId: 'event-run-created',
+          runId: workflowRunId,
+          eventType: 'run_created',
+          correlationId: workflowRunId,
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        },
+        {
+          eventId: 'event-run-started',
+          runId: workflowRunId,
+          eventType: 'run_started',
+          correlationId: workflowRunId,
+          createdAt: new Date('2024-01-01T00:00:00.500Z'),
+        },
         {
           eventId: 'event-0',
           runId: workflowRunId,

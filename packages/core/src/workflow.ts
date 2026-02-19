@@ -639,12 +639,24 @@ export async function runWorkflow(
       );
     }
 
-    const args = await hydrateWorkflowArguments(
-      workflowRun.input,
-      workflowRun.runId,
-      encryptionKey,
-      vmGlobalThis
-    );
+    // Suppress the unconsumed event check while decrypting workflow arguments.
+    // Without this, the EventsConsumer processes lifecycle events (run_created,
+    // run_started) via nextTick, then hits step_created events that have no
+    // subscriber yet (the workflow code hasn't started). If the args decryption
+    // takes long enough for the unconsumed check's setTimeout(0) to fire, the
+    // step_created event is incorrectly flagged as unconsumed.
+    eventsConsumer.suppressUnconsumedCheck();
+    let args: unknown;
+    try {
+      args = await hydrateWorkflowArguments(
+        workflowRun.input,
+        workflowRun.runId,
+        encryptionKey,
+        vmGlobalThis
+      );
+    } finally {
+      eventsConsumer.unsuppressUnconsumedCheck();
+    }
 
     if (!Array.isArray(args)) {
       throw new Error(

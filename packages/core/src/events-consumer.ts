@@ -90,6 +90,25 @@ export class EventsConsumer {
     }, 0);
   }
 
+  /**
+   * Suppresses the unconsumed event check. Call this before an async operation
+   * that will eventually cause new subscribers to be registered (e.g., workflow
+   * args decryption). Must be paired with `unsuppressUnconsumedCheck()`.
+   */
+  suppressUnconsumedCheck() {
+    this.pendingResolves++;
+  }
+
+  /**
+   * Unsuppresses the unconsumed event check and re-triggers consume.
+   * Must be called after the async operation completes (and new subscribers
+   * have been or will be registered as a result).
+   */
+  unsuppressUnconsumedCheck() {
+    this.pendingResolves--;
+    process.nextTick(this.consume);
+  }
+
   private consume = () => {
     const currentEvent = this.events[this.eventIndex] ?? null;
     for (let i = 0; i < this.callbacks.length; i++) {
