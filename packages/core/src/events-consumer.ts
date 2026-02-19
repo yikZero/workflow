@@ -18,13 +18,20 @@ export enum EventConsumerResult {
 
 type EventConsumerCallback = (event: Event | null) => EventConsumerResult;
 
+/**
+ * How long (in ms) the watchdog waits without progress before firing the
+ * onUnconsumedEvent callback. Workflow replay should be essentially instant,
+ * so 1 second of no progress indicates a catastrophic issue (corrupted event
+ * log, missing subscriber, etc.).
+ */
+const WATCHDOG_TIMEOUT_MS = 1000;
+
 export interface EventsConsumerOptions {
   /**
-   * Callback invoked when a non-null event cannot be consumed by any registered
-   * callback, indicating an orphaned or invalid event in the event log. Called
-   * only after a subscribe+consume cycle fails to make progress, confirming
-   * the event is truly unconsumed rather than simply waiting for a subscriber
-   * that hasn't been registered yet.
+   * Callback invoked when the EventsConsumer has events remaining but has
+   * not made any progress (no events consumed, no new subscribers) for
+   * {@link WATCHDOG_TIMEOUT_MS}. This indicates a catastrophic issue such
+   * as a corrupted event log.
    */
   onUnconsumedEvent: (event: Event) => void;
 
@@ -33,24 +40,22 @@ export interface EventsConsumerOptions {
    * (a subscriber returned Consumed or Finished). This is used for passive
    * observation (e.g., updating the VM timestamp) without participating in
    * event matching — observers should NOT be regular subscribers because the
-   * consume loop may scan past events to find a match, and passive
-   * subscribers would be called for events that aren't actually consumed.
+   * consume loop scans past unmatched events, and passive subscribers would
+   * be called for events that aren't actually consumed yet.
    */
   onEventConsumed?: (event: Event) => void;
 }
 
 export class EventsConsumer {
-  eventIndex: number;
   readonly events: Event[] = [];
   readonly callbacks: EventConsumerCallback[] = [];
   private onUnconsumedEvent: (event: Event) => void;
   private onEventConsumed?: (event: Event) => void;
-  private pendingUnconsumedCheck: ReturnType<typeof setTimeout> | null = null;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private pendingResolves = 0;
 
   constructor(events: Event[], options: EventsConsumerOptions) {
     this.events = events;
-    this.eventIndex = 0;
     this.onUnconsumedEvent = options.onUnconsumedEvent;
     this.onEventConsumed = options.onEventConsumed;
   }
@@ -66,40 +71,15 @@ export class EventsConsumer {
    */
   subscribe(fn: EventConsumerCallback) {
     this.callbacks.push(fn);
-    // Cancel any pending unconsumed check since a new callback may consume the event
-    if (this.pendingUnconsumedCheck !== null) {
-      clearTimeout(this.pendingUnconsumedCheck);
-      this.pendingUnconsumedCheck = null;
-    }
-    // Record the events array length before consume runs. After consume
-    // settles, if no events were consumed (length unchanged) and no async
-    // resolves are pending, the remaining events are truly orphaned.
-    const lengthBeforeConsume = this.events.length;
+    this.resetWatchdog();
     process.nextTick(this.consume);
-    // Schedule the unconsumed check AFTER the consume nextTick. We use
-    // setTimeout(0) which fires after all nextTicks and microtasks, giving
-    // the consume loop and any subsequent subscribe() calls a chance to run.
-    this.pendingUnconsumedCheck = setTimeout(() => {
-      this.pendingUnconsumedCheck = null;
-      if (
-        this.events.length === lengthBeforeConsume &&
-        this.events.length > 0 &&
-        this.pendingResolves === 0
-      ) {
-        const event = this.events[this.eventIndex];
-        if (event) {
-          this.onUnconsumedEvent(event);
-        }
-      }
-    }, 0);
   }
 
   /**
    * Enqueues an async resolve operation. While any enqueued resolves are
-   * pending, the unconsumed event check is suppressed. This is critical for
-   * async decryption: without it, the EventsConsumer would flag subsequent
-   * events as "unconsumed" because the async decrypt delays the Promise
-   * resolution, which delays the workflow code from registering new consumers.
+   * pending, the watchdog is suppressed. This is critical for async
+   * decryption: without it, the watchdog could fire while crypto.subtle
+   * is decrypting step results.
    *
    * Use this from event callbacks (step.ts, hook.ts) instead of raw
    * `setTimeout(async () => { resolve(await decrypt()) })` patterns.
@@ -127,38 +107,52 @@ export class EventsConsumer {
   }
 
   /**
-   * Suppresses the unconsumed event check. Call this before an async operation
-   * that will eventually cause new subscribers to be registered (e.g., workflow
-   * args decryption). Must be paired with `unsuppressUnconsumedCheck()`.
+   * Suppresses the watchdog. Call this before an async operation that will
+   * eventually cause new subscribers to be registered (e.g., workflow args
+   * decryption). Must be paired with `unsuppressUnconsumedCheck()`.
    */
   suppressUnconsumedCheck() {
     this.pendingResolves++;
   }
 
   /**
-   * Unsuppresses the unconsumed event check and re-triggers consume.
-   * Must be called after the async operation completes (and new subscribers
-   * have been or will be registered as a result).
+   * Unsuppresses the watchdog and re-triggers consume. Must be called after
+   * the async operation completes.
    */
   unsuppressUnconsumedCheck() {
     this.pendingResolves--;
     process.nextTick(this.consume);
   }
 
+  /**
+   * Resets the watchdog timer. Called whenever progress is made (event
+   * consumed, new subscriber registered). If the watchdog fires, it means
+   * no progress has been made for WATCHDOG_TIMEOUT_MS and the replay is
+   * deadlocked.
+   */
+  private resetWatchdog() {
+    if (this.watchdog !== null) {
+      clearTimeout(this.watchdog);
+    }
+    this.watchdog = setTimeout(() => {
+      this.watchdog = null;
+      // Only fire if there are remaining events and no pending async work
+      if (this.events.length > 0 && this.pendingResolves === 0) {
+        this.onUnconsumedEvent(this.events[0]);
+      }
+    }, WATCHDOG_TIMEOUT_MS);
+  }
+
   private consume = () => {
-    // Scan forward from the current position to find the next event that
-    // a subscriber can consume. Events that no subscriber matches are
-    // skipped — they will be retried when new subscribers are registered
-    // (via subscribe() → process.nextTick(consume)). This handles
-    // out-of-order events in the event log: the step handler writes events
-    // asynchronously, so events for a later step can appear before events
-    // for an earlier step. Rather than getting stuck on the out-of-order
-    // event, we skip past it to process events that current subscribers need.
-    for (
-      let eventIdx = this.eventIndex;
-      eventIdx < this.events.length;
-      eventIdx++
-    ) {
+    // Scan forward through the events array to find an event that a
+    // subscriber can consume. Events that no subscriber matches are skipped
+    // — they will be retried when new subscribers are registered (via
+    // subscribe() → process.nextTick(consume)). This handles out-of-order
+    // events in the event log: the step handler writes events asynchronously,
+    // so events for a later step can appear before events for an earlier
+    // step. Rather than getting stuck on the out-of-order event, we skip
+    // past it to process events that current subscribers need.
+    for (let eventIdx = 0; eventIdx < this.events.length; eventIdx++) {
       const event = this.events[eventIdx];
       for (let i = 0; i < this.callbacks.length; i++) {
         const callback = this.callbacks[i];
@@ -174,28 +168,28 @@ export class EventsConsumer {
           handled === EventConsumerResult.Consumed ||
           handled === EventConsumerResult.Finished
         ) {
-          // Consumer handled this event. Remove it from the events array
-          // at its current position. The eventIndex stays the same (since
-          // we removed an event at or after the current index, the next
-          // unprocessed event shifts into position).
+          // Consumer handled this event. Remove it from the events array.
           this.events.splice(eventIdx, 1);
+
+          // Progress was made — reset the watchdog
+          this.resetWatchdog();
 
           // Notify the observer (e.g., timestamp updater)
           this.onEventConsumed?.(event);
 
-          // remove the callback if it has finished
+          // Remove the callback if it has finished
           if (handled === EventConsumerResult.Finished) {
             this.callbacks.splice(i, 1);
           }
 
-          // continue to the next event
+          // Continue processing
           process.nextTick(this.consume);
           return;
         }
       }
     }
 
-    // All events were scanned and none could be consumed. Try passing null
+    // All events were scanned and none could be consumed. Pass null
     // (end-of-events) to subscribers so they can trigger WorkflowSuspension.
     for (let i = 0; i < this.callbacks.length; i++) {
       const callback = this.callbacks[i];

@@ -361,10 +361,11 @@ describe('runWorkflow', () => {
       );
       // Timestamps:
       // - Initial: 0s (from startedAt) without encryption; with encryption the
-      //   EventsConsumer processes run_created, run_started, and step1_created
-      //   events during args decryption, advancing the timestamp to 0.6s
-      // - After step 1 completes (at 2s), timestamp advances to step2_created (2.5s)
-      // - After step 2 completes (at 4s), timestamp advances to step3_created (4.5s)
+      //   EventsConsumer processes run_created, run_started events during args
+      //   decryption, advancing the timestamp to 0.5s (run_started)
+      // - After step 1 completes (at 2s), workflow code reads timestamp before
+      //   step2_created is consumed, so it sees 2.0s (step1_completed)
+      // - After step 2 completes (at 4s), same pattern: sees 4.0s
       // - After step 3 completes: 6s
       const timestamps = await hydrateWorkflowReturnValue(
         result as any,
@@ -375,14 +376,14 @@ describe('runWorkflow', () => {
       expect(timestamps).toEqual([
         getKey()
           ? // With encryption, args decryption yields to the event loop,
-            // allowing the EventsConsumer to process run_created (0s),
-            // run_started (0.5s), and step1_created (0.6s) events before
-            // the workflow code runs. The timestamp observer advances the
-            // VM timestamp to the latest consumed event's createdAt.
-            new Date('2024-01-01T00:00:00.600Z')
+            // allowing the EventsConsumer to process run_created (0s) and
+            // run_started (0.5s) events before the workflow code runs.
+            // The onEventConsumed callback advances the VM timestamp to
+            // the latest consumed event's createdAt.
+            new Date('2024-01-01T00:00:00.500Z')
           : new Date('2024-01-01T00:00:00.000Z'),
-        1704067202500, // 2.5s (step2_created timestamp)
-        1704067204500, // 4.5s (step3_created timestamp)
+        1704067202000, // 2.0s (step1_completed timestamp)
+        1704067204000, // 4.0s (step2_completed timestamp)
         new Date('2024-01-01T00:00:06.000Z'),
       ]);
     });
@@ -3748,7 +3749,12 @@ describe('runWorkflow', () => {
           runId: workflowRunId,
           workflowName: 'workflow',
           status: 'running',
-          input: await dehydrateWorkflowArguments([], ops),
+          input: await dehydrateWorkflowArguments(
+            [],
+            workflowRunId,
+            getKey(),
+            ops
+          ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
           updatedAt: new Date('2024-01-01T00:00:00.000Z'),
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3774,7 +3780,7 @@ describe('runWorkflow', () => {
             createdAt: new Date('2024-01-01T00:00:05.000Z'),
           },
           {
-            // Duplicate wait_completed - should trigger WorkflowRuntimeError
+            // Duplicate wait_completed - should be detected as corruption
             eventId: 'event-2',
             runId: workflowRunId,
             eventType: 'wait_completed',
@@ -3794,7 +3800,12 @@ describe('runWorkflow', () => {
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
             eventData: {
-              result: await dehydrateStepReturnValue('step done', ops),
+              result: await dehydrateStepReturnValue(
+                'step done',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:07.000Z'),
           },
@@ -3803,14 +3814,15 @@ describe('runWorkflow', () => {
         await expect(
           runWorkflow(
             `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
-          const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-          async function workflow() {
-            await sleep('5s');
-            const result = await doWork();
-            return result;
-          }${getWorkflowTransformCode('workflow')}`,
+            const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+            async function workflow() {
+              await sleep('5s');
+              const result = await doWork();
+              return result;
+            }${getWorkflowTransformCode('workflow')}`,
             workflowRun,
-            events
+            events,
+            getKey()
           )
         ).rejects.toThrow(WorkflowRuntimeError);
       });
@@ -3822,7 +3834,12 @@ describe('runWorkflow', () => {
           runId: workflowRunId,
           workflowName: 'workflow',
           status: 'running',
-          input: await dehydrateWorkflowArguments([], ops),
+          input: await dehydrateWorkflowArguments(
+            [],
+            workflowRunId,
+            getKey(),
+            ops
+          ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
           updatedAt: new Date('2024-01-01T00:00:00.000Z'),
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3843,18 +3860,28 @@ describe('runWorkflow', () => {
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
             eventData: {
-              result: await dehydrateStepReturnValue('first done', ops),
+              result: await dehydrateStepReturnValue(
+                'first done',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:01.000Z'),
           },
           {
-            // Duplicate step_completed - orphaned, blocks events below
+            // Duplicate step_completed - should cause corruption error
             eventId: 'event-2',
             runId: workflowRunId,
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
             eventData: {
-              result: await dehydrateStepReturnValue('duplicate', ops),
+              result: await dehydrateStepReturnValue(
+                'duplicate',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:02.000Z'),
           },
@@ -3871,7 +3898,12 @@ describe('runWorkflow', () => {
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
             eventData: {
-              result: await dehydrateStepReturnValue('second done', ops),
+              result: await dehydrateStepReturnValue(
+                'second done',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:04.000Z'),
           },
@@ -3886,7 +3918,8 @@ describe('runWorkflow', () => {
             return await doWork2();
           }${getWorkflowTransformCode('workflow')}`,
             workflowRun,
-            events
+            events,
+            getKey()
           )
         ).rejects.toThrow(WorkflowRuntimeError);
       });
@@ -3898,7 +3931,12 @@ describe('runWorkflow', () => {
           runId: workflowRunId,
           workflowName: 'workflow',
           status: 'running',
-          input: await dehydrateWorkflowArguments([], ops),
+          input: await dehydrateWorkflowArguments(
+            [],
+            workflowRunId,
+            getKey(),
+            ops
+          ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
           updatedAt: new Date('2024-01-01T00:00:00.000Z'),
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3907,13 +3945,18 @@ describe('runWorkflow', () => {
 
         const events: Event[] = [
           {
-            // Orphaned step_completed with unknown correlationId - blocks everything after
+            // Orphaned step_completed with unknown correlationId - should cause corruption error
             eventId: 'event-0',
             runId: workflowRunId,
             eventType: 'step_completed',
             correlationId: 'step_UNKNOWN_CORRELATION_ID',
             eventData: {
-              result: await dehydrateStepReturnValue('orphan', ops),
+              result: await dehydrateStepReturnValue(
+                'orphan',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:00.000Z'),
           },
@@ -3930,7 +3973,12 @@ describe('runWorkflow', () => {
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
             eventData: {
-              result: await dehydrateStepReturnValue('done', ops),
+              result: await dehydrateStepReturnValue(
+                'done',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:02.000Z'),
           },
@@ -3943,7 +3991,8 @@ describe('runWorkflow', () => {
             return await doWork();
           }${getWorkflowTransformCode('workflow')}`,
             workflowRun,
-            events
+            events,
+            getKey()
           )
         ).rejects.toThrow(WorkflowRuntimeError);
       });
@@ -3955,7 +4004,12 @@ describe('runWorkflow', () => {
           runId: workflowRunId,
           workflowName: 'workflow',
           status: 'running',
-          input: await dehydrateWorkflowArguments([], ops),
+          input: await dehydrateWorkflowArguments(
+            [],
+            workflowRunId,
+            getKey(),
+            ops
+          ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
           updatedAt: new Date('2024-01-01T00:00:00.000Z'),
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3964,7 +4018,7 @@ describe('runWorkflow', () => {
 
         const events: Event[] = [
           {
-            // Orphaned wait_completed with no matching wait_created - blocks everything after
+            // Orphaned wait_completed with no matching wait_created - should cause corruption error
             eventId: 'event-0',
             runId: workflowRunId,
             eventType: 'wait_completed',
@@ -3984,7 +4038,12 @@ describe('runWorkflow', () => {
             eventType: 'step_completed',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
             eventData: {
-              result: await dehydrateStepReturnValue('done', ops),
+              result: await dehydrateStepReturnValue(
+                'done',
+                workflowRunId,
+                getKey(),
+                ops
+              ),
             },
             createdAt: new Date('2024-01-01T00:00:02.000Z'),
           },
@@ -3997,7 +4056,8 @@ describe('runWorkflow', () => {
             return await doWork();
           }${getWorkflowTransformCode('workflow')}`,
             workflowRun,
-            events
+            events,
+            getKey()
           )
         ).rejects.toThrow(WorkflowRuntimeError);
       });

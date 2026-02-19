@@ -1,18 +1,17 @@
 import type { Event } from '@workflow/world';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventConsumerResult, EventsConsumer } from './events-consumer.js';
 
 // Helper function to create mock events
 function createMockEvent(overrides: Partial<Event> = {}): Event {
   return {
-    id: 'event-1',
-    workflow_run_id: 'run-1',
-    event_type: 'test-event',
-    event_data: { value: 'test' },
-    sequence_number: 1,
-    created_at: new Date(),
+    eventId: 'event-1',
+    runId: 'run-1',
+    eventType: 'test-event',
+    eventData: { value: 'test' },
+    createdAt: new Date(),
     ...overrides,
-  };
+  } as Event;
 }
 
 // Default options for tests that don't care about onUnconsumedEvent
@@ -23,19 +22,25 @@ function waitForNextTick(): Promise<void> {
   return new Promise((resolve) => process.nextTick(resolve));
 }
 
-// Helper to wait for setTimeout(0) macrotask (used by deferred unconsumed event check)
-function waitForMacrotask(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe('EventsConsumer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe('constructor', () => {
     it('should initialize with provided events', () => {
-      const events = [createMockEvent(), createMockEvent({ id: 'event-2' })];
+      const events = [
+        createMockEvent(),
+        createMockEvent({ eventId: 'event-2' }),
+      ];
       const consumer = new EventsConsumer(events, defaultOptions);
 
       expect(consumer.events).toEqual(events);
-      expect(consumer.eventIndex).toBe(0);
+      expect(consumer.events.length).toBe(2);
       expect(consumer.callbacks).toEqual([]);
     });
 
@@ -43,7 +48,7 @@ describe('EventsConsumer', () => {
       const consumer = new EventsConsumer([], defaultOptions);
 
       expect(consumer.events).toEqual([]);
-      expect(consumer.eventIndex).toBe(0);
+      expect(consumer.events.length).toBe(0);
       expect(consumer.callbacks).toEqual([]);
     });
   });
@@ -80,8 +85,10 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback);
       await waitForNextTick();
 
+      // Called once with the event (scan phase), once with null (end-of-events)
       expect(callback).toHaveBeenCalledWith(event);
-      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(null);
+      expect(callback).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -94,8 +101,10 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback);
       await waitForNextTick();
 
+      // Called once with the event (scan phase), once with null (end-of-events)
       expect(callback).toHaveBeenCalledWith(event);
-      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(null);
+      expect(callback).toHaveBeenCalledTimes(2);
     });
 
     it('should call callbacks with null when no events exist', async () => {
@@ -108,20 +117,21 @@ describe('EventsConsumer', () => {
       expect(callback).toHaveBeenCalledWith(null);
     });
 
-    it('should increment event index and remove callback when callback returns Finished', async () => {
-      const event1 = createMockEvent({ id: 'event-1' });
-      const event2 = createMockEvent({ id: 'event-2' });
+    it('should remove consumed event and remove callback when callback returns Finished', async () => {
+      const event1 = createMockEvent({ eventId: 'event-1' });
+      const event2 = createMockEvent({ eventId: 'event-2' });
       const consumer = new EventsConsumer([event1, event2], defaultOptions);
       const callback = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
       consumer.subscribe(callback);
       await waitForNextTick();
 
-      expect(consumer.eventIndex).toBe(1);
+      // event1 consumed and spliced out, event2 remains
+      expect(consumer.events).toHaveLength(1);
       expect(consumer.callbacks).toHaveLength(0);
     });
 
-    it('should not increment event index when callback returns false', async () => {
+    it('should not consume event when callback returns NotConsumed', async () => {
       const event = createMockEvent();
       const consumer = new EventsConsumer([event], defaultOptions);
       const callback = vi.fn().mockReturnValue(EventConsumerResult.NotConsumed);
@@ -129,7 +139,7 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback);
       await waitForNextTick();
 
-      expect(consumer.eventIndex).toBe(0);
+      expect(consumer.events.length).toBe(1);
       expect(consumer.callbacks).toContain(callback);
     });
 
@@ -152,7 +162,7 @@ describe('EventsConsumer', () => {
       expect(callback1).toHaveBeenCalledWith(event);
       expect(callback2).toHaveBeenCalledWith(event);
       expect(callback3).toHaveBeenCalledWith(null);
-      expect(consumer.eventIndex).toBe(1);
+      expect(consumer.events).toHaveLength(0);
       expect(consumer.callbacks).toEqual([callback1, callback3]);
     });
 
@@ -178,17 +188,17 @@ describe('EventsConsumer', () => {
       expect(callback1).toHaveBeenCalledWith(event);
       expect(callback2).toHaveBeenCalledWith(event);
       expect(callback3).toHaveBeenCalledWith(event);
-      expect(consumer.eventIndex).toBe(0);
+      expect(consumer.events.length).toBe(1);
       expect(consumer.callbacks).toEqual([callback1, callback2, callback3]);
 
-      // onUnconsumedEvent is deferred via setTimeout to allow new subscribes
-      await waitForMacrotask();
+      // onUnconsumedEvent fires after 1-second watchdog timeout
+      vi.advanceTimersByTime(1000);
       expect(onUnconsumedEvent).toHaveBeenCalledWith(event);
     });
 
     it('should recursively process next event when current event is consumed', async () => {
-      const event1 = createMockEvent({ id: 'event-1', sequence_number: 1 });
-      const event2 = createMockEvent({ id: 'event-2', sequence_number: 2 });
+      const event1 = createMockEvent({ eventId: 'event-1' });
+      const event2 = createMockEvent({ eventId: 'event-2' });
       const consumer = new EventsConsumer([event1, event2], defaultOptions);
       const callback1 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
       const callback2 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
@@ -202,7 +212,7 @@ describe('EventsConsumer', () => {
       expect(callback1).toHaveBeenCalledWith(event1);
       expect(callback2).toHaveBeenCalledTimes(1);
       expect(callback2).toHaveBeenCalledWith(event2);
-      expect(consumer.eventIndex).toBe(2);
+      expect(consumer.events.length).toBe(0);
       expect(consumer.callbacks).toHaveLength(0);
     });
 
@@ -214,7 +224,7 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback);
       await waitForNextTick();
 
-      // Now eventIndex is 1, but array only has 1 element (index 0)
+      // Now events array is empty after consuming the event
       const callback2 = vi
         .fn()
         .mockReturnValue(EventConsumerResult.NotConsumed);
@@ -226,9 +236,9 @@ describe('EventsConsumer', () => {
 
     it('should handle complex event processing scenario', async () => {
       const events = [
-        createMockEvent({ id: 'event-1', event_type: 'type-a' }),
-        createMockEvent({ id: 'event-2', event_type: 'type-b' }),
-        createMockEvent({ id: 'event-3', event_type: 'type-a' }),
+        createMockEvent({ eventId: 'event-1', eventType: 'type-a' } as any),
+        createMockEvent({ eventId: 'event-2', eventType: 'type-b' } as any),
+        createMockEvent({ eventId: 'event-3', eventType: 'type-a' } as any),
       ];
       const consumer = new EventsConsumer(events, defaultOptions);
 
@@ -236,7 +246,7 @@ describe('EventsConsumer', () => {
       const typeACallback = vi
         .fn()
         .mockImplementation((event: Event | null) => {
-          return event?.event_type === 'type-a'
+          return (event?.eventType as string) === 'type-a'
             ? EventConsumerResult.Finished
             : EventConsumerResult.NotConsumed;
         });
@@ -245,7 +255,7 @@ describe('EventsConsumer', () => {
       const typeBCallback = vi
         .fn()
         .mockImplementation((event: Event | null) => {
-          return event?.event_type === 'type-b'
+          return (event?.eventType as string) === 'type-b'
             ? EventConsumerResult.Finished
             : EventConsumerResult.NotConsumed;
         });
@@ -256,10 +266,11 @@ describe('EventsConsumer', () => {
       await waitForNextTick(); // Wait for recursive processing
       await waitForNextTick(); // Wait for final processing
 
-      // typeACallback processes event-1 and gets removed, so it won't process event-3
+      // typeACallback consumes event-1, typeBCallback consumes event-2
+      // event-3 remains since both callbacks are removed after consuming
       expect(typeACallback).toHaveBeenCalledTimes(1); // Called for event-1 only
       expect(typeBCallback).toHaveBeenCalledTimes(1); // Called for event-2
-      expect(consumer.eventIndex).toBe(2); // Only 2 events processed (event-3 remains)
+      expect(consumer.events).toHaveLength(1); // event-3 remains
       expect(consumer.callbacks).toHaveLength(0); // Both callbacks removed after consuming their events
     });
   });
@@ -300,13 +311,13 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback3);
       await waitForNextTick();
 
-      // callback2 should be removed when it returns true
+      // callback2 should be removed when it returns Finished
       expect(consumer.callbacks).toEqual([callback1, callback3]);
       expect(callback3).toHaveBeenCalledWith(null);
     });
 
     it('should handle events with null/undefined data', async () => {
-      const eventWithNullData = createMockEvent({ event_data: null as any });
+      const eventWithNullData = createMockEvent({ eventData: null as any });
       const consumer = new EventsConsumer([eventWithNullData], defaultOptions);
       const callback = vi.fn().mockReturnValue(EventConsumerResult.Finished);
 
@@ -314,12 +325,12 @@ describe('EventsConsumer', () => {
       await waitForNextTick();
 
       expect(callback).toHaveBeenCalledWith(eventWithNullData);
-      expect(consumer.eventIndex).toBe(1);
+      expect(consumer.events.length).toBe(0);
     });
 
     it('should handle multiple subscriptions happening in sequence', async () => {
-      const event1 = createMockEvent({ id: 'event-1' });
-      const event2 = createMockEvent({ id: 'event-2' });
+      const event1 = createMockEvent({ eventId: 'event-1' });
+      const event2 = createMockEvent({ eventId: 'event-2' });
       const consumer = new EventsConsumer([event1, event2], defaultOptions);
 
       const callback1 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
@@ -333,7 +344,7 @@ describe('EventsConsumer', () => {
 
       expect(callback1).toHaveBeenCalledWith(event1);
       expect(callback2).toHaveBeenCalledWith(event2);
-      expect(consumer.eventIndex).toBe(2);
+      expect(consumer.events.length).toBe(0);
     });
 
     it('should handle empty events array gracefully', async () => {
@@ -344,7 +355,7 @@ describe('EventsConsumer', () => {
       await waitForNextTick();
 
       expect(callback).toHaveBeenCalledWith(null);
-      expect(consumer.eventIndex).toBe(0);
+      expect(consumer.events.length).toBe(0);
     });
   });
 
@@ -357,8 +368,9 @@ describe('EventsConsumer', () => {
 
       consumer.subscribe(callback);
       await waitForNextTick();
-      await waitForMacrotask();
 
+      // Watchdog fires after 1 second of no progress
+      vi.advanceTimersByTime(1000);
       expect(onUnconsumedEvent).toHaveBeenCalledWith(event);
     });
 
@@ -369,7 +381,9 @@ describe('EventsConsumer', () => {
 
       consumer.subscribe(callback);
       await waitForNextTick();
-      await waitForMacrotask();
+
+      // Advance past the watchdog timeout
+      vi.advanceTimersByTime(1000);
 
       expect(callback).toHaveBeenCalledWith(null);
       expect(onUnconsumedEvent).not.toHaveBeenCalled();
@@ -386,15 +400,18 @@ describe('EventsConsumer', () => {
       consumer.subscribe(callback1);
       await waitForNextTick();
 
-      // Before the macrotask fires, subscribe a new callback that consumes the event
+      // Before the watchdog fires, subscribe a new callback that consumes the event
       const callback2 = vi.fn().mockReturnValue(EventConsumerResult.Finished);
       consumer.subscribe(callback2);
       await waitForNextTick();
-      await waitForMacrotask();
+
+      // Advance past the watchdog timeout - should NOT fire since subscribe reset it
+      // and the event was consumed
+      vi.advanceTimersByTime(1000);
 
       // The new callback consumed the event, so onUnconsumedEvent should NOT be called
       expect(onUnconsumedEvent).not.toHaveBeenCalled();
-      expect(consumer.eventIndex).toBe(1);
+      expect(consumer.events.length).toBe(0);
     });
   });
 });

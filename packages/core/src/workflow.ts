@@ -674,6 +674,19 @@ export async function runWorkflow(
       workflowDiscontinuation.promise,
     ]);
 
+    // Check for unconsumed events remaining after the workflow completed.
+    // If there are leftover events, the event log is corrupt (e.g., duplicate
+    // wait_completed, orphaned step_completed). The scan-forward consume loop
+    // skips past these during replay, but they should be flagged as errors
+    // once the workflow finishes.
+    if (eventsConsumer.events.length > 0) {
+      const event = eventsConsumer.events[0];
+      throw new WorkflowRuntimeError(
+        `Unconsumed event in event log after workflow completed: eventType=${event.eventType}, correlationId=${event.correlationId}, eventId=${event.eventId}. This indicates a corrupted or invalid event log.`,
+        { slug: ERROR_SLUGS.CORRUPTED_EVENT_LOG }
+      );
+    }
+
     const dehydrated = await dehydrateWorkflowReturnValue(
       result,
       workflowRun.runId,
