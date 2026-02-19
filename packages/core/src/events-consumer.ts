@@ -81,11 +81,14 @@ export class EventsConsumer {
         await fn();
       } finally {
         this.pendingResolves--;
-        // Re-trigger consume now that the async work is done.
-        // This handles the case where consume() was blocked by an
-        // unconsumed event that now has a subscriber registered
-        // (because the async resolve unblocked the workflow code).
-        process.nextTick(this.consume);
+        // Re-trigger consume after the async work is done. We use
+        // setTimeout(0) instead of process.nextTick so that any Promise
+        // microtasks triggered by the resolve (e.g., Promise.all resolution
+        // → workflow code continues → new subscribe() calls) have a chance
+        // to run first. process.nextTick runs BEFORE Promise microtasks in
+        // Node.js, which would cause consume() to see an event with no
+        // subscriber registered yet.
+        setTimeout(this.consume, 0);
       }
     }, 0);
   }

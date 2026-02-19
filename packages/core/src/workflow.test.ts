@@ -2,7 +2,7 @@ import { types } from 'node:util';
 import { WorkflowRuntimeError } from '@workflow/errors';
 import type { Event, WorkflowRun } from '@workflow/world';
 import { assert, beforeAll, describe, expect, it } from 'vitest';
-import { importKey } from './encryption.js';
+import { type CryptoKey, importKey } from './encryption.js';
 import type { WorkflowSuspension } from './global.js';
 import {
   dehydrateStepReturnValue,
@@ -11,10 +11,20 @@ import {
 } from './serialization.js';
 import { runWorkflow } from './workflow.js';
 
-// No encryption key = encryption disabled
-const noEncryptionKey = undefined;
+// Real 32-byte AES-256 test key
+const testKeyRaw = new Uint8Array([
+  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+  0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
+  0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+]);
 
 describe('runWorkflow', () => {
+  let testKey: CryptoKey;
+
+  beforeAll(async () => {
+    testKey = await importKey(testKeyRaw);
+  });
+
   const getWorkflowTransformCode = (workflowName?: string) =>
     `;globalThis.__private_workflows = new Map();
     ${
@@ -26,86 +36,92 @@ describe('runWorkflow', () => {
     }
     `;
 
-  describe('successful workflow execution', () => {
-    it('should execute a simple workflow successfully', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowCode = `function workflow() { return "success"; }${getWorkflowTransformCode('workflow')}`;
+  /**
+   * All tests are run twice: once without encryption and once with encryption.
+   * This ensures that the EventsConsumer and replay logic behave identically
+   * regardless of whether async decryption is involved.
+   */
+  function runTestSuite(getKey: () => CryptoKey | undefined) {
+    describe('successful workflow execution', () => {
+      it('should execute a simple workflow successfully', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowCode = `function workflow() { return "success"; }${getWorkflowTransformCode('workflow')}`;
 
-      const workflowRun: WorkflowRun = {
-        runId: 'wrun_123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        const workflowRun: WorkflowRun = {
+          runId: 'wrun_123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [];
+        const events: Event[] = [];
 
-      const result = await runWorkflow(
-        workflowCode,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual('success');
-    });
+        const result = await runWorkflow(
+          workflowCode,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual('success');
+      });
 
-    it('should execute workflow with arguments', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowCode = `function workflow(a, b) { return a + b; }${getWorkflowTransformCode('workflow')}`;
+      it('should execute workflow with arguments', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowCode = `function workflow(a, b) { return a + b; }${getWorkflowTransformCode('workflow')}`;
 
-      const workflowRun: WorkflowRun = {
-        runId: 'wrun_123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [1, 2],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        const workflowRun: WorkflowRun = {
+          runId: 'wrun_123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [1, 2],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [];
+        const events: Event[] = [];
 
-      const result = await runWorkflow(
-        workflowCode,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual(3);
-    });
+        const result = await runWorkflow(
+          workflowCode,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual(3);
+      });
 
-    it('allow user code to handle user-defined errors', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowCode = `function workflow() {
+      it('allow user code to handle user-defined errors', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowCode = `function workflow() {
         try {
           throw new TypeError("my workflow error");
         } catch (err) {
@@ -113,231 +129,221 @@ describe('runWorkflow', () => {
         }
       }${getWorkflowTransformCode('workflow')}`;
 
+        const workflowRun: WorkflowRun = {
+          runId: 'wrun_123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await hydrateWorkflowReturnValue(
+          (await runWorkflow(
+            workflowCode,
+            workflowRun,
+            events,
+            getKey()
+          )) as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        assert(types.isNativeError(result));
+        expect(result.name).toEqual('TypeError');
+        expect(result.message).toEqual('my workflow error');
+      });
+    });
+
+    it('should resolve a step that has a `step_completed` event', async () => {
+      const ops: Promise<any>[] = [];
+      const workflowRunId = 'wrun_123';
       const workflowRun: WorkflowRun = {
-        runId: 'wrun_123',
+        runId: workflowRunId,
         workflowName: 'workflow',
         status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
+        input: await dehydrateWorkflowArguments([], 'wrun_123', getKey(), ops),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
         updatedAt: new Date('2024-01-01T00:00:00.000Z'),
         startedAt: new Date('2024-01-01T00:00:00.000Z'),
         deploymentId: 'test-deployment',
       };
 
-      const events: Event[] = [];
-
-      const result = await hydrateWorkflowReturnValue(
-        (await runWorkflow(
-          workflowCode,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )) as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      assert(types.isNativeError(result));
-      expect(result.name).toEqual('TypeError');
-      expect(result.message).toEqual('my workflow error');
-    });
-  });
-
-  it('should resolve a step that has a `step_completed` event', async () => {
-    const ops: Promise<any>[] = [];
-    const workflowRunId = 'wrun_123';
-    const workflowRun: WorkflowRun = {
-      runId: workflowRunId,
-      workflowName: 'workflow',
-      status: 'running',
-      input: await dehydrateWorkflowArguments(
-        [],
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      ),
-      createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      startedAt: new Date('2024-01-01T00:00:00.000Z'),
-      deploymentId: 'test-deployment',
-    };
-
-    const events: Event[] = [
-      {
-        eventId: 'event-0',
-        runId: workflowRunId,
-        eventType: 'step_started',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
-        createdAt: new Date(),
-      },
-      {
-        eventId: 'event-1',
-        runId: workflowRunId,
-        eventType: 'step_completed',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
-        eventData: {
-          result: await dehydrateStepReturnValue(
-            3,
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
+      const events: Event[] = [
+        {
+          eventId: 'event-0',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
+          createdAt: new Date(),
         },
-        createdAt: new Date(),
-      },
-    ];
+        {
+          eventId: 'event-1',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              3,
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date(),
+        },
+      ];
 
-    const result = await runWorkflow(
-      `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+      const result = await runWorkflow(
+        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             // 'add()' will throw a 'WorkflowSuspension' because it has not been run yet
             const a = await add(1, 2);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-      workflowRun,
-      events,
-      noEncryptionKey
-    );
-    expect(
-      await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      )
-    ).toEqual(3);
-  });
+        workflowRun,
+        events,
+        getKey()
+      );
+      expect(
+        await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        )
+      ).toEqual(3);
+    });
 
-  // Test that timestamps update correctly as events are consumed
-  it('should update the timestamp in the vm context as events are replayed', async () => {
-    const ops: Promise<any>[] = [];
-    const workflowRunId = 'wrun_123';
-    const workflowRun: WorkflowRun = {
-      runId: workflowRunId,
-      workflowName: 'workflow',
-      status: 'running',
-      input: await dehydrateWorkflowArguments(
-        [],
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      ),
-      createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      startedAt: new Date('2024-01-01T00:00:00.000Z'),
-      deploymentId: 'test-deployment',
-    };
-
-    // Events now include run_created, run_started, and step_created for proper consumption
-    const events: Event[] = [
-      {
-        eventId: 'event-run-created',
+    // Test that timestamps update correctly as events are consumed
+    it('should update the timestamp in the vm context as events are replayed', async () => {
+      const ops: Promise<any>[] = [];
+      const workflowRunId = 'wrun_123';
+      const workflowRun: WorkflowRun = {
         runId: workflowRunId,
-        eventType: 'run_created',
+        workflowName: 'workflow',
+        status: 'running',
+        input: await dehydrateWorkflowArguments([], 'wrun_123', getKey(), ops),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
-      },
-      {
-        eventId: 'event-run-started',
-        runId: workflowRunId,
-        eventType: 'run_started',
-        createdAt: new Date('2024-01-01T00:00:00.500Z'),
-      },
-      {
-        eventId: 'event-step1-created',
-        runId: workflowRunId,
-        eventType: 'step_created',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
-        createdAt: new Date('2024-01-01T00:00:00.600Z'),
-      },
-      {
-        eventId: 'event-0',
-        runId: workflowRunId,
-        eventType: 'step_started',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
-        createdAt: new Date('2024-01-01T00:00:01.000Z'),
-      },
-      {
-        eventId: 'event-1',
-        runId: workflowRunId,
-        eventType: 'step_completed',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
-        eventData: {
-          result: await dehydrateStepReturnValue(
-            3,
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-        },
-        createdAt: new Date('2024-01-01T00:00:02.000Z'),
-      },
-      {
-        eventId: 'event-step2-created',
-        runId: workflowRunId,
-        eventType: 'step_created',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
-        createdAt: new Date('2024-01-01T00:00:02.500Z'),
-      },
-      {
-        eventId: 'event-2',
-        runId: workflowRunId,
-        eventType: 'step_started',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
-        createdAt: new Date('2024-01-01T00:00:03.000Z'),
-      },
-      {
-        eventId: 'event-3',
-        runId: workflowRunId,
-        eventType: 'step_completed',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
-        eventData: {
-          result: await dehydrateStepReturnValue(
-            3,
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-        },
-        createdAt: new Date('2024-01-01T00:00:04.000Z'),
-      },
-      {
-        eventId: 'event-step3-created',
-        runId: workflowRunId,
-        eventType: 'step_created',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
-        createdAt: new Date('2024-01-01T00:00:04.500Z'),
-      },
-      {
-        eventId: 'event-4',
-        runId: workflowRunId,
-        eventType: 'step_started',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
-        createdAt: new Date('2024-01-01T00:00:05.000Z'),
-      },
-      {
-        eventId: 'event-5',
-        runId: workflowRunId,
-        eventType: 'step_completed',
-        correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
-        eventData: {
-          result: await dehydrateStepReturnValue(
-            3,
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-        },
-        createdAt: new Date('2024-01-01T00:00:06.000Z'),
-      },
-    ];
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        deploymentId: 'test-deployment',
+      };
 
-    const result = await runWorkflow(
-      `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+      // Events now include run_created, run_started, and step_created for proper consumption
+      const events: Event[] = [
+        {
+          eventId: 'event-run-created',
+          runId: workflowRunId,
+          eventType: 'run_created',
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        },
+        {
+          eventId: 'event-run-started',
+          runId: workflowRunId,
+          eventType: 'run_started',
+          createdAt: new Date('2024-01-01T00:00:00.500Z'),
+        },
+        {
+          eventId: 'event-step1-created',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
+          createdAt: new Date('2024-01-01T00:00:00.600Z'),
+        },
+        {
+          eventId: 'event-0',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
+          createdAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
+        {
+          eventId: 'event-1',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HF',
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              3,
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:02.000Z'),
+        },
+        {
+          eventId: 'event-step2-created',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
+          createdAt: new Date('2024-01-01T00:00:02.500Z'),
+        },
+        {
+          eventId: 'event-2',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
+          createdAt: new Date('2024-01-01T00:00:03.000Z'),
+        },
+        {
+          eventId: 'event-3',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HG',
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              3,
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:04.000Z'),
+        },
+        {
+          eventId: 'event-step3-created',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
+          createdAt: new Date('2024-01-01T00:00:04.500Z'),
+        },
+        {
+          eventId: 'event-4',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
+          createdAt: new Date('2024-01-01T00:00:05.000Z'),
+        },
+        {
+          eventId: 'event-5',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: 'step_01HK153X00Y11PCQTCHQRK34HH',
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              3,
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:06.000Z'),
+        },
+      ];
+
+      const result = await runWorkflow(
+        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const timestamps = [];
             timestamps.push(new Date());
@@ -349,523 +355,531 @@ describe('runWorkflow', () => {
             timestamps.push(new Date());
             return timestamps;
           }${getWorkflowTransformCode('workflow')}`,
-      workflowRun,
-      events,
-      noEncryptionKey
-    );
-    // Timestamps:
-    // - Initial: 0s (from startedAt)
-    // - After step 1 completes (at 2s), timestamp advances to step2_created (2.5s)
-    // - After step 2 completes (at 4s), timestamp advances to step3_created (4.5s)
-    // - After step 3 completes: 6s
-    expect(
-      await hydrateWorkflowReturnValue(
+        workflowRun,
+        events,
+        getKey()
+      );
+      // Timestamps:
+      // - Initial: 0s (from startedAt) without encryption; with encryption the
+      //   EventsConsumer processes run_created, run_started, and step1_created
+      //   events during args decryption, advancing the timestamp to 0.6s
+      // - After step 1 completes (at 2s), timestamp advances to step2_created (2.5s)
+      // - After step 2 completes (at 4s), timestamp advances to step3_created (4.5s)
+      // - After step 3 completes: 6s
+      const timestamps = await hydrateWorkflowReturnValue(
         result as any,
         'wrun_123',
-        noEncryptionKey,
+        getKey(),
         ops
-      )
-    ).toEqual([
-      new Date('2024-01-01T00:00:00.000Z'),
-      1704067202500, // 2.5s (step2_created timestamp)
-      1704067204500, // 4.5s (step3_created timestamp)
-      new Date('2024-01-01T00:00:06.000Z'),
-    ]);
-  });
+      );
+      expect(timestamps).toEqual([
+        getKey()
+          ? // With encryption, args decryption yields to the event loop,
+            // allowing the EventsConsumer to process run_created (0s),
+            // run_started (0.5s), and step1_created (0.6s) events before
+            // the workflow code runs. The timestamp observer advances the
+            // VM timestamp to the latest consumed event's createdAt.
+            new Date('2024-01-01T00:00:00.600Z')
+          : new Date('2024-01-01T00:00:00.000Z'),
+        1704067202500, // 2.5s (step2_created timestamp)
+        1704067204500, // 4.5s (step3_created timestamp)
+        new Date('2024-01-01T00:00:06.000Z'),
+      ]);
+    });
 
-  // TODO: Date.now determinism is currently broken in the workflow!!
-  it.fails(
-    'should maintain determinism of `Date` across executions',
-    async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
+    // TODO: Date.now determinism is currently broken in the workflow!!
+    it.fails(
+      'should maintain determinism of `Date` across executions',
+      async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
           runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
           },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:02.000Z'),
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              resumeAt: new Date('2024-01-01T00:00:02.000Z'),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
           },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-      ];
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:03.000Z'),
+          },
+        ];
 
-      const workflowCode = `
+        const workflowCode = `
       const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
       async function workflow() {
         await Promise.race([sleep(1), sleep(2)]);
         return Date.now();
       }${getWorkflowTransformCode('workflow')}`;
 
-      // Execute the workflow with only sleep(1) resolved
-      const result1 = await runWorkflow(
-        workflowCode,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
+        // Execute the workflow with only sleep(1) resolved
+        const result1 = await runWorkflow(
+          workflowCode,
+          workflowRun,
+          events,
+          getKey()
+        );
 
-      // Execute again with both sleeps resolved this time
-      const result2 = await runWorkflow(
-        workflowCode,
-        workflowRun,
-        [
-          ...events,
+        // Execute again with both sleeps resolved this time
+        const result2 = await runWorkflow(
+          workflowCode,
+          workflowRun,
+          [
+            ...events,
+            {
+              eventId: 'event-3',
+              runId: workflowRunId,
+              eventType: 'wait_completed',
+              correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+              createdAt: new Date('2024-01-01T00:00:04.000Z'),
+            },
+          ],
+          getKey()
+        );
+
+        // The date should be the same
+        const date1 = await hydrateWorkflowReturnValue(
+          result1 as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        const date2 = await hydrateWorkflowReturnValue(
+          result2 as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(date1).toEqual(date2);
+      }
+    );
+
+    describe('concurrency', () => {
+      it('should resolve `Promise.all()` steps that have `step_completed` events', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                3,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
           {
             eventId: 'event-3',
             runId: workflowRunId,
-            eventType: 'wait_completed',
-            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-            createdAt: new Date('2024-01-01T00:00:04.000Z'),
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                7,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
           },
-        ],
-        noEncryptionKey
-      );
+        ];
 
-      // The date should be the same
-      const date1 = await hydrateWorkflowReturnValue(
-        result1 as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      const date2 = await hydrateWorkflowReturnValue(
-        result2 as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(date1).toEqual(date2);
-    }
-  );
-
-  describe('concurrency', () => {
-    it('should resolve `Promise.all()` steps that have `step_completed` events', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              3,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              7,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+        const result = await runWorkflow(
+          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const a = await Promise.all([add(1, 2), add(3, 4)]);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual([3, 7]);
-    });
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual([3, 7]);
+      });
 
-    it('should resolve `Promise.race()` steps that have `step_completed` events (first promise resolves first)', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should resolve `Promise.race()` steps that have `step_completed` events (first promise resolves first)', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              3,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date(),
           },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              7,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date(),
           },
-          createdAt: new Date(),
-        },
-      ];
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                3,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                7,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
 
-      const result = await runWorkflow(
-        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+        const result = await runWorkflow(
+          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const a = await Promise.race([add(1, 2), add(3, 4)]);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual(3);
-    });
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual(3);
+      });
 
-    it('should resolve `Promise.race()` steps that have `step_completed` events (second promise resolves first)', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should resolve `Promise.race()` steps that have `step_completed` events (second promise resolves first)', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              7,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date(),
           },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              3,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date(),
           },
-          createdAt: new Date(),
-        },
-      ];
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                7,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                3,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
 
-      const result = await runWorkflow(
-        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+        const result = await runWorkflow(
+          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const a = await Promise.race([add(1, 2), add(3, 4)]);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual(7);
-    });
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual(7);
+      });
 
-    it('should handle Promise.race with multiple concurrent steps completing out of order', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should handle Promise.race with multiple concurrent steps completing out of order', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [
-        {
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGD',
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K755385N02MMWXYHFCQSP9P0',
-          createdAt: new Date('2025-10-09T18:52:51.253Z'),
-        },
-        {
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGE',
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K755386GHGAFYYDC58V17E3T',
-          createdAt: new Date('2025-10-09T18:52:51.280Z'),
-        },
-        {
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGF',
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K75538D4Q4X8PJ1ZNDZD5R0W',
-          createdAt: new Date('2025-10-09T18:52:51.492Z'),
-        },
-        {
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGG',
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K75538Y9GEHXJQXT3JB89M4C',
-          createdAt: new Date('2025-10-09T18:52:52.041Z'),
-        },
-        {
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGH',
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K75539CD2PAH419SKJ2X5V5T',
-          createdAt: new Date('2025-10-09T18:52:52.493Z'),
-        },
-        {
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGH',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              4,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+        const events: Event[] = [
+          {
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGD',
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K755385N02MMWXYHFCQSP9P0',
+            createdAt: new Date('2025-10-09T18:52:51.253Z'),
           },
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K7553EABWCK00JQ9R8P1FTK7',
-          createdAt: new Date('2025-10-09T18:52:57.547Z'),
-        },
-        {
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGG',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              3,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGE',
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K755386GHGAFYYDC58V17E3T',
+            createdAt: new Date('2025-10-09T18:52:51.280Z'),
           },
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K7553F31YS6C94NG23WGEEMV',
-          createdAt: new Date('2025-10-09T18:52:58.337Z'),
-        },
-        {
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGF',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              2,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGF',
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K75538D4Q4X8PJ1ZNDZD5R0W',
+            createdAt: new Date('2025-10-09T18:52:51.492Z'),
           },
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K7553G0XEE4R440QS5SV89YE',
-          createdAt: new Date('2025-10-09T18:52:59.293Z'),
-        },
-        {
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGE',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              1,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGG',
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K75538Y9GEHXJQXT3JB89M4C',
+            createdAt: new Date('2025-10-09T18:52:52.041Z'),
           },
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K7553HS9R1XJQKVVW0ZRCMNP',
-          createdAt: new Date('2025-10-09T18:53:01.097Z'),
-        },
-        {
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGD',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              0,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
+          {
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGH',
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K75539CD2PAH419SKJ2X5V5T',
+            createdAt: new Date('2025-10-09T18:52:52.493Z'),
           },
-          runId: 'wrun_01K75533W56DAE35VY3082DN3P',
-          eventId: 'evnt_01K7553K67FQG02YCFE9QDKJ90',
-          createdAt: new Date('2025-10-09T18:53:02.535Z'),
-        },
-      ];
+          {
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGH',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                4,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K7553EABWCK00JQ9R8P1FTK7',
+            createdAt: new Date('2025-10-09T18:52:57.547Z'),
+          },
+          {
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGG',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                3,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K7553F31YS6C94NG23WGEEMV',
+            createdAt: new Date('2025-10-09T18:52:58.337Z'),
+          },
+          {
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGF',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                2,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K7553G0XEE4R440QS5SV89YE',
+            createdAt: new Date('2025-10-09T18:52:59.293Z'),
+          },
+          {
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGE',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                1,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K7553HS9R1XJQKVVW0ZRCMNP',
+            createdAt: new Date('2025-10-09T18:53:01.097Z'),
+          },
+          {
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X00DKMJB5AQEJZ3FQGD',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                0,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            runId: 'wrun_01K75533W56DAE35VY3082DN3P',
+            eventId: 'evnt_01K7553K67FQG02YCFE9QDKJ90',
+            createdAt: new Date('2025-10-09T18:53:02.535Z'),
+          },
+        ];
 
-      const result = await runWorkflow(
-        `
+        const result = await runWorkflow(
+          `
         const promiseRaceStressTestDelayStep = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("promiseRaceStressTestDelayStep");
 
         async function workflow() {
@@ -883,345 +897,159 @@ describe('runWorkflow', () => {
   }
     return done;
 }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual([4, 3, 2, 1, 0]);
-    });
-  });
-
-  describe('encryption', () => {
-    // Real 32-byte AES-256 test key
-    const testKeyRaw = new Uint8Array([
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
-      0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
-    ]);
-    let testKey: Awaited<ReturnType<typeof importKey>>;
-    beforeAll(async () => {
-      testKey = await importKey(testKeyRaw);
-    });
-
-    it('should replay Promise.all with encrypted step results followed by a sequential step', async () => {
-      // This test reproduces two production race conditions:
-      //
-      // Race condition 1 (args decryption):
-      // The EventsConsumer processes lifecycle events (run_created, run_started)
-      // via nextTick while workflow args are being decrypted. After consuming
-      // those, it hits step_created events with no subscriber yet (the workflow
-      // code hasn't started because hydrateWorkflowArguments is still awaiting
-      // crypto.subtle.decrypt). The unconsumed check setTimeout(0) fires before
-      // the decrypt completes. Fix: suppressUnconsumedCheck around args hydration.
-      //
-      // Race condition 2 (step result decryption):
-      // Two steps complete via Promise.all with encrypted data. The async
-      // decrypt in step.ts's enqueueResolve delays the Promise resolution,
-      // which delays the workflow code from registering the next step's
-      // consumer. The unconsumed check fires for step_created of the
-      // sequential step. Fix: enqueueResolve suppresses the unconsumed check.
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'wrun_123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          workflowRunId,
-          testKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      // Deterministic correlationIds generated by the seeded ULID for wrun_123
-      const stepA = 'step_01HK153X00Y11PCQTCHQRK34HF';
-      const stepB = 'step_01HK153X00Y11PCQTCHQRK34HG';
-      const stepC = 'step_01HK153X00Y11PCQTCHQRK34HH';
-
-      // Event log: two concurrent steps (Promise.all), both complete,
-      // then a third step is created sequentially after Promise.all resolves.
-      // The step_created for stepC appears in the event log AFTER stepB's
-      // step_completed — this is the event that gets flagged as "unconsumed"
-      // in production when async decryption delays the resolve.
-      // Include run_created and run_started events to match production event logs
-      const events: Event[] = [
-        {
-          eventId: 'event-run-created',
-          runId: workflowRunId,
-          eventType: 'run_created',
-          correlationId: workflowRunId,
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-run-started',
-          runId: workflowRunId,
-          eventType: 'run_started',
-          correlationId: workflowRunId,
-          createdAt: new Date('2024-01-01T00:00:00.500Z'),
-        },
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_created',
-          correlationId: stepA,
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_created',
-          correlationId: stepB,
-          createdAt: new Date('2024-01-01T00:00:01.100Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: stepA,
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: stepA,
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              'result-a',
-              workflowRunId,
-              testKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:02.500Z'),
-        },
-        {
-          eventId: 'event-4',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: stepB,
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-        {
-          eventId: 'event-5',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: stepB,
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              'result-b',
-              workflowRunId,
-              testKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:04.000Z'),
-        },
-        // stepC created AFTER Promise.all resolves — this is the
-        // event that triggers the "unconsumed" race condition
-        {
-          eventId: 'event-6',
-          runId: workflowRunId,
-          eventType: 'step_created',
-          correlationId: stepC,
-          createdAt: new Date('2024-01-01T00:00:04.500Z'),
-        },
-        {
-          eventId: 'event-7',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: stepC,
-          createdAt: new Date('2024-01-01T00:00:05.000Z'),
-        },
-        {
-          eventId: 'event-8',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: stepC,
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              'result-c',
-              workflowRunId,
-              testKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:05.500Z'),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const step = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step");
-            async function workflow() {
-              const [a, b] = await Promise.all([step("a"), step("b")]);
-              const c = await step("c");
-              return [a, b, c];
-            }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        testKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          workflowRunId,
-          testKey,
-          ops
-        )
-      ).toEqual(['result-a', 'result-b', 'result-c']);
-    });
-  });
-
-  describe('error handling', () => {
-    it('should throw ReferenceError when workflow code does not return a function', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'value',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        await runWorkflow(
-          `const value = "test"${getWorkflowTransformCode()}`,
           workflowRun,
           events,
-          noEncryptionKey
+          getKey()
         );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('ReferenceError');
-      expect(error.message).toEqual(
-        'Workflow "value" must be a function, but got "undefined" instead'
-      );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual([4, 3, 2, 1, 0]);
+      });
     });
 
-    it('should throw user-defined error when workflow code throws an error', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+    describe('error handling', () => {
+      it('should throw ReferenceError when workflow code does not return a function', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'value',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `function workflow() { throw new Error("test"); }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
+          await runWorkflow(
+            `const value = "test"${getWorkflowTransformCode()}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('ReferenceError');
+        expect(error.message).toEqual(
+          'Workflow "value" must be a function, but got "undefined" instead'
         );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('Error');
-      expect(error.message).toEqual('test');
-    });
+      });
 
-    it('should include workflow name in stack trace instead of evalmachine', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'testWorkflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('should throw user-defined error when workflow code throws an error', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `function testWorkflow() { throw new Error("test error"); }${getWorkflowTransformCode('testWorkflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.stack).toBeDefined();
-      // Stack trace should include the workflow name in the filename
-      expect(error.stack).toContain('testWorkflow');
-      // Stack trace should NOT contain 'evalmachine' which was the old behavior
-      expect(error.stack).not.toContain('evalmachine');
-    });
+          await runWorkflow(
+            `function workflow() { throw new Error("test"); }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('Error');
+        expect(error.message).toEqual('test');
+      });
 
-    it('should include workflow name in nested function stack traces', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-nested',
-          workflowName: 'nestedWorkflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('should include workflow name in stack trace instead of evalmachine', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'testWorkflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        // Test with nested function calls to verify stack trace includes all frames
-        const workflowCode = `
+          await runWorkflow(
+            `function testWorkflow() { throw new Error("test error"); }${getWorkflowTransformCode('testWorkflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.stack).toBeDefined();
+        // Stack trace should include the workflow name in the filename
+        expect(error.stack).toContain('testWorkflow');
+        // Stack trace should NOT contain 'evalmachine' which was the old behavior
+        expect(error.stack).not.toContain('evalmachine');
+      });
+
+      it('should include workflow name in nested function stack traces', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-nested',
+            workflowName: 'nestedWorkflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          // Test with nested function calls to verify stack trace includes all frames
+          const workflowCode = `
           function helperFunction() {
             throw new Error("nested error");
           }
@@ -1233,199 +1061,199 @@ describe('runWorkflow', () => {
           }
         ${getWorkflowTransformCode('nestedWorkflow')}`;
 
-        await runWorkflow(workflowCode, workflowRun, events, noEncryptionKey);
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.stack).toBeDefined();
-      // Stack trace should include the workflow name in all nested frames
-      expect(error.stack).toContain('nestedWorkflow');
-      // Should show multiple frames with the workflow filename
-      expect(error.stack).toContain('helperFunction');
-      expect(error.stack).toContain('anotherHelper');
-      // Stack trace should NOT contain 'evalmachine' in any frame
-      expect(error.stack).not.toContain('evalmachine');
-    });
+          await runWorkflow(workflowCode, workflowRun, events, getKey());
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.stack).toBeDefined();
+        // Stack trace should include the workflow name in all nested frames
+        expect(error.stack).toContain('nestedWorkflow');
+        // Should show multiple frames with the workflow filename
+        expect(error.stack).toContain('helperFunction');
+        expect(error.stack).toContain('anotherHelper');
+        // Stack trace should NOT contain 'evalmachine' in any frame
+        expect(error.stack).not.toContain('evalmachine');
+      });
 
-    it('should throw `WorkflowSuspension` when a step does not have an event result entry', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('should throw `WorkflowSuspension` when a step does not have an event result entry', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+          await runWorkflow(
+            `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             // 'add()' will throw a 'WorkflowSuspension' because it has not been run yet
             const a = await add(1, 2);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('1 step has not been run yet');
-      expect((error as WorkflowSuspension).steps).toEqual([
-        {
-          type: 'step',
-          stepName: 'add',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          args: [1, 2],
-        },
-      ]);
-    });
-
-    it('should throw `WorkflowSuspension` when a step has only a "step_started" event', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('1 step has not been run yet');
+        expect((error as WorkflowSuspension).steps).toEqual([
           {
-            eventId: 'event-0',
-            runId: workflowRun.runId,
-            eventType: 'step_started',
+            type: 'step',
+            stepName: 'add',
             correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-            createdAt: new Date(),
+            args: [1, 2],
           },
-        ];
+        ]);
+      });
 
-        await runWorkflow(
-          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+      it('should throw `WorkflowSuspension` when a step has only a "step_started" event', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [
+            {
+              eventId: 'event-0',
+              runId: workflowRun.runId,
+              eventType: 'step_started',
+              correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+              createdAt: new Date(),
+            },
+          ];
+
+          await runWorkflow(
+            `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             // 'add()' will throw a 'WorkflowSuspension' because it has not been run yet
             const a = await add(1, 2);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      // step_started no longer removes from queue - step stays in queue for re-enqueueing
-      expect(error.message).toEqual('1 step has not been run yet');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
-    });
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        // step_started no longer removes from queue - step stays in queue for re-enqueueing
+        expect(error.message).toEqual('1 step has not been run yet');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
+      });
 
-    it('should throw `WorkflowSuspension` for multiple steps with `Promise.all()`', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('should throw `WorkflowSuspension` for multiple steps with `Promise.all()`', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+          await runWorkflow(
+            `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const a = await Promise.all([add(1, 2), add(3, 4)]);
             return a;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('2 steps have not been run yet');
-      expect((error as WorkflowSuspension).steps).toEqual([
-        {
-          type: 'step',
-          stepName: 'add',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          args: [1, 2],
-        },
-        {
-          type: 'step',
-          stepName: 'add',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          args: [3, 4],
-        },
-      ]);
-    });
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('2 steps have not been run yet');
+        expect((error as WorkflowSuspension).steps).toEqual([
+          {
+            type: 'step',
+            stepName: 'add',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            args: [1, 2],
+          },
+          {
+            type: 'step',
+            stepName: 'add',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            args: [3, 4],
+          },
+        ]);
+      });
 
-    it('`WorkflowSuspension` should not be catchable by user code', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('`WorkflowSuspension` should not be catchable by user code', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+          await runWorkflow(
+            `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             try {
               // 'add()' will throw a 'WorkflowSuspension' because it has not been run yet
@@ -1435,1330 +1263,21 @@ describe('runWorkflow', () => {
               return err;
             }
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('1 step has not been run yet');
-    });
-  });
-
-  describe('timeout functions', () => {
-    it('should throw an error when calling setTimeout', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            setTimeout(() => {}, 1000);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should throw an error when calling setInterval', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            setInterval(() => {}, 1000);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should throw an error when calling clearTimeout', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            clearTimeout(123);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should throw an error when calling clearInterval', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            clearInterval(123);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should throw an error when calling setImmediate', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            setImmediate(() => {});
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should throw an error when calling clearImmediate', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-            clearImmediate(123);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
-      );
-    });
-
-    it('should include documentation link in error message', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        await runWorkflow(
-          `async function workflow() {
-            setTimeout(() => {}, 1000);
-            return 'done';
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.message).toContain(
-        'https://useworkflow.dev/err/timeout-in-workflow'
-      );
-      expect(error.message).toContain(
-        'Use the "sleep" function from "workflow"'
-      );
-    });
-  });
-
-  describe('hook', () => {
-    it('should throw `WorkflowSuspension` when a hook is awaiting without a "hook_received" event', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        await runWorkflow(
-          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-          async function workflow() {
-            const hook = createHook();
-            const payload = await hook;
-            return payload.message;
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('1 hook has not been created yet');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
-      expect((error as WorkflowSuspension).steps[0].type).toEqual('hook');
-    });
-
-    it('should resolve `createHook` await upon "hook_received" event', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { message: 'Hello from hook' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      async function workflow() {
-        const hook = createHook();
-        const payload = await hook;
-        return payload.message;
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual('Hello from hook');
-    });
-
-    it('should resolve multiple `createHook` awaits upon "hook_received" events', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { message: 'First payload' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { message: 'Second payload' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      async function workflow() {
-        const hook = createHook();
-        const payload1 = await hook;
-        const payload2 = await hook;
-        return [payload1.message, payload2.message];
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual(['First payload', 'Second payload']);
-    });
-
-    it('should support `for await` loops with `createHook`', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { count: 1, status: 'active' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { count: 2, status: 'complete' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      async function workflow() {
-        const hook = createHook();
-        const payloads = [];
-        for await (const payload of hook) {
-          payloads.push({ count: payload.count, status: payload.status });
-          if (payloads.length === 2) {
-            break;
-          }
-        }
-        return payloads;
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual([
-        { count: 1, status: 'active' },
-        { count: 2, status: 'complete' },
-      ]);
-    });
-
-    it('should support multiple "hook_received" events even when the workflow is only interested in one', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { value: 100 },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { value: 200 },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      async function workflow() {
-        const hook = createHook();
-        const payload = await hook;
-        return payload.value;
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual(100);
-    });
-
-    it('should support multiple queued "hook_received" events with step events in between', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { data: 'first' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { data: 'second' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRun.runId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRun.runId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              42,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:04.000Z'),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
-      async function workflow() {
-        const hook = createHook();
-        const payload1 = await hook;
-        const stepResult = await add(1, 2);
-        const payload2 = await hook;
-        return {
-          data1: payload1.data,
-          stepResult,
-          data2: payload2.data,
-        };
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual({
-        data1: 'first',
-        stepResult: 42,
-        data2: 'second',
-      });
-    });
-
-    it('should throw `WorkflowSuspension` when a hook is awaited after the event log is empty', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { iteration: 1 },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRun.runId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRun.runId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              10,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-      ];
-
-      let error: Error | undefined;
-      try {
-        await runWorkflow(
-          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
-      async function workflow() {
-        const hook = createHook();
-        for await (const payload of hook) {
-          await add(payload.iteration, 2);
-        }
-      }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('1 hook has not been created yet');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
-      expect((error as WorkflowSuspension).steps[0].type).toEqual('hook');
-    });
-
-    it('should handle hook with custom token', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_received',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            payload: await dehydrateStepReturnValue(
-              { result: 'success' },
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-      async function workflow() {
-        const hook = createHook({ token: 'my-custom-token' });
-        const payload = await hook;
-        return { token: hook.token, result: payload.result };
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual({
-        token: 'my-custom-token',
-        result: 'success',
-      });
-    });
-
-    it('should reject with WorkflowRuntimeError when hook_conflict event is received', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_conflict',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            token: 'my-duplicate-token',
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      let error: Error | undefined;
-      try {
-        await runWorkflow(
-          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-        async function workflow() {
-          const hook = createHook({ token: 'my-duplicate-token' });
-          const payload = await hook;
-          return payload;
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-
-      expect(error).toBeInstanceOf(WorkflowRuntimeError);
-      expect(error?.message).toContain('already in use by another workflow');
-      expect(error?.message).toContain('my-duplicate-token');
-    });
-
-    it('should reject multiple awaits when hook_conflict is received (iterator pattern)', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRun.runId,
-          eventType: 'hook_conflict',
-          correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            token: 'conflicting-token',
-          },
-          createdAt: new Date(),
-        },
-      ];
-
-      let error: Error | undefined;
-      try {
-        await runWorkflow(
-          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
-        async function workflow() {
-          const hook = createHook({ token: 'conflicting-token' });
-          const results = [];
-          for await (const payload of hook) {
-            results.push(payload);
-            if (results.length >= 2) break;
-          }
-          return results;
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-
-      expect(error).toBeInstanceOf(WorkflowRuntimeError);
-      expect(error?.message).toContain('already in use by another workflow');
-    });
-  });
-
-  describe('Response', () => {
-    it('should support new Response with body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      const result = await runWorkflow(
-        `async function workflow() {
-        return new Response('Hello, world!', { status: 201 });
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const res = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(res).toBeInstanceOf(Response);
-      expect(res.status).toEqual(201);
-      expect(res.body).toBeInstanceOf(ReadableStream);
-
-      // Verify body can be consumed
-      const text = await res.text();
-      expect(text).toEqual('Hello, world!');
-    });
-
-    it('should support Response.json() static method', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      const result = await runWorkflow(
-        `async function workflow() {
-        return Response.json({ message: 'success', count: 42 }, { status: 201 });
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const res = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(res).toBeInstanceOf(Response);
-      expect(res.status).toEqual(201);
-      expect(res.headers.get('content-type')).toEqual('application/json');
-
-      // Verify body can be parsed as JSON
-      const json = await res.json();
-      expect(json).toEqual({ message: 'success', count: 42 });
-    });
-
-    it('should support Response with custom headers', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      const result = await runWorkflow(
-        `async function workflow() {
-        return new Response('test', {
-          status: 202,
-          headers: { 'X-Custom-Header': 'custom-value', 'Content-Type': 'text/plain' }
-        });
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const res = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(res).toBeInstanceOf(Response);
-      expect(res.status).toEqual(202);
-      expect(res.headers.get('X-Custom-Header')).toEqual('custom-value');
-      expect(res.headers.get('Content-Type')).toEqual('text/plain');
-    });
-
-    it('should support Response with 204 No Content', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      const result = await runWorkflow(
-        `async function workflow() {
-        return new Response(null, { status: 204 });
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const res = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(res).toBeInstanceOf(Response);
-      expect(res.status).toEqual(204);
-      expect(res.body).toBeNull();
-    });
-
-    it('should support Response with Uint8Array body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      const result = await runWorkflow(
-        `async function workflow() {
-        const data = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-        return new Response(data, { status: 200 });
-      }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const res = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(res).toBeInstanceOf(Response);
-      expect(res.status).toEqual(200);
-      expect(res.body).toBeInstanceOf(ReadableStream);
-
-      // Verify body can be consumed
-      const text = await res.text();
-      expect(text).toEqual('Hello');
-    });
-
-    it('should throw error when creating Response with body and status 204', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [];
-
-      await expect(
-        runWorkflow(
-          `async function workflow() {
-          return new Response('hello', { status: 204 });
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow(
-        'Response constructor: Invalid response status code 204'
-      );
-    });
-
-    describe('Response.redirect()', () => {
-      it('should create redirect response with default 302 status', async () => {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        const result = await runWorkflow(
-          `async function workflow() {
-          return Response.redirect('https://example.com/redirect');
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-        const res = await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        );
-        expect(res).toBeInstanceOf(Response);
-        expect(res.status).toEqual(302);
-        expect(res.headers.get('Location')).toEqual(
-          'https://example.com/redirect'
-        );
-        expect(res.body).toBeNull();
-      });
-
-      it('should create redirect response with custom status', async () => {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        const result = await runWorkflow(
-          `async function workflow() {
-          return Response.redirect('https://example.com/moved', 301);
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-        const res = await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        );
-        expect(res).toBeInstanceOf(Response);
-        expect(res.status).toEqual(301);
-        expect(res.headers.get('Location')).toEqual(
-          'https://example.com/moved'
-        );
-      });
-
-      it('should support all valid redirect status codes', async () => {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
-
-        const events: Event[] = [];
-
-        const result = await runWorkflow(
-          `async function workflow() {
-          return [301, 302, 303, 307, 308].map(status =>
-            Response.redirect('https://example.com', status).status
+            workflowRun,
+            events,
+            getKey()
           );
-        }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-        const statuses = await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        );
-        expect(statuses).toEqual([301, 302, 303, 307, 308]);
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('1 step has not been run yet');
       });
+    });
 
-      it('should throw error for invalid redirect status code', async () => {
+    describe('timeout functions', () => {
+      it('should throw an error when calling setTimeout', async () => {
         const ops: Promise<any>[] = [];
         const workflowRun: WorkflowRun = {
           runId: 'test-run-123',
@@ -2767,7 +1286,7 @@ describe('runWorkflow', () => {
           input: await dehydrateWorkflowArguments(
             [],
             'wrun_123',
-            noEncryptionKey,
+            getKey(),
             ops
           ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -2781,129 +1300,1438 @@ describe('runWorkflow', () => {
         await expect(
           runWorkflow(
             `async function workflow() {
-            return Response.redirect('https://example.com', 200);
+            setTimeout(() => {}, 1000);
+            return 'done';
           }${getWorkflowTransformCode('workflow')}`,
             workflowRun,
             events,
-            noEncryptionKey
+            getKey()
           )
         ).rejects.toThrow(
-          'Invalid redirect status code: 200. Must be one of: 301, 302, 303, 307, 308'
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should throw an error when calling setInterval', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+            setInterval(() => {}, 1000);
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should throw an error when calling clearTimeout', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+            clearTimeout(123);
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should throw an error when calling clearInterval', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+            clearInterval(123);
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should throw an error when calling setImmediate', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+            setImmediate(() => {});
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should throw an error when calling clearImmediate', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+            clearImmediate(123);
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Timeout functions like "setTimeout" and "setInterval" are not supported in workflow functions'
+        );
+      });
+
+      it('should include documentation link in error message', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          await runWorkflow(
+            `async function workflow() {
+            setTimeout(() => {}, 1000);
+            return 'done';
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.message).toContain(
+          'https://useworkflow.dev/err/timeout-in-workflow'
+        );
+        expect(error.message).toContain(
+          'Use the "sleep" function from "workflow"'
         );
       });
     });
-  });
 
-  describe('Request', () => {
-    it('should support new Request with GET method', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+    describe('hook', () => {
+      it('should throw `WorkflowSuspension` when a hook is awaiting without a "hook_received" event', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-      const events: Event[] = [];
+          const events: Event[] = [];
 
-      const result = await runWorkflow(
-        `async function workflow() {
-        return new Request('https://example.com/api');
+          await runWorkflow(
+            `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+          async function workflow() {
+            const hook = createHook();
+            const payload = await hook;
+            return payload.message;
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('1 hook has not been created yet');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        expect((error as WorkflowSuspension).steps[0].type).toEqual('hook');
+      });
+
+      it('should resolve `createHook` await upon "hook_received" event', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { message: 'Hello from hook' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      async function workflow() {
+        const hook = createHook();
+        const payload = await hook;
+        return payload.message;
       }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const req = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(req).toBeInstanceOf(Request);
-      expect(req.method).toEqual('GET');
-      expect(req.url).toEqual('https://example.com/api');
-      expect(req.body).toBeNull();
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual('Hello from hook');
+      });
+
+      it('should resolve multiple `createHook` awaits upon "hook_received" events', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { message: 'First payload' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { message: 'Second payload' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      async function workflow() {
+        const hook = createHook();
+        const payload1 = await hook;
+        const payload2 = await hook;
+        return [payload1.message, payload2.message];
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual(['First payload', 'Second payload']);
+      });
+
+      it('should support `for await` loops with `createHook`', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { count: 1, status: 'active' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { count: 2, status: 'complete' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      async function workflow() {
+        const hook = createHook();
+        const payloads = [];
+        for await (const payload of hook) {
+          payloads.push({ count: payload.count, status: payload.status });
+          if (payloads.length === 2) {
+            break;
+          }
+        }
+        return payloads;
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual([
+          { count: 1, status: 'active' },
+          { count: 2, status: 'complete' },
+        ]);
+      });
+
+      it('should support multiple "hook_received" events even when the workflow is only interested in one', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { value: 100 },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { value: 200 },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      async function workflow() {
+        const hook = createHook();
+        const payload = await hook;
+        return payload.value;
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual(100);
+      });
+
+      it('should support multiple queued "hook_received" events with step events in between', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { data: 'first' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { data: 'second' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:02.000Z'),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRun.runId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:03.000Z'),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRun.runId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                42,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:04.000Z'),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+      async function workflow() {
+        const hook = createHook();
+        const payload1 = await hook;
+        const stepResult = await add(1, 2);
+        const payload2 = await hook;
+        return {
+          data1: payload1.data,
+          stepResult,
+          data2: payload2.data,
+        };
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual({
+          data1: 'first',
+          stepResult: 42,
+          data2: 'second',
+        });
+      });
+
+      it('should throw `WorkflowSuspension` when a hook is awaited after the event log is empty', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { iteration: 1 },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRun.runId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:02.000Z'),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRun.runId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                10,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:03.000Z'),
+          },
+        ];
+
+        let error: Error | undefined;
+        try {
+          await runWorkflow(
+            `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+      async function workflow() {
+        const hook = createHook();
+        for await (const payload of hook) {
+          await add(payload.iteration, 2);
+        }
+      }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('1 hook has not been created yet');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        expect((error as WorkflowSuspension).steps[0].type).toEqual('hook');
+      });
+
+      it('should handle hook with custom token', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_received',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              payload: await dehydrateStepReturnValue(
+                { result: 'success' },
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+      async function workflow() {
+        const hook = createHook({ token: 'my-custom-token' });
+        const payload = await hook;
+        return { token: hook.token, result: payload.result };
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual({
+          token: 'my-custom-token',
+          result: 'success',
+        });
+      });
+
+      it('should reject with WorkflowRuntimeError when hook_conflict event is received', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_conflict',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              token: 'my-duplicate-token',
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        let error: Error | undefined;
+        try {
+          await runWorkflow(
+            `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+        async function workflow() {
+          const hook = createHook({ token: 'my-duplicate-token' });
+          const payload = await hook;
+          return payload;
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+
+        expect(error).toBeInstanceOf(WorkflowRuntimeError);
+        expect(error?.message).toContain('already in use by another workflow');
+        expect(error?.message).toContain('my-duplicate-token');
+      });
+
+      it('should reject multiple awaits when hook_conflict is received (iterator pattern)', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRun.runId,
+            eventType: 'hook_conflict',
+            correlationId: 'hook_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              token: 'conflicting-token',
+            },
+            createdAt: new Date(),
+          },
+        ];
+
+        let error: Error | undefined;
+        try {
+          await runWorkflow(
+            `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+        async function workflow() {
+          const hook = createHook({ token: 'conflicting-token' });
+          const results = [];
+          for await (const payload of hook) {
+            results.push(payload);
+            if (results.length >= 2) break;
+          }
+          return results;
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+
+        expect(error).toBeInstanceOf(WorkflowRuntimeError);
+        expect(error?.message).toContain('already in use by another workflow');
+      });
     });
 
-    it('should support Request with POST method and body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
+    describe('Response', () => {
+      it('should support new Response with body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        return new Response('Hello, world!', { status: 201 });
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const res = await hydrateWorkflowReturnValue(
+          result as any,
           'wrun_123',
-          noEncryptionKey,
+          getKey(),
           ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        );
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toEqual(201);
+        expect(res.body).toBeInstanceOf(ReadableStream);
 
-      const events: Event[] = [];
+        // Verify body can be consumed
+        const text = await res.text();
+        expect(text).toEqual('Hello, world!');
+      });
 
-      const result = await runWorkflow(
-        `async function workflow() {
+      it('should support Response.json() static method', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        return Response.json({ message: 'success', count: 42 }, { status: 201 });
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const res = await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toEqual(201);
+        expect(res.headers.get('content-type')).toEqual('application/json');
+
+        // Verify body can be parsed as JSON
+        const json = await res.json();
+        expect(json).toEqual({ message: 'success', count: 42 });
+      });
+
+      it('should support Response with custom headers', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        return new Response('test', {
+          status: 202,
+          headers: { 'X-Custom-Header': 'custom-value', 'Content-Type': 'text/plain' }
+        });
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const res = await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toEqual(202);
+        expect(res.headers.get('X-Custom-Header')).toEqual('custom-value');
+        expect(res.headers.get('Content-Type')).toEqual('text/plain');
+      });
+
+      it('should support Response with 204 No Content', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        return new Response(null, { status: 204 });
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const res = await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toEqual(204);
+        expect(res.body).toBeNull();
+      });
+
+      it('should support Response with Uint8Array body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        const data = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+        return new Response(data, { status: 200 });
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const res = await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toEqual(200);
+        expect(res.body).toBeInstanceOf(ReadableStream);
+
+        // Verify body can be consumed
+        const text = await res.text();
+        expect(text).toEqual('Hello');
+      });
+
+      it('should throw error when creating Response with body and status 204', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
+          return new Response('hello', { status: 204 });
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow(
+          'Response constructor: Invalid response status code 204'
+        );
+      });
+
+      describe('Response.redirect()', () => {
+        it('should create redirect response with default 302 status', async () => {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          const result = await runWorkflow(
+            `async function workflow() {
+          return Response.redirect('https://example.com/redirect');
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+          const res = await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          );
+          expect(res).toBeInstanceOf(Response);
+          expect(res.status).toEqual(302);
+          expect(res.headers.get('Location')).toEqual(
+            'https://example.com/redirect'
+          );
+          expect(res.body).toBeNull();
+        });
+
+        it('should create redirect response with custom status', async () => {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          const result = await runWorkflow(
+            `async function workflow() {
+          return Response.redirect('https://example.com/moved', 301);
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+          const res = await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          );
+          expect(res).toBeInstanceOf(Response);
+          expect(res.status).toEqual(301);
+          expect(res.headers.get('Location')).toEqual(
+            'https://example.com/moved'
+          );
+        });
+
+        it('should support all valid redirect status codes', async () => {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          const result = await runWorkflow(
+            `async function workflow() {
+          return [301, 302, 303, 307, 308].map(status =>
+            Response.redirect('https://example.com', status).status
+          );
+        }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events,
+            getKey()
+          );
+          const statuses = await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          );
+          expect(statuses).toEqual([301, 302, 303, 307, 308]);
+        });
+
+        it('should throw error for invalid redirect status code', async () => {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          await expect(
+            runWorkflow(
+              `async function workflow() {
+            return Response.redirect('https://example.com', 200);
+          }${getWorkflowTransformCode('workflow')}`,
+              workflowRun,
+              events,
+              getKey()
+            )
+          ).rejects.toThrow(
+            'Invalid redirect status code: 200. Must be one of: 301, 302, 303, 307, 308'
+          );
+        });
+      });
+    });
+
+    describe('Request', () => {
+      it('should support new Request with GET method', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
+        return new Request('https://example.com/api');
+      }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        const req = await hydrateWorkflowReturnValue(
+          result as any,
+          'wrun_123',
+          getKey(),
+          ops
+        );
+        expect(req).toBeInstanceOf(Request);
+        expect(req.method).toEqual('GET');
+        expect(req.url).toEqual('https://example.com/api');
+        expect(req.body).toBeNull();
+      });
+
+      it('should support Request with POST method and body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
         return new Request('https://example.com/api', {
           method: 'POST',
           body: JSON.stringify({ name: 'test' })
         });
       }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const req = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(req).toBeInstanceOf(Request);
-      expect(req.method).toEqual('POST');
-      expect(req.url).toEqual('https://example.com/api');
-      expect(req.body).toBeInstanceOf(ReadableStream);
-
-      // Verify body can be consumed
-      const text = await req.text();
-      expect(text).toEqual(JSON.stringify({ name: 'test' }));
-    });
-
-    it('should support Request with custom headers', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
+          workflowRun,
+          events,
+          getKey()
+        );
+        const req = await hydrateWorkflowReturnValue(
+          result as any,
           'wrun_123',
-          noEncryptionKey,
+          getKey(),
           ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        );
+        expect(req).toBeInstanceOf(Request);
+        expect(req.method).toEqual('POST');
+        expect(req.url).toEqual('https://example.com/api');
+        expect(req.body).toBeInstanceOf(ReadableStream);
 
-      const events: Event[] = [];
+        // Verify body can be consumed
+        const text = await req.text();
+        expect(text).toEqual(JSON.stringify({ name: 'test' }));
+      });
 
-      const result = await runWorkflow(
-        `async function workflow() {
+      it('should support Request with custom headers', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
         return new Request('https://example.com/api', {
           method: 'POST',
           headers: {
@@ -2913,192 +2741,192 @@ describe('runWorkflow', () => {
           body: 'test'
         });
       }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const req = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(req).toBeInstanceOf(Request);
-      expect(req.headers.get('Content-Type')).toEqual('application/json');
-      expect(req.headers.get('X-Custom-Header')).toEqual('custom-value');
-    });
-
-    it('should support Request with Uint8Array body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
+          workflowRun,
+          events,
+          getKey()
+        );
+        const req = await hydrateWorkflowReturnValue(
+          result as any,
           'wrun_123',
-          noEncryptionKey,
+          getKey(),
           ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        );
+        expect(req).toBeInstanceOf(Request);
+        expect(req.headers.get('Content-Type')).toEqual('application/json');
+        expect(req.headers.get('X-Custom-Header')).toEqual('custom-value');
+      });
 
-      const events: Event[] = [];
+      it('should support Request with Uint8Array body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const result = await runWorkflow(
-        `async function workflow() {
+        const events: Event[] = [];
+
+        const result = await runWorkflow(
+          `async function workflow() {
         const data = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
         return new Request('https://example.com/api', {
           method: 'PUT',
           body: data
         });
       }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      const req = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-      expect(req).toBeInstanceOf(Request);
-      expect(req.method).toEqual('PUT');
-      expect(req.body).toBeInstanceOf(ReadableStream);
-
-      // Verify body can be consumed
-      const text = await req.text();
-      expect(text).toEqual('Hello');
-    });
-
-    it('should throw error when creating GET Request with body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
+          workflowRun,
+          events,
+          getKey()
+        );
+        const req = await hydrateWorkflowReturnValue(
+          result as any,
           'wrun_123',
-          noEncryptionKey,
+          getKey(),
           ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+        );
+        expect(req).toBeInstanceOf(Request);
+        expect(req.method).toEqual('PUT');
+        expect(req.body).toBeInstanceOf(ReadableStream);
 
-      const events: Event[] = [];
+        // Verify body can be consumed
+        const text = await req.text();
+        expect(text).toEqual('Hello');
+      });
 
-      await expect(
-        runWorkflow(
-          `async function workflow() {
+      it('should throw error when creating GET Request with body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [];
+
+        await expect(
+          runWorkflow(
+            `async function workflow() {
           return new Request('https://example.com/api', {
             method: 'GET',
             body: 'test'
           });
         }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow('Request with GET/HEAD method cannot have body.');
-    });
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow('Request with GET/HEAD method cannot have body.');
+      });
 
-    it('should throw error when creating HEAD Request with body', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should throw error when creating HEAD Request with body', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [];
+        const events: Event[] = [];
 
-      await expect(
-        runWorkflow(
-          `async function workflow() {
+        await expect(
+          runWorkflow(
+            `async function workflow() {
           return new Request('https://example.com/api', {
             method: 'HEAD',
             body: 'test'
           });
         }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow('Request with GET/HEAD method cannot have body.');
-    });
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow('Request with GET/HEAD method cannot have body.');
+      });
 
-    it('should throw error when creating Request with invalid URL', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-run-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should throw error when creating Request with invalid URL', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-run-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [];
+        const events: Event[] = [];
 
-      await expect(
-        runWorkflow(
-          `async function workflow() {
+        await expect(
+          runWorkflow(
+            `async function workflow() {
           return new Request('/');
         }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        )
-      ).rejects.toThrow('Failed to parse URL from /');
-    });
+            workflowRun,
+            events,
+            getKey()
+          )
+        ).rejects.toThrow('Failed to parse URL from /');
+      });
 
-    it('should preserve Request properties when cloning with init override', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRun: WorkflowRun = {
-        runId: 'test-clone-bug-123',
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
+      it('should preserve Request properties when cloning with init override', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRun: WorkflowRun = {
+          runId: 'test-clone-bug-123',
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
 
-      const events: Event[] = [];
+        const events: Event[] = [];
 
-      const result = await runWorkflow(
-        `async function workflow() {
+        const result = await runWorkflow(
+          `async function workflow() {
         // Create a Request with specific properties
         const req1 = new Request('https://api.example.com', {
           mode: 'no-cors',
@@ -3120,93 +2948,31 @@ describe('runWorkflow', () => {
           redirect: req2.redirect
         };
       }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
+          workflowRun,
+          events,
+          getKey()
+        );
 
-      const result_obj = await hydrateWorkflowReturnValue(
-        result as any,
-        'wrun_123',
-        noEncryptionKey,
-        ops
-      );
-
-      // According to MDN, the req1 properties should be inherited
-      // and only the method should be overridden by the init options
-      expect(result_obj.url).toEqual('https://api.example.com');
-      expect(result_obj.method).toEqual('POST'); // overridden by init
-      expect(result_obj.mode).toEqual('no-cors'); // from req1, NOT default
-      expect(result_obj.cache).toEqual('no-cache'); // from req1, NOT default 'default'
-      expect(result_obj.credentials).toEqual('include'); // from req1, NOT default 'same-origin'
-      expect(result_obj.redirect).toEqual('follow'); // default, since not set in req1
-    });
-  });
-
-  describe('sleep', () => {
-    it('should suspend and resume a basic single sleep', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const resumeAt = new Date('2024-01-01T00:00:05.000Z');
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            resumeAt,
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:05.000Z'),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-        async function workflow() {
-          await sleep('5s');
-          return 'sleep completed';
-        }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
+        const result_obj = await hydrateWorkflowReturnValue(
           result as any,
           'wrun_123',
-          noEncryptionKey,
+          getKey(),
           ops
-        )
-      ).toEqual('sleep completed');
+        );
+
+        // According to MDN, the req1 properties should be inherited
+        // and only the method should be overridden by the init options
+        expect(result_obj.url).toEqual('https://api.example.com');
+        expect(result_obj.method).toEqual('POST'); // overridden by init
+        expect(result_obj.mode).toEqual('no-cors'); // from req1, NOT default
+        expect(result_obj.cache).toEqual('no-cache'); // from req1, NOT default 'default'
+        expect(result_obj.credentials).toEqual('include'); // from req1, NOT default 'same-origin'
+        expect(result_obj.redirect).toEqual('follow'); // default, since not set in req1
+      });
     });
 
-    it('should throw `WorkflowSuspension` when sleep has no wait_completed event', async () => {
-      let error: Error | undefined;
-      try {
+    describe('sleep', () => {
+      it('should suspend and resume a basic single sleep', async () => {
         const ops: Promise<any>[] = [];
         const workflowRunId = 'test-run-123';
         const workflowRun: WorkflowRun = {
@@ -3216,7 +2982,7 @@ describe('runWorkflow', () => {
           input: await dehydrateWorkflowArguments(
             [],
             'wrun_123',
-            noEncryptionKey,
+            getKey(),
             ops
           ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3225,107 +2991,91 @@ describe('runWorkflow', () => {
           deploymentId: 'test-deployment',
         };
 
-        const events: Event[] = [];
+        const resumeAt = new Date('2024-01-01T00:00:05.000Z');
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              resumeAt,
+            },
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:05.000Z'),
+          },
+        ];
 
-        await runWorkflow(
+        const result = await runWorkflow(
           `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+        async function workflow() {
+          await sleep('5s');
+          return 'sleep completed';
+        }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual('sleep completed');
+      });
+
+      it('should throw `WorkflowSuspension` when sleep has no wait_completed event', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRunId = 'test-run-123';
+          const workflowRun: WorkflowRun = {
+            runId: workflowRunId,
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          await runWorkflow(
+            `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
           async function workflow() {
             await sleep('5s');
             return 'done';
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect(error.message).toEqual('1 wait has not been created yet');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
-      expect((error as WorkflowSuspension).steps[0].type).toEqual('wait');
-    });
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect(error.message).toEqual('1 wait has not been created yet');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        expect((error as WorkflowSuspension).steps[0].type).toEqual('wait');
+      });
 
-    it('should handle multiple simultaneous sleeps with Promise.all()', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:02.000Z'),
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:05.000Z'),
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:05.000Z'),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-        async function workflow() {
-          const results = await Promise.all([sleep('2s'), sleep('5s')]);
-          return 'all sleeps completed';
-        }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual('all sleeps completed');
-    });
-
-    it('should suspend with multiple sleeps but only one wait_completed event (partial completion)', async () => {
-      let error: Error | undefined;
-      try {
+      it('should handle multiple simultaneous sleeps with Promise.all()', async () => {
         const ops: Promise<any>[] = [];
         const workflowRunId = 'test-run-123';
         const workflowRun: WorkflowRun = {
@@ -3335,7 +3085,7 @@ describe('runWorkflow', () => {
           input: await dehydrateWorkflowArguments(
             [],
             'wrun_123',
-            noEncryptionKey,
+            getKey(),
             ops
           ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3372,449 +3122,116 @@ describe('runWorkflow', () => {
             correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
             createdAt: new Date('2024-01-01T00:00:02.000Z'),
           },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:05.000Z'),
+          },
         ];
 
-        await runWorkflow(
+        const result = await runWorkflow(
           `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+        async function workflow() {
+          const results = await Promise.all([sleep('2s'), sleep('5s')]);
+          return 'all sleeps completed';
+        }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual('all sleeps completed');
+      });
+
+      it('should suspend with multiple sleeps but only one wait_completed event (partial completion)', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRunId = 'test-run-123';
+          const workflowRun: WorkflowRun = {
+            runId: workflowRunId,
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [
+            {
+              eventId: 'event-0',
+              runId: workflowRunId,
+              eventType: 'wait_created',
+              correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+              eventData: {
+                resumeAt: new Date('2024-01-01T00:00:02.000Z'),
+              },
+              createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            },
+            {
+              eventId: 'event-1',
+              runId: workflowRunId,
+              eventType: 'wait_created',
+              correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+              eventData: {
+                resumeAt: new Date('2024-01-01T00:00:05.000Z'),
+              },
+              createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            },
+            {
+              eventId: 'event-2',
+              runId: workflowRunId,
+              eventType: 'wait_completed',
+              correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+              createdAt: new Date('2024-01-01T00:00:02.000Z'),
+            },
+          ];
+
+          await runWorkflow(
+            `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
           async function workflow() {
             const results = await Promise.all([sleep('2s'), sleep('5s')]);
             return 'all sleeps completed';
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
-      expect((error as WorkflowSuspension).steps[0].type).toEqual('wait');
-    });
-
-    it('should handle sleep combined with steps', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue(
-              42,
-              'wrun_123',
-              noEncryptionKey,
-              ops
-            ),
-          },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:03.000Z'),
-          },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
-        const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-        async function workflow() {
-          const stepResult = await add(1, 2);
-          await sleep('2s');
-          return { step: stepResult, slept: true };
-        }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual({
-        step: 42,
-        slept: true,
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        expect((error as WorkflowSuspension).steps[0].type).toEqual('wait');
       });
-    });
 
-    it('should handle sleep with Date parameter', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const resumeAt = new Date('2024-01-01T00:00:05.000Z');
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments(
-          [],
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        ),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            resumeAt,
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: resumeAt,
-        },
-      ];
-
-      const result = await runWorkflow(
-        `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-        async function workflow() {
-          const resumeDate = new Date('2024-01-01T00:00:05.000Z');
-          await sleep(resumeDate);
-          return 'sleep with date completed';
-        }${getWorkflowTransformCode('workflow')}`,
-        workflowRun,
-        events,
-        noEncryptionKey
-      );
-      expect(
-        await hydrateWorkflowReturnValue(
-          result as any,
-          'wrun_123',
-          noEncryptionKey,
-          ops
-        )
-      ).toEqual('sleep with date completed');
-    });
-
-    it('should reject with WorkflowRuntimeError when event log has duplicate wait_completed', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments([], ops),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'wait_created',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            resumeAt: new Date('2024-01-01T00:00:05.000Z'),
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:05.000Z'),
-        },
-        {
-          // Duplicate wait_completed - should trigger WorkflowRuntimeError
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:05.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:06.000Z'),
-        },
-        {
-          eventId: 'event-4',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue('step done', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:07.000Z'),
-        },
-      ];
-
-      await expect(
-        runWorkflow(
-          `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
-          const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-          async function workflow() {
-            await sleep('5s');
-            const result = await doWork();
-            return result;
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events
-        )
-      ).rejects.toThrow(WorkflowRuntimeError);
-    });
-
-    it('should reject with WorkflowRuntimeError for duplicate step_completed blocking subsequent events', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments([], ops),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue('first done', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          // Duplicate step_completed - orphaned, blocks events below
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue('duplicate', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-        {
-          eventId: 'event-3',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          createdAt: new Date('2024-01-01T00:00:03.000Z'),
-        },
-        {
-          eventId: 'event-4',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
-          eventData: {
-            result: await dehydrateStepReturnValue('second done', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:04.000Z'),
-        },
-      ];
-
-      await expect(
-        runWorkflow(
-          `const doWork1 = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork1");
-          const doWork2 = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork2");
-          async function workflow() {
-            await doWork1();
-            return await doWork2();
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events
-        )
-      ).rejects.toThrow(WorkflowRuntimeError);
-    });
-
-    it('should reject with WorkflowRuntimeError for orphaned step_completed blocking workflow step', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments([], ops),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          // Orphaned step_completed with unknown correlationId - blocks everything after
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_UNKNOWN_CORRELATION_ID',
-          eventData: {
-            result: await dehydrateStepReturnValue('orphan', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue('done', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-      ];
-
-      await expect(
-        runWorkflow(
-          `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
-          async function workflow() {
-            return await doWork();
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events
-        )
-      ).rejects.toThrow(WorkflowRuntimeError);
-    });
-
-    it('should reject with WorkflowRuntimeError for orphaned wait_completed blocking workflow step', async () => {
-      const ops: Promise<any>[] = [];
-      const workflowRunId = 'test-run-123';
-      const workflowRun: WorkflowRun = {
-        runId: workflowRunId,
-        workflowName: 'workflow',
-        status: 'running',
-        input: await dehydrateWorkflowArguments([], ops),
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-        startedAt: new Date('2024-01-01T00:00:00.000Z'),
-        deploymentId: 'test-deployment',
-      };
-
-      const events: Event[] = [
-        {
-          // Orphaned wait_completed with no matching wait_created - blocks everything after
-          eventId: 'event-0',
-          runId: workflowRunId,
-          eventType: 'wait_completed',
-          correlationId: 'wait_ORPHAN',
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        },
-        {
-          eventId: 'event-1',
-          runId: workflowRunId,
-          eventType: 'step_started',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          createdAt: new Date('2024-01-01T00:00:01.000Z'),
-        },
-        {
-          eventId: 'event-2',
-          runId: workflowRunId,
-          eventType: 'step_completed',
-          correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
-          eventData: {
-            result: await dehydrateStepReturnValue('done', ops),
-          },
-          createdAt: new Date('2024-01-01T00:00:02.000Z'),
-        },
-      ];
-
-      await expect(
-        runWorkflow(
-          `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
-          async function workflow() {
-            return await doWork();
-          }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events
-        )
-      ).rejects.toThrow(WorkflowRuntimeError);
-    });
-  });
-
-  describe('closure variables', () => {
-    it('should serialize and deserialize closure variables for nested step functions', async () => {
-      let error: Error | undefined;
-      try {
+      it('should handle sleep combined with steps', async () => {
         const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
         const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
+          runId: workflowRunId,
           workflowName: 'workflow',
           status: 'running',
           input: await dehydrateWorkflowArguments(
             [],
             'wrun_123',
-            noEncryptionKey,
+            getKey(),
             ops
           ),
           createdAt: new Date('2024-01-01T00:00:00.000Z'),
@@ -3823,10 +3240,421 @@ describe('runWorkflow', () => {
           deploymentId: 'test-deployment',
         };
 
-        const events: Event[] = [];
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue(
+                42,
+                'wrun_123',
+                getKey(),
+                ops
+              ),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              resumeAt: new Date('2024-01-01T00:00:03.000Z'),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:03.000Z'),
+          },
+        ];
 
-        await runWorkflow(
-          `const useStep = globalThis[Symbol.for("WORKFLOW_USE_STEP")];
+        const result = await runWorkflow(
+          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+        const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+        async function workflow() {
+          const stepResult = await add(1, 2);
+          await sleep('2s');
+          return { step: stepResult, slept: true };
+        }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual({
+          step: 42,
+          slept: true,
+        });
+      });
+
+      it('should handle sleep with Date parameter', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const resumeAt = new Date('2024-01-01T00:00:05.000Z');
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments(
+            [],
+            'wrun_123',
+            getKey(),
+            ops
+          ),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              resumeAt,
+            },
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: resumeAt,
+          },
+        ];
+
+        const result = await runWorkflow(
+          `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+        async function workflow() {
+          const resumeDate = new Date('2024-01-01T00:00:05.000Z');
+          await sleep(resumeDate);
+          return 'sleep with date completed';
+        }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          getKey()
+        );
+        expect(
+          await hydrateWorkflowReturnValue(
+            result as any,
+            'wrun_123',
+            getKey(),
+            ops
+          )
+        ).toEqual('sleep with date completed');
+      });
+
+      it('should reject with WorkflowRuntimeError when event log has duplicate wait_completed', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments([], ops),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'wait_created',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              resumeAt: new Date('2024-01-01T00:00:05.000Z'),
+            },
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:05.000Z'),
+          },
+          {
+            // Duplicate wait_completed - should trigger WorkflowRuntimeError
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:05.000Z'),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:06.000Z'),
+          },
+          {
+            eventId: 'event-4',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue('step done', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:07.000Z'),
+          },
+        ];
+
+        await expect(
+          runWorkflow(
+            `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
+          const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+          async function workflow() {
+            await sleep('5s');
+            const result = await doWork();
+            return result;
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events
+          )
+        ).rejects.toThrow(WorkflowRuntimeError);
+      });
+
+      it('should reject with WorkflowRuntimeError for duplicate step_completed blocking subsequent events', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments([], ops),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue('first done', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            // Duplicate step_completed - orphaned, blocks events below
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue('duplicate', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:02.000Z'),
+          },
+          {
+            eventId: 'event-3',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            createdAt: new Date('2024-01-01T00:00:03.000Z'),
+          },
+          {
+            eventId: 'event-4',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JY',
+            eventData: {
+              result: await dehydrateStepReturnValue('second done', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:04.000Z'),
+          },
+        ];
+
+        await expect(
+          runWorkflow(
+            `const doWork1 = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork1");
+          const doWork2 = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork2");
+          async function workflow() {
+            await doWork1();
+            return await doWork2();
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events
+          )
+        ).rejects.toThrow(WorkflowRuntimeError);
+      });
+
+      it('should reject with WorkflowRuntimeError for orphaned step_completed blocking workflow step', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments([], ops),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            // Orphaned step_completed with unknown correlationId - blocks everything after
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_UNKNOWN_CORRELATION_ID',
+            eventData: {
+              result: await dehydrateStepReturnValue('orphan', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue('done', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:02.000Z'),
+          },
+        ];
+
+        await expect(
+          runWorkflow(
+            `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
+          async function workflow() {
+            return await doWork();
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events
+          )
+        ).rejects.toThrow(WorkflowRuntimeError);
+      });
+
+      it('should reject with WorkflowRuntimeError for orphaned wait_completed blocking workflow step', async () => {
+        const ops: Promise<any>[] = [];
+        const workflowRunId = 'test-run-123';
+        const workflowRun: WorkflowRun = {
+          runId: workflowRunId,
+          workflowName: 'workflow',
+          status: 'running',
+          input: await dehydrateWorkflowArguments([], ops),
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+          startedAt: new Date('2024-01-01T00:00:00.000Z'),
+          deploymentId: 'test-deployment',
+        };
+
+        const events: Event[] = [
+          {
+            // Orphaned wait_completed with no matching wait_created - blocks everything after
+            eventId: 'event-0',
+            runId: workflowRunId,
+            eventType: 'wait_completed',
+            correlationId: 'wait_ORPHAN',
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          },
+          {
+            eventId: 'event-1',
+            runId: workflowRunId,
+            eventType: 'step_started',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            createdAt: new Date('2024-01-01T00:00:01.000Z'),
+          },
+          {
+            eventId: 'event-2',
+            runId: workflowRunId,
+            eventType: 'step_completed',
+            correlationId: 'step_01HK153X008RT6YEW43G8QX6JX',
+            eventData: {
+              result: await dehydrateStepReturnValue('done', ops),
+            },
+            createdAt: new Date('2024-01-01T00:00:02.000Z'),
+          },
+        ];
+
+        await expect(
+          runWorkflow(
+            `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
+          async function workflow() {
+            return await doWork();
+          }${getWorkflowTransformCode('workflow')}`,
+            workflowRun,
+            events
+          )
+        ).rejects.toThrow(WorkflowRuntimeError);
+      });
+    });
+
+    describe('closure variables', () => {
+      it('should serialize and deserialize closure variables for nested step functions', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
+
+          const events: Event[] = [];
+
+          await runWorkflow(
+            `const useStep = globalThis[Symbol.for("WORKFLOW_USE_STEP")];
           async function workflow() {
             const multiplier = 3;
             const prefix = 'Result: ';
@@ -3834,75 +3662,84 @@ describe('runWorkflow', () => {
             const result = await calculate(7);
             return result;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
 
-      // Should suspend to create the step
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        // Should suspend to create the step
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
 
-      const step = (error as WorkflowSuspension).steps[0];
-      expect(step).toMatchObject({
-        type: 'step',
-        stepName: 'step//input.js//_anonymousStep0',
-        args: [7],
-        closureVars: { multiplier: 3, prefix: 'Result: ' },
+        const step = (error as WorkflowSuspension).steps[0];
+        expect(step).toMatchObject({
+          type: 'step',
+          stepName: 'step//input.js//_anonymousStep0',
+          args: [7],
+          closureVars: { multiplier: 3, prefix: 'Result: ' },
+        });
       });
-    });
 
-    it('should handle step functions without closure variables', async () => {
-      let error: Error | undefined;
-      try {
-        const ops: Promise<any>[] = [];
-        const workflowRun: WorkflowRun = {
-          runId: 'test-run-123',
-          workflowName: 'workflow',
-          status: 'running',
-          input: await dehydrateWorkflowArguments(
-            [],
-            'wrun_123',
-            noEncryptionKey,
-            ops
-          ),
-          createdAt: new Date('2024-01-01T00:00:00.000Z'),
-          updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-          startedAt: new Date('2024-01-01T00:00:00.000Z'),
-          deploymentId: 'test-deployment',
-        };
+      it('should handle step functions without closure variables', async () => {
+        let error: Error | undefined;
+        try {
+          const ops: Promise<any>[] = [];
+          const workflowRun: WorkflowRun = {
+            runId: 'test-run-123',
+            workflowName: 'workflow',
+            status: 'running',
+            input: await dehydrateWorkflowArguments(
+              [],
+              'wrun_123',
+              getKey(),
+              ops
+            ),
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+            startedAt: new Date('2024-01-01T00:00:00.000Z'),
+            deploymentId: 'test-deployment',
+          };
 
-        const events: Event[] = [];
+          const events: Event[] = [];
 
-        await runWorkflow(
-          `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
+          await runWorkflow(
+            `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
             const result = await add(5, 10);
             return result;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events,
-          noEncryptionKey
-        );
-      } catch (err) {
-        error = err as Error;
-      }
+            workflowRun,
+            events,
+            getKey()
+          );
+        } catch (err) {
+          error = err as Error;
+        }
 
-      // Should suspend to create the step
-      assert(error);
-      expect(error.name).toEqual('WorkflowSuspension');
-      expect((error as WorkflowSuspension).steps).toHaveLength(1);
+        // Should suspend to create the step
+        assert(error);
+        expect(error.name).toEqual('WorkflowSuspension');
+        expect((error as WorkflowSuspension).steps).toHaveLength(1);
 
-      const step = (error as WorkflowSuspension).steps[0];
-      expect(step).toMatchObject({
-        type: 'step',
-        stepName: 'add',
-        args: [5, 10],
+        const step = (error as WorkflowSuspension).steps[0];
+        expect(step).toMatchObject({
+          type: 'step',
+          stepName: 'add',
+          args: [5, 10],
+        });
       });
     });
+  } // end runTestSuite
+
+  describe('no encryption', () => {
+    runTestSuite(() => undefined);
+  });
+
+  describe('with encryption', () => {
+    runTestSuite(() => testKey);
   });
 });
