@@ -10,14 +10,19 @@ import {
   type ListEventsParams,
   type PaginatedResponse,
   PaginatedResponseSchema,
+  StructuredErrorSchema,
   type WorkflowRun,
-  WorkflowRunSchema,
+  WorkflowRunBaseSchema,
 } from '@workflow/world';
 import z from 'zod';
 import { cancelWorkflowRunV1, createWorkflowRunV1 } from './runs.js';
 import { deserializeStep, StepWireSchema } from './steps.js';
 import type { APIConfig } from './utils.js';
-import { DEFAULT_RESOLVE_DATA_OPTION, makeRequest } from './utils.js';
+import {
+  DEFAULT_RESOLVE_DATA_OPTION,
+  deserializeError,
+  makeRequest,
+} from './utils.js';
 
 // Helper to filter event data based on resolveData setting
 function filterEventData(event: any, resolveData: 'none' | 'all'): Event {
@@ -28,11 +33,29 @@ function filterEventData(event: any, resolveData: 'none' | 'all'): Event {
   return event;
 }
 
+/**
+ * Wire format schema for workflow runs in EventResult.
+ * The backend may return error either as:
+ * - A JSON string (legacy format) that needs deserialization
+ * - An already structured object (new format) with { message, stack?, code? }
+ * - undefined (when server returns error=undefined for failed runs)
+ *
+ * This is more lenient than WorkflowRunSchema to handle edge cases from the backend.
+ * deserializeError() normalizes both formats into the expected StructuredError object.
+ */
+const WorkflowRunWireSchema = WorkflowRunBaseSchema.omit({
+  error: true,
+}).extend({
+  // Backend returns error as either a JSON string, structured object, or undefined
+  error: z.union([z.string(), StructuredErrorSchema]).optional(),
+});
+
 // Schema for EventResult wire format returned by events.create
-// Uses wire format schemas for step to handle field name mapping
+// Uses wire format schemas for step and run to handle field name mapping
+// and error deserialization
 const EventResultWireSchema = z.object({
   event: EventSchema,
-  run: WorkflowRunSchema.optional(),
+  run: WorkflowRunWireSchema.optional(),
   step: StepWireSchema.optional(),
   hook: HookSchema.optional(),
 });
@@ -154,9 +177,12 @@ export async function createWorkflowRunEvent(
   });
 
   // Transform wire format to interface format
+  // Apply deserializeError to run to normalize error field from string/object/undefined
   return {
     event: filterEventData(wireResult.event, resolveData),
-    run: wireResult.run,
+    run: wireResult.run
+      ? deserializeError<WorkflowRun>(wireResult.run)
+      : undefined,
     step: wireResult.step ? deserializeStep(wireResult.step) : undefined,
     hook: wireResult.hook,
   };
