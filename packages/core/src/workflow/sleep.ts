@@ -1,9 +1,9 @@
+import { WorkflowRuntimeError } from '@workflow/errors';
 import { parseDurationToDate, withResolvers } from '@workflow/utils';
 import type { StringValue } from 'ms';
 import { EventConsumerResult } from '../events-consumer.js';
 import { type WaitInvocationQueueItem, WorkflowSuspension } from '../global.js';
 import type { WorkflowOrchestratorContext } from '../private.js';
-import { WorkflowRuntimeError } from '@workflow/errors';
 
 export function createSleep(ctx: WorkflowOrchestratorContext) {
   return async function sleepImpl(
@@ -57,10 +57,13 @@ export function createSleep(ctx: WorkflowOrchestratorContext) {
         // Remove this wait from the invocations queue (O(1) delete using Map)
         ctx.invocationsQueue.delete(correlationId);
 
-        // Wait has elapsed, resolve the sleep
-        setTimeout(() => {
+        // Wait has elapsed, resolve the sleep.
+        // Use enqueueResolve for consistent macrotask scheduling and to
+        // suppress the unconsumed event check until the workflow code has
+        // a chance to register consumers for subsequent events.
+        ctx.eventsConsumer.enqueueResolve(() => {
           resolve();
-        }, 0);
+        });
         return EventConsumerResult.Finished;
       }
 

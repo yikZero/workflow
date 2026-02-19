@@ -93,19 +93,22 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         if (promises.length > 0) {
           const next = promises.shift();
           if (next) {
-            // Reconstruct the payload from the event data
-            hydrateStepReturnValue(
-              event.eventData.payload,
-              ctx.runId,
-              ctx.encryptionKey,
-              ctx.globalThis
-            )
-              .then((payload) => {
+            // Reconstruct the payload from the event data.
+            // Use enqueueResolve to suppress the unconsumed event check while
+            // async hydration (which may involve decryption) is in flight.
+            ctx.eventsConsumer.enqueueResolve(async () => {
+              try {
+                const payload = await hydrateStepReturnValue(
+                  event.eventData.payload,
+                  ctx.runId,
+                  ctx.encryptionKey,
+                  ctx.globalThis
+                );
                 next.resolve(payload as T);
-              })
-              .catch((error) => {
+              } catch (error) {
                 next.reject(error);
-              });
+              }
+            });
           }
         } else {
           payloadsQueue.push(event);

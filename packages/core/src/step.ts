@@ -113,7 +113,7 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           // Terminal state - we can remove the invocationQueue item
           ctx.invocationsQueue.delete(event.correlationId);
           // Step failed - bubble up to workflow
-          setTimeout(() => {
+          ctx.eventsConsumer.enqueueResolve(() => {
             const errorData = event.eventData.error;
             const isErrorObject =
               typeof errorData === 'object' && errorData !== null;
@@ -133,7 +133,7 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
               error.stack = errorStack;
             }
             reject(error);
-          }, 0);
+          });
           return EventConsumerResult.Finished;
         }
 
@@ -142,12 +142,12 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           ctx.invocationsQueue.delete(event.correlationId);
 
           // Step has completed, so resolve the Promise with the cached result.
-          // The hydration is async, so we schedule the resolve via setTimeout
-          // after hydration completes to preserve macrotask timing semantics.
-          // We use a single setTimeout that awaits hydration inside it, keeping
-          // the same scheduling order as the original synchronous code path
-          // (where setTimeout was called synchronously from this callback).
-          setTimeout(async () => {
+          // We use enqueueResolve to suppress the unconsumed event check while
+          // async hydration (which may involve decryption) is in flight. This
+          // prevents a race condition where the next event in the log would be
+          // flagged as "unconsumed" before the workflow code has a chance to
+          // register a consumer for it.
+          ctx.eventsConsumer.enqueueResolve(async () => {
             try {
               const hydratedResult = await hydrateStepReturnValue(
                 event.eventData.result,
@@ -159,7 +159,7 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
             } catch (error) {
               reject(error);
             }
-          }, 0);
+          });
           return EventConsumerResult.Finished;
         }
 

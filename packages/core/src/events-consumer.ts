@@ -34,6 +34,7 @@ export class EventsConsumer {
   readonly callbacks: EventConsumerCallback[] = [];
   private onUnconsumedEvent: (event: Event) => void;
   private pendingUnconsumedCheck: ReturnType<typeof setTimeout> | null = null;
+  private pendingResolves = 0;
 
   constructor(events: Event[], options: EventsConsumerOptions) {
     this.events = events;
@@ -58,6 +59,35 @@ export class EventsConsumer {
       this.pendingUnconsumedCheck = null;
     }
     process.nextTick(this.consume);
+  }
+
+  /**
+   * Enqueues an async resolve operation. While any enqueued resolves are
+   * pending, the unconsumed event check is suppressed. This is critical for
+   * async decryption: without it, the EventsConsumer would flag subsequent
+   * events as "unconsumed" because the async decrypt delays the Promise
+   * resolution, which delays the workflow code from registering new consumers.
+   *
+   * Use this from event callbacks (step.ts, hook.ts) instead of raw
+   * `setTimeout(async () => { resolve(await decrypt()) })` patterns.
+   *
+   * The provided function is scheduled via `setTimeout(0)` to preserve
+   * macrotask timing semantics (matching the original synchronous code path).
+   */
+  enqueueResolve(fn: () => void | Promise<void>) {
+    this.pendingResolves++;
+    setTimeout(async () => {
+      try {
+        await fn();
+      } finally {
+        this.pendingResolves--;
+        // Re-trigger consume now that the async work is done.
+        // This handles the case where consume() was blocked by an
+        // unconsumed event that now has a subscriber registered
+        // (because the async resolve unblocked the workflow code).
+        process.nextTick(this.consume);
+      }
+    }, 0);
   }
 
   private consume = () => {
@@ -94,7 +124,13 @@ export class EventsConsumer {
     // pending process.nextTick microtasks (e.g., new subscribes from the
     // workflow code) can complete first. If the event is still unconsumed
     // when the timeout fires, it's truly orphaned.
-    if (currentEvent !== null) {
+    //
+    // However, if there are pending async resolves (e.g., decryption in
+    // flight), we do NOT schedule the check. The enqueueResolve callback
+    // will re-trigger consume() when the async work completes, at which
+    // point the workflow code will have had a chance to register new
+    // consumers for this event.
+    if (currentEvent !== null && this.pendingResolves === 0) {
       const unconsumedIndex = this.eventIndex;
       this.pendingUnconsumedCheck = setTimeout(() => {
         this.pendingUnconsumedCheck = null;
