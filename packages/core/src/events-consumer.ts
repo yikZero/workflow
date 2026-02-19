@@ -22,10 +22,21 @@ export interface EventsConsumerOptions {
   /**
    * Callback invoked when a non-null event cannot be consumed by any registered
    * callback, indicating an orphaned or invalid event in the event log. Called
-   * asynchronously after a macrotask delay to allow pending callback
-   * subscriptions to settle first.
+   * only after a subscribe+consume cycle fails to make progress, confirming
+   * the event is truly unconsumed rather than simply waiting for a subscriber
+   * that hasn't been registered yet.
    */
   onUnconsumedEvent: (event: Event) => void;
+
+  /**
+   * Optional callback invoked whenever an event is successfully consumed
+   * (a subscriber returned Consumed or Finished). This is used for passive
+   * observation (e.g., updating the VM timestamp) without participating in
+   * event matching — observers should NOT be regular subscribers because the
+   * consume loop may scan past events to find a match, and passive
+   * subscribers would be called for events that aren't actually consumed.
+   */
+  onEventConsumed?: (event: Event) => void;
 }
 
 export class EventsConsumer {
@@ -33,6 +44,7 @@ export class EventsConsumer {
   readonly events: Event[] = [];
   readonly callbacks: EventConsumerCallback[] = [];
   private onUnconsumedEvent: (event: Event) => void;
+  private onEventConsumed?: (event: Event) => void;
   private pendingUnconsumedCheck: ReturnType<typeof setTimeout> | null = null;
   private pendingResolves = 0;
 
@@ -40,6 +52,7 @@ export class EventsConsumer {
     this.events = events;
     this.eventIndex = 0;
     this.onUnconsumedEvent = options.onUnconsumedEvent;
+    this.onEventConsumed = options.onEventConsumed;
   }
 
   /**
@@ -58,7 +71,27 @@ export class EventsConsumer {
       clearTimeout(this.pendingUnconsumedCheck);
       this.pendingUnconsumedCheck = null;
     }
+    // Record the events array length before consume runs. After consume
+    // settles, if no events were consumed (length unchanged) and no async
+    // resolves are pending, the remaining events are truly orphaned.
+    const lengthBeforeConsume = this.events.length;
     process.nextTick(this.consume);
+    // Schedule the unconsumed check AFTER the consume nextTick. We use
+    // setTimeout(0) which fires after all nextTicks and microtasks, giving
+    // the consume loop and any subsequent subscribe() calls a chance to run.
+    this.pendingUnconsumedCheck = setTimeout(() => {
+      this.pendingUnconsumedCheck = null;
+      if (
+        this.events.length === lengthBeforeConsume &&
+        this.events.length > 0 &&
+        this.pendingResolves === 0
+      ) {
+        const event = this.events[this.eventIndex];
+        if (event) {
+          this.onUnconsumedEvent(event);
+        }
+      }
+    }, 0);
   }
 
   /**
@@ -113,12 +146,62 @@ export class EventsConsumer {
   }
 
   private consume = () => {
-    const currentEvent = this.events[this.eventIndex] ?? null;
+    // Scan forward from the current position to find the next event that
+    // a subscriber can consume. Events that no subscriber matches are
+    // skipped — they will be retried when new subscribers are registered
+    // (via subscribe() → process.nextTick(consume)). This handles
+    // out-of-order events in the event log: the step handler writes events
+    // asynchronously, so events for a later step can appear before events
+    // for an earlier step. Rather than getting stuck on the out-of-order
+    // event, we skip past it to process events that current subscribers need.
+    for (
+      let eventIdx = this.eventIndex;
+      eventIdx < this.events.length;
+      eventIdx++
+    ) {
+      const event = this.events[eventIdx];
+      for (let i = 0; i < this.callbacks.length; i++) {
+        const callback = this.callbacks[i];
+        let handled = EventConsumerResult.NotConsumed;
+        try {
+          handled = callback(event);
+        } catch (error) {
+          eventsLogger.error('EventConsumer callback threw an error', {
+            error,
+          });
+        }
+        if (
+          handled === EventConsumerResult.Consumed ||
+          handled === EventConsumerResult.Finished
+        ) {
+          // Consumer handled this event. Remove it from the events array
+          // at its current position. The eventIndex stays the same (since
+          // we removed an event at or after the current index, the next
+          // unprocessed event shifts into position).
+          this.events.splice(eventIdx, 1);
+
+          // Notify the observer (e.g., timestamp updater)
+          this.onEventConsumed?.(event);
+
+          // remove the callback if it has finished
+          if (handled === EventConsumerResult.Finished) {
+            this.callbacks.splice(i, 1);
+          }
+
+          // continue to the next event
+          process.nextTick(this.consume);
+          return;
+        }
+      }
+    }
+
+    // All events were scanned and none could be consumed. Try passing null
+    // (end-of-events) to subscribers so they can trigger WorkflowSuspension.
     for (let i = 0; i < this.callbacks.length; i++) {
       const callback = this.callbacks[i];
       let handled = EventConsumerResult.NotConsumed;
       try {
-        handled = callback(currentEvent);
+        handled = callback(null);
       } catch (error) {
         eventsLogger.error('EventConsumer callback threw an error', { error });
       }
@@ -126,40 +209,12 @@ export class EventsConsumer {
         handled === EventConsumerResult.Consumed ||
         handled === EventConsumerResult.Finished
       ) {
-        // consumer handled this event, so increase the event index
-        this.eventIndex++;
-
-        // remove the callback if it has finished
         if (handled === EventConsumerResult.Finished) {
           this.callbacks.splice(i, 1);
         }
-
-        // continue to the next event
         process.nextTick(this.consume);
         return;
       }
-    }
-
-    // If we reach here, all callbacks returned NotConsumed.
-    // If the current event is non-null (a real event, not end-of-events),
-    // schedule a deferred check. We use setTimeout (macrotask) so that any
-    // pending process.nextTick microtasks (e.g., new subscribes from the
-    // workflow code) can complete first. If the event is still unconsumed
-    // when the timeout fires, it's truly orphaned.
-    //
-    // However, if there are pending async resolves (e.g., decryption in
-    // flight), we do NOT schedule the check. The enqueueResolve callback
-    // will re-trigger consume() when the async work completes, at which
-    // point the workflow code will have had a chance to register new
-    // consumers for this event.
-    if (currentEvent !== null && this.pendingResolves === 0) {
-      const unconsumedIndex = this.eventIndex;
-      this.pendingUnconsumedCheck = setTimeout(() => {
-        this.pendingUnconsumedCheck = null;
-        if (this.eventIndex === unconsumedIndex) {
-          this.onUnconsumedEvent(currentEvent);
-        }
-      }, 0);
     }
   };
 }

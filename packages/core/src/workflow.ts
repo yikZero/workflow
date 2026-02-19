@@ -82,6 +82,16 @@ export async function runWorkflow(
           )
         );
       },
+      // Update the VM timestamp whenever an event is consumed. This is a
+      // passive observer — it must NOT be a regular subscriber because the
+      // consume loop scans forward past unmatched events, and a subscriber
+      // would be called for events that aren't actually consumed yet.
+      onEventConsumed: (event) => {
+        const createdAt = event?.createdAt;
+        if (createdAt) {
+          updateTimestamp(+createdAt);
+        }
+      },
     });
 
     const workflowContext: WorkflowOrchestratorContext = {
@@ -94,16 +104,6 @@ export async function runWorkflow(
       generateNanoid,
       invocationsQueue: new Map(),
     };
-
-    // Subscribe to the events log to update the timestamp in the vm context
-    workflowContext.eventsConsumer.subscribe((event) => {
-      const createdAt = event?.createdAt;
-      if (createdAt) {
-        updateTimestamp(+createdAt);
-      }
-      // Never consume events - this is only a passive subscriber
-      return EventConsumerResult.NotConsumed;
-    });
 
     // Consume run lifecycle events - these are structural events that don't
     // need special handling in the workflow, but must be consumed to advance

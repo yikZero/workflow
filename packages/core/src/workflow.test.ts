@@ -912,6 +912,379 @@ describe('runWorkflow', () => {
       });
     });
 
+    it('should replay a complex workflow with Promise.all, sequential steps, hooks, and out-of-order step_created events', async () => {
+      // This test models the storytime-slackbot production workflow pattern:
+      //   1. Promise.all([postSlackMessage, generateStoryPiece])
+      //   2. await updateSlackMessage(...)
+      //   3. hook.create(...) (sync, no await)
+      //   4. await postSlackMessage(...)
+      //   5. for await (hook) — waits for hook_received
+      //   6. Promise.all([generateStoryPiece, addReactionToMessage])
+      //   7. Promise.all([postSlackMessage, removeReactionFromMessage])
+      //
+      // The critical production detail: step_created events can arrive in the
+      // DB in a different order than correlationId generation order. For example,
+      // step_created for step HK (postSlackMessage, 4th step) may appear in the
+      // event log BEFORE step_created for step HH (updateSlackMessage, 3rd step),
+      // even though the workflow code creates HH first. During replay, the
+      // EventsConsumer hits HK's step_created before HH's subscriber exists.
+      const ops: Promise<any>[] = [];
+      const workflowRunId = 'wrun_123';
+      const workflowRun: WorkflowRun = {
+        runId: workflowRunId,
+        workflowName: 'workflow',
+        status: 'running',
+        input: await dehydrateWorkflowArguments(
+          [],
+          workflowRunId,
+          getKey(),
+          ops
+        ),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        deploymentId: 'test-deployment',
+      };
+
+      // Deterministic correlationIds for wrun_123 (monotonic ULID sequence)
+      const stepHF = 'step_01HK153X00Y11PCQTCHQRK34HF'; // postSlackMessage (1st Promise.all)
+      const stepHG = 'step_01HK153X00Y11PCQTCHQRK34HG'; // generateStoryPiece (1st Promise.all)
+      const stepHH = 'step_01HK153X00Y11PCQTCHQRK34HH'; // updateSlackMessage (sequential)
+      const hookHJ = 'hook_01HK153X00Y11PCQTCHQRK34HJ'; // slackMessageHook.create()
+      const stepHK = 'step_01HK153X00Y11PCQTCHQRK34HK'; // postSlackMessage (sequential)
+      const stepHM = 'step_01HK153X00Y11PCQTCHQRK34HM'; // generateStoryPiece (2nd Promise.all)
+      const stepHN = 'step_01HK153X00Y11PCQTCHQRK34HN'; // addReactionToMessage (2nd Promise.all)
+      const stepHP = 'step_01HK153X00Y11PCQTCHQRK34HP'; // postSlackMessage (3rd Promise.all)
+      const stepHQ = 'step_01HK153X00Y11PCQTCHQRK34HQ'; // removeReactionFromMessage (3rd Promise.all)
+
+      const events: Event[] = [
+        // --- 1st Promise.all: postSlackMessage + generateStoryPiece ---
+        {
+          eventId: 'e-1',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHF,
+          createdAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
+        {
+          eventId: 'e-2',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHG,
+          createdAt: new Date('2024-01-01T00:00:01.100Z'),
+        },
+        {
+          eventId: 'e-3',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHF,
+          createdAt: new Date('2024-01-01T00:00:02.000Z'),
+        },
+        {
+          eventId: 'e-4',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHF,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'slack-result',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:02.500Z'),
+        },
+        {
+          eventId: 'e-5',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHG,
+          createdAt: new Date('2024-01-01T00:00:03.000Z'),
+        },
+        {
+          eventId: 'e-6',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHG,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'ai-result',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:03.500Z'),
+        },
+
+        // --- Sequential: updateSlackMessage + hook.create + postSlackMessage ---
+        // KEY: step_created for stepHK appears BEFORE stepHH in event log
+        // (out-of-order DB insertion, matching production behavior)
+        {
+          eventId: 'e-7',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHK,
+          createdAt: new Date('2024-01-01T00:00:04.000Z'),
+        },
+        {
+          eventId: 'e-8',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHH,
+          createdAt: new Date('2024-01-01T00:00:04.010Z'),
+        },
+        {
+          eventId: 'e-9',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHH,
+          createdAt: new Date('2024-01-01T00:00:04.500Z'),
+        },
+        {
+          eventId: 'e-10',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHH,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'update-ok',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:05.000Z'),
+        },
+        {
+          eventId: 'e-11',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHK,
+          createdAt: new Date('2024-01-01T00:00:05.500Z'),
+        },
+        {
+          eventId: 'e-12',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHK,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'post-ok',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:06.000Z'),
+        },
+
+        // --- Hook received (from the for-await loop) ---
+        {
+          eventId: 'e-13',
+          runId: workflowRunId,
+          eventType: 'hook_received',
+          correlationId: hookHJ,
+          eventData: {
+            payload: await dehydrateStepReturnValue(
+              { text: 'user message' },
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:10.000Z'),
+        },
+
+        // --- 2nd Promise.all: generateStoryPiece + addReactionToMessage ---
+        // Also out-of-order: stepHN created before stepHM in event log
+        {
+          eventId: 'e-14',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHN,
+          createdAt: new Date('2024-01-01T00:00:11.000Z'),
+        },
+        {
+          eventId: 'e-15',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHM,
+          createdAt: new Date('2024-01-01T00:00:11.010Z'),
+        },
+        {
+          eventId: 'e-16',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHM,
+          createdAt: new Date('2024-01-01T00:00:11.500Z'),
+        },
+        {
+          eventId: 'e-17',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHN,
+          createdAt: new Date('2024-01-01T00:00:11.600Z'),
+        },
+        {
+          eventId: 'e-18',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHM,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'ai-result-2',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:12.000Z'),
+        },
+        {
+          eventId: 'e-19',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHN,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'reaction-ok',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:12.500Z'),
+        },
+
+        // --- 3rd Promise.all: postSlackMessage + removeReactionFromMessage ---
+        // Also out-of-order
+        {
+          eventId: 'e-20',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHQ,
+          createdAt: new Date('2024-01-01T00:00:13.000Z'),
+        },
+        {
+          eventId: 'e-21',
+          runId: workflowRunId,
+          eventType: 'step_created',
+          correlationId: stepHP,
+          createdAt: new Date('2024-01-01T00:00:13.010Z'),
+        },
+        {
+          eventId: 'e-22',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHP,
+          createdAt: new Date('2024-01-01T00:00:13.500Z'),
+        },
+        {
+          eventId: 'e-23',
+          runId: workflowRunId,
+          eventType: 'step_started',
+          correlationId: stepHQ,
+          createdAt: new Date('2024-01-01T00:00:13.600Z'),
+        },
+        {
+          eventId: 'e-24',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHP,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'final-post-ok',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:14.000Z'),
+        },
+        {
+          eventId: 'e-25',
+          runId: workflowRunId,
+          eventType: 'step_completed',
+          correlationId: stepHQ,
+          eventData: {
+            result: await dehydrateStepReturnValue(
+              'remove-ok',
+              workflowRunId,
+              getKey(),
+              ops
+            ),
+          },
+          createdAt: new Date('2024-01-01T00:00:14.500Z'),
+        },
+      ];
+
+      // Workflow code that mirrors the storytime-slackbot pattern
+      const result = await runWorkflow(
+        `const postSlackMessage = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("postSlackMessage");
+         const generateStoryPiece = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("generateStoryPiece");
+         const updateSlackMessage = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("updateSlackMessage");
+         const addReactionToMessage = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("addReactionToMessage");
+         const removeReactionFromMessage = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("removeReactionFromMessage");
+         const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+
+         async function workflow() {
+           // 1st Promise.all
+           const [slackResult, aiResult] = await Promise.all([
+             postSlackMessage("channel1"),
+             generateStoryPiece("messages"),
+           ]);
+
+           // Sequential: updateSlackMessage
+           await updateSlackMessage("update");
+
+           // Hook creation (sync, not awaited)
+           const hook = createHook();
+
+           // Sequential: postSlackMessage
+           await postSlackMessage("encouragement");
+
+           // for-await on hook (first iteration only for this test)
+           const hookIterator = hook[Symbol.asyncIterator]();
+           const { value: hookData } = await hookIterator.next();
+
+           // 2nd Promise.all inside loop body
+           const [aiResult2, reactionResult] = await Promise.all([
+             generateStoryPiece("continue"),
+             addReactionToMessage("reaction"),
+           ]);
+
+           // 3rd Promise.all
+           const [finalPost, removeResult] = await Promise.all([
+             postSlackMessage("final"),
+             removeReactionFromMessage("remove"),
+           ]);
+
+           return [slackResult, aiResult, hookData, aiResult2, finalPost, removeResult];
+         }${getWorkflowTransformCode('workflow')}`,
+        workflowRun,
+        events,
+        getKey()
+      );
+
+      expect(
+        await hydrateWorkflowReturnValue(
+          result as any,
+          workflowRunId,
+          getKey(),
+          ops
+        )
+      ).toEqual([
+        'slack-result',
+        'ai-result',
+        { text: 'user message' },
+        'ai-result-2',
+        'final-post-ok',
+        'remove-ok',
+      ]);
+    });
+
     describe('error handling', () => {
       it('should throw ReferenceError when workflow code does not return a function', async () => {
         let error: Error | undefined;
