@@ -4,6 +4,7 @@ import { HooksTable } from '~/components/hooks-table';
 import { RunsTable } from '~/components/runs-table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import { WorkflowsList } from '~/components/workflows-list';
+import { WorkflowsSummary } from '~/components/workflows-summary';
 import { useServerConfig } from '~/lib/world-config-context';
 
 export default function Home() {
@@ -50,6 +51,7 @@ export default function Home() {
 
   return (
     <div className="max-w-7xl mx-auto px-4">
+      <WorkflowsSummary />
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="runs">Runs</TabsTrigger>
