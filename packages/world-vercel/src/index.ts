@@ -62,6 +62,7 @@ export function createVercelWorld(config?: APIConfig): World {
       // tooling reading data from other deployments (VERCEL_TOKEN).
       return fetchRunKey(deploymentId, projectId, runId, {
         token: config?.token,
+        teamId: config?.projectConfig?.teamId,
       });
     },
   };

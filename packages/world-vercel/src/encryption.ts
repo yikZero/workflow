@@ -10,9 +10,9 @@
  * for HKDF and the Vercel API for key retrieval).
  */
 
-import * as z from 'zod';
 import { webcrypto } from 'node:crypto';
 import { getVercelOidcToken } from '@vercel/oidc';
+import * as z from 'zod';
 
 const KEY_BYTES = 32; // 256 bits = 32 bytes (AES-256)
 
@@ -92,6 +92,8 @@ export async function fetchRunKey(
   options?: {
     /** Auth token (from config). Falls back to OIDC or VERCEL_TOKEN. */
     token?: string;
+    /** Team ID for team-scoped API requests. */
+    teamId?: string;
   }
 ): Promise<Uint8Array> {
   // Authenticate via provided token (CLI/config), OIDC token (runtime),
@@ -105,6 +107,9 @@ export async function fetchRunKey(
   }
 
   const params = new URLSearchParams({ projectId, runId });
+  if (options?.teamId) {
+    params.set('teamId', options.teamId);
+  }
   const response = await fetch(
     `https://api.vercel.com/v1/workflow/run-key/${deploymentId}?${params}`,
     {
