@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-02-23T19:47:01.840Z",
-  "commit": "bf3e75f7c361f750b1b897c4b525084d89511a05",
+  "lastUpdated": "2026-02-23T22:40:14.368Z",
+  "commit": "dda67421cf15b612c295908681eb3ee3a1e7d55e",
   "branch": "main",
   "type": "benchmarks",
   "worlds": {
@@ -8,375 +8,302 @@
       "status": "measured",
       "metrics": {
         "workflow with no steps": {
-          "mean": 1005.1899638000001,
-          "min": 1004.490914,
-          "max": 1006.4505399999998,
+          "mean": 1004.965149,
+          "min": 1003.3789179999994,
+          "max": 1006.8666119999998,
           "samples": 10,
-          "workflowTime": 32.2,
+          "workflowTime": 32.4,
           "workflowMin": 31,
-          "workflowMax": 33
+          "workflowMax": 37
         },
         "workflow with 1 step": {
-          "mean": 2005.9638950999997,
-          "min": 2004.8870480000005,
-          "max": 2006.405138000002,
+          "mean": 2005.5475176,
+          "min": 2004.53708,
+          "max": 2006.6331940000018,
           "samples": 10,
-          "workflowTime": 1106.5,
-          "workflowMin": 1101,
-          "workflowMax": 1116
+          "workflowTime": 1106.8,
+          "workflowMin": 1099,
+          "workflowMax": 1118
         },
         "workflow with 10 sequential steps": {
-          "mean": 11020.994980000001,
-          "min": 11020.174518,
-          "max": 11021.866627000003,
+          "mean": 11021.687640000002,
+          "min": 11020.985537,
+          "max": 11022.196397000007,
           "samples": 3,
-          "workflowTime": 10830.666666666666,
-          "workflowMin": 10824,
-          "workflowMax": 10840
+          "workflowTime": 10821,
+          "workflowMin": 10808,
+          "workflowMax": 10836
         },
         "workflow with 25 sequential steps": {
-          "mean": 28051.047315,
-          "min": 28050.140461000003,
-          "max": 28052.44584899998,
+          "mean": 28049.957827666658,
+          "min": 28049.24758699999,
+          "max": 28050.432796999987,
           "samples": 3,
-          "workflowTime": 27476.333333333332,
-          "workflowMin": 27450,
-          "workflowMax": 27505
+          "workflowTime": 27457.333333333332,
+          "workflowMin": 27445,
+          "workflowMax": 27472
         },
         "workflow with 50 sequential steps": {
-          "mean": 58102.30557699999,
-          "min": 58102.276324999984,
-          "max": 58102.334829,
+          "mean": 57098.049831,
+          "min": 57095.71076900003,
+          "max": 57100.38889299997,
           "samples": 2,
-          "workflowTime": 57258.5,
-          "workflowMin": 57249,
-          "workflowMax": 57268
+          "workflowTime": 57058,
+          "workflowMin": 57050,
+          "workflowMax": 57066
         },
         "workflow with stream": {
-          "mean": 1016.2524573999923,
-          "min": 1014.4850279999664,
-          "max": 1017.9041720000096,
+          "mean": 1015.8862030000018,
+          "min": 1013.7619450000348,
+          "max": 1017.134825999965,
           "samples": 10,
-          "workflowTime": 173,
-          "workflowMin": 168,
+          "workflowTime": 171.5,
+          "workflowMin": 167,
           "workflowMax": 182,
-          "ttfb": 1002.5,
-          "slurp": 11.1
+          "ttfb": 1002.7,
+          "slurp": 10.5
         },
         "Promise.all with 10 concurrent steps": {
-          "mean": 2005.9299700666645,
-          "min": 2004.974412999989,
-          "max": 2006.93124299997,
+          "mean": 2005.4517700000083,
+          "min": 2004.05404300004,
+          "max": 2006.264474000025,
           "samples": 15,
-          "workflowTime": 1416.0666666666666,
-          "workflowMin": 1356,
-          "workflowMax": 1475
+          "workflowTime": 1410.3333333333333,
+          "workflowMin": 1336,
+          "workflowMax": 1442
         },
         "Promise.all with 25 concurrent steps": {
-          "mean": 3007.1552213000077,
-          "min": 3006.5462699999916,
-          "max": 3008.1012580000097,
+          "mean": 3006.9684319999883,
+          "min": 3005.82175199996,
+          "max": 3009.0491490000277,
           "samples": 10,
-          "workflowTime": 2597.7,
-          "workflowMin": 2498,
-          "workflowMax": 2707
+          "workflowTime": 2557.2,
+          "workflowMin": 2495,
+          "workflowMax": 2604
         },
         "Promise.all with 50 concurrent steps": {
-          "mean": 8022.209699250016,
-          "min": 8019.76415100001,
-          "max": 8025.670982000011,
+          "mean": 7518.408850750013,
+          "min": 7016.63604100002,
+          "max": 8014.858845999988,
           "samples": 4,
-          "workflowTime": 7581.25,
-          "workflowMin": 7402,
-          "workflowMax": 7729
+          "workflowTime": 7066.25,
+          "workflowMin": 6936,
+          "workflowMax": 7196
         },
         "Promise.race with 10 concurrent steps": {
-          "mean": 2072.1017771333377,
-          "min": 2003.8967350000166,
-          "max": 3006.668841000006,
+          "mean": 2005.2080722666578,
+          "min": 2003.4995530000306,
+          "max": 2006.7629899999592,
           "samples": 15,
-          "workflowTime": 1490.0666666666666,
-          "workflowMin": 1379,
-          "workflowMax": 2058
+          "workflowTime": 1406.6,
+          "workflowMin": 1376,
+          "workflowMax": 1443
         },
         "Promise.race with 25 concurrent steps": {
-          "mean": 3007.639598599996,
-          "min": 3006.6092879999196,
-          "max": 3011.1457520000404,
+          "mean": 3007.474064500007,
+          "min": 3006.6516060000286,
+          "max": 3010.540169999993,
           "samples": 10,
-          "workflowTime": 2707.6,
-          "workflowMin": 2641,
-          "workflowMax": 2977
+          "workflowTime": 2636.3,
+          "workflowMin": 2509,
+          "workflowMax": 2708
         },
         "Promise.race with 50 concurrent steps": {
-          "mean": 8524.464030999981,
-          "min": 8021.585992999957,
-          "max": 9025.206312999944,
+          "mean": 8018.116965250025,
+          "min": 8014.646437000018,
+          "max": 8019.94734199997,
           "samples": 4,
-          "workflowTime": 7961.25,
-          "workflowMin": 7862,
-          "workflowMax": 8054
+          "workflowTime": 7570,
+          "workflowMin": 7488,
+          "workflowMax": 7681
         }
       },
       "frameworks": {
         "express": {
           "workflow with no steps": {
-            "mean": 1004.7779537,
-            "min": 1003.8299429999988,
-            "max": 1006.6903670000011,
+            "mean": 1005.1427915000002,
+            "min": 1004.4098140000006,
+            "max": 1006.0905480000001,
             "samples": 10
           },
           "workflow with 1 step": {
-            "mean": 2004.9085788,
-            "min": 2003.6866870000013,
-            "max": 2006.1414480000003,
+            "mean": 2005.8953375,
+            "min": 2005.0872600000002,
+            "max": 2006.6740559999998,
             "samples": 10
           },
           "workflow with 10 sequential steps": {
-            "mean": 11022.040255333335,
-            "min": 11019.930978999997,
-            "max": 11023.91208000001,
+            "mean": 11021.743793333328,
+            "min": 11021.448858999996,
+            "max": 11022.252755999987,
             "samples": 3
           },
           "workflow with 25 sequential steps": {
-            "mean": 28050.62470399999,
-            "min": 28049.874129999982,
-            "max": 28051.016311999992,
+            "mean": 28050.891620000006,
+            "min": 28049.936589999998,
+            "max": 28051.513246000017,
             "samples": 3
           },
           "workflow with 50 sequential steps": {
-            "mean": 58100.47177699997,
-            "min": 58098.189185999974,
-            "max": 58102.754367999965,
+            "mean": 58101.514341,
+            "min": 58100.70496,
+            "max": 58102.323722,
             "samples": 2
           },
           "workflow with stream": {
-            "mean": 1016.1028844000015,
-            "min": 1014.325393999985,
-            "max": 1018.0893480000086,
+            "mean": 1016.0267890000017,
+            "min": 1014.9393500000006,
+            "max": 1017.4966089999652,
             "samples": 10
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 2005.5035103333298,
-            "min": 2004.6487169999746,
-            "max": 2006.477482999966,
+            "mean": 2004.4613084666664,
+            "min": 2003.3099360000342,
+            "max": 2005.8706970000057,
             "samples": 15
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 3006.893355200015,
-            "min": 3005.4850310000475,
-            "max": 3007.8586830000277,
+            "mean": 3007.2894848999977,
+            "min": 3005.5288840000285,
+            "max": 3010.087921999977,
             "samples": 10
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 8018.952744000009,
-            "min": 8016.477450000006,
-            "max": 8022.448848000029,
+            "mean": 8028.904328500008,
+            "min": 8018.686267000041,
+            "max": 8037.125281999994,
             "samples": 4
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 2005.4770605999938,
-            "min": 2004.5325829999638,
-            "max": 2006.3953419999452,
+            "mean": 2004.7495864666687,
+            "min": 2003.6949469999527,
+            "max": 2005.6524709999794,
             "samples": 15
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 3007.5543683000024,
-            "min": 3006.349592000013,
-            "max": 3010.1139149999944,
+            "mean": 3007.5775041000043,
+            "min": 3005.055824000039,
+            "max": 3011.010558000009,
             "samples": 10
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 8275.52093525001,
-            "min": 8015.418017999968,
-            "max": 9034.356639000005,
+            "mean": 8027.030820749991,
+            "min": 8019.020741000073,
+            "max": 8038.527807999984,
             "samples": 4
           }
         },
-        "nextjs-turbopack": {
-          "workflow with no steps": {
-            "mean": 1005.1359408999997,
-            "min": 1004.0547749999996,
-            "max": 1007.4166219999988,
-            "samples": 10
-          },
-          "workflow with 1 step": {
-            "mean": 2005.583014999999,
-            "min": 2004.6200899999967,
-            "max": 2006.9953580000001,
-            "samples": 10
-          },
-          "workflow with 10 sequential steps": {
-            "mean": 11022.049122000002,
-            "min": 11020.779837000002,
-            "max": 11023.054059000002,
-            "samples": 3
-          },
-          "workflow with 25 sequential steps": {
-            "mean": 28052.063517000002,
-            "min": 28051.038344,
-            "max": 28054.093148000014,
-            "samples": 3
-          },
-          "workflow with 50 sequential steps": {
-            "mean": 57100.20977100001,
-            "min": 57099.76910800001,
-            "max": 57100.65043400001,
-            "samples": 2
-          },
-          "workflow with stream": {
-            "mean": 1015.4406351999845,
-            "min": 1014.3839469999657,
-            "max": 1016.6483790000202,
-            "samples": 10
-          },
-          "Promise.all with 10 concurrent steps": {
-            "mean": 2005.5127155333369,
-            "min": 2004.7308740000008,
-            "max": 2006.3701800000272,
-            "samples": 15
-          },
-          "Promise.all with 25 concurrent steps": {
-            "mean": 3007.970655500004,
-            "min": 3006.8730409999844,
-            "max": 3011.751084000047,
-            "samples": 10
-          },
-          "Promise.all with 50 concurrent steps": {
-            "mean": 7214.3605522,
-            "min": 6011.349800999975,
-            "max": 8015.835733000014,
-            "samples": 5
-          },
-          "Promise.race with 10 concurrent steps": {
-            "mean": 2004.8124534666654,
-            "min": 2003.7081270000199,
-            "max": 2005.784524000017,
-            "samples": 15
-          },
-          "Promise.race with 25 concurrent steps": {
-            "mean": 3008.5565776999983,
-            "min": 3005.7856690000044,
-            "max": 3017.2169789999025,
-            "samples": 10
-          },
-          "Promise.race with 50 concurrent steps": {
-            "mean": 8015.790595000028,
-            "min": 7012.653344999999,
-            "max": 9021.294761000085,
-            "samples": 4
-          }
-        },
+        "nextjs-turbopack": {},
         "nitro-v3": {
           "workflow with no steps": {
-            "mean": 1005.1899638000001,
-            "min": 1004.490914,
-            "max": 1006.4505399999998,
+            "mean": 1004.965149,
+            "min": 1003.3789179999994,
+            "max": 1006.8666119999998,
             "samples": 10,
-            "workflowTime": 32.2,
+            "workflowTime": 32.4,
             "workflowMin": 31,
-            "workflowMax": 33
+            "workflowMax": 37
           },
           "workflow with 1 step": {
-            "mean": 2005.9638950999997,
-            "min": 2004.8870480000005,
-            "max": 2006.405138000002,
+            "mean": 2005.5475176,
+            "min": 2004.53708,
+            "max": 2006.6331940000018,
             "samples": 10,
-            "workflowTime": 1106.5,
-            "workflowMin": 1101,
-            "workflowMax": 1116
+            "workflowTime": 1106.8,
+            "workflowMin": 1099,
+            "workflowMax": 1118
           },
           "workflow with 10 sequential steps": {
-            "mean": 11020.994980000001,
-            "min": 11020.174518,
-            "max": 11021.866627000003,
+            "mean": 11021.687640000002,
+            "min": 11020.985537,
+            "max": 11022.196397000007,
             "samples": 3,
-            "workflowTime": 10830.666666666666,
-            "workflowMin": 10824,
-            "workflowMax": 10840
+            "workflowTime": 10821,
+            "workflowMin": 10808,
+            "workflowMax": 10836
           },
           "workflow with 25 sequential steps": {
-            "mean": 28051.047315,
-            "min": 28050.140461000003,
-            "max": 28052.44584899998,
+            "mean": 28049.957827666658,
+            "min": 28049.24758699999,
+            "max": 28050.432796999987,
             "samples": 3,
-            "workflowTime": 27476.333333333332,
-            "workflowMin": 27450,
-            "workflowMax": 27505
+            "workflowTime": 27457.333333333332,
+            "workflowMin": 27445,
+            "workflowMax": 27472
           },
           "workflow with 50 sequential steps": {
-            "mean": 58102.30557699999,
-            "min": 58102.276324999984,
-            "max": 58102.334829,
+            "mean": 57098.049831,
+            "min": 57095.71076900003,
+            "max": 57100.38889299997,
             "samples": 2,
-            "workflowTime": 57258.5,
-            "workflowMin": 57249,
-            "workflowMax": 57268
+            "workflowTime": 57058,
+            "workflowMin": 57050,
+            "workflowMax": 57066
           },
           "workflow with stream": {
-            "mean": 1016.2524573999923,
-            "min": 1014.4850279999664,
-            "max": 1017.9041720000096,
+            "mean": 1015.8862030000018,
+            "min": 1013.7619450000348,
+            "max": 1017.134825999965,
             "samples": 10,
-            "workflowTime": 173,
-            "workflowMin": 168,
+            "workflowTime": 171.5,
+            "workflowMin": 167,
             "workflowMax": 182,
-            "ttfb": 1002.5,
-            "slurp": 11.1
+            "ttfb": 1002.7,
+            "slurp": 10.5
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 2005.9299700666645,
-            "min": 2004.974412999989,
-            "max": 2006.93124299997,
+            "mean": 2005.4517700000083,
+            "min": 2004.05404300004,
+            "max": 2006.264474000025,
             "samples": 15,
-            "workflowTime": 1416.0666666666666,
-            "workflowMin": 1356,
-            "workflowMax": 1475
+            "workflowTime": 1410.3333333333333,
+            "workflowMin": 1336,
+            "workflowMax": 1442
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 3007.1552213000077,
-            "min": 3006.5462699999916,
-            "max": 3008.1012580000097,
+            "mean": 3006.9684319999883,
+            "min": 3005.82175199996,
+            "max": 3009.0491490000277,
             "samples": 10,
-            "workflowTime": 2597.7,
-            "workflowMin": 2498,
-            "workflowMax": 2707
+            "workflowTime": 2557.2,
+            "workflowMin": 2495,
+            "workflowMax": 2604
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 8022.209699250016,
-            "min": 8019.76415100001,
-            "max": 8025.670982000011,
+            "mean": 7518.408850750013,
+            "min": 7016.63604100002,
+            "max": 8014.858845999988,
             "samples": 4,
-            "workflowTime": 7581.25,
-            "workflowMin": 7402,
-            "workflowMax": 7729
+            "workflowTime": 7066.25,
+            "workflowMin": 6936,
+            "workflowMax": 7196
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 2072.1017771333377,
-            "min": 2003.8967350000166,
-            "max": 3006.668841000006,
+            "mean": 2005.2080722666578,
+            "min": 2003.4995530000306,
+            "max": 2006.7629899999592,
             "samples": 15,
-            "workflowTime": 1490.0666666666666,
-            "workflowMin": 1379,
-            "workflowMax": 2058
+            "workflowTime": 1406.6,
+            "workflowMin": 1376,
+            "workflowMax": 1443
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 3007.639598599996,
-            "min": 3006.6092879999196,
-            "max": 3011.1457520000404,
+            "mean": 3007.474064500007,
+            "min": 3006.6516060000286,
+            "max": 3010.540169999993,
             "samples": 10,
-            "workflowTime": 2707.6,
-            "workflowMin": 2641,
-            "workflowMax": 2977
+            "workflowTime": 2636.3,
+            "workflowMin": 2509,
+            "workflowMax": 2708
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 8524.464030999981,
-            "min": 8021.585992999957,
-            "max": 9025.206312999944,
+            "mean": 8018.116965250025,
+            "min": 8014.646437000018,
+            "max": 8019.94734199997,
             "samples": 4,
-            "workflowTime": 7961.25,
-            "workflowMin": 7862,
-            "workflowMax": 8054
+            "workflowTime": 7570,
+            "workflowMin": 7488,
+            "workflowMax": 7681
           }
         }
       }
@@ -385,302 +312,302 @@
       "status": "measured",
       "metrics": {
         "workflow with no steps": {
-          "mean": 1011.2199469999999,
-          "min": 1007.6983580000006,
-          "max": 1030.6075809999998,
+          "mean": 1009.6987022999999,
+          "min": 1008.0699009999998,
+          "max": 1013.5456349999995,
           "samples": 10,
-          "workflowTime": 52,
-          "workflowMin": 37,
-          "workflowMax": 68
+          "workflowTime": 56,
+          "workflowMin": 50,
+          "workflowMax": 64
         },
         "workflow with 1 step": {
-          "mean": 2011.5143534000003,
-          "min": 2009.4483309999996,
-          "max": 2014.3175349999983,
+          "mean": 2010.1339674000003,
+          "min": 2008.5635580000016,
+          "max": 2013.2725449999998,
           "samples": 10,
-          "workflowTime": 1131.6,
-          "workflowMin": 1120,
-          "workflowMax": 1169
+          "workflowTime": 1119.3,
+          "workflowMin": 1103,
+          "workflowMax": 1137
         },
         "workflow with 10 sequential steps": {
-          "mean": 11042.727710333338,
-          "min": 11037.095696999997,
-          "max": 11047.999715000013,
+          "mean": 11036.928797666666,
+          "min": 11034.200517000005,
+          "max": 11040.195858999992,
           "samples": 3,
-          "workflowTime": 10864.333333333334,
-          "workflowMin": 10862,
-          "workflowMax": 10866
+          "workflowTime": 10860.333333333334,
+          "workflowMin": 10837,
+          "workflowMax": 10880
         },
         "workflow with 25 sequential steps": {
-          "mean": 28064.083808666666,
-          "min": 28058.691884,
-          "max": 28068.164837999997,
+          "mean": 28056.758707666664,
+          "min": 28054.01574599999,
+          "max": 28058.206049,
           "samples": 3,
-          "workflowTime": 27224,
-          "workflowMin": 27164,
-          "workflowMax": 27269
+          "workflowTime": 27142,
+          "workflowMin": 27129,
+          "workflowMax": 27157
         },
         "workflow with 50 sequential steps": {
-          "mean": 55608.011905999985,
-          "min": 55110.07414499999,
-          "max": 56105.94966699998,
+          "mean": 55088.83288500001,
+          "min": 55087.73713999998,
+          "max": 55089.92863000004,
           "samples": 2,
-          "workflowTime": 55156,
-          "workflowMin": 55095,
-          "workflowMax": 55217
+          "workflowTime": 55015.5,
+          "workflowMin": 54986,
+          "workflowMax": 55045
         },
         "workflow with stream": {
-          "mean": 1010.4511115999834,
-          "min": 1008.0879710000008,
-          "max": 1011.8340889999527,
+          "mean": 1012.0902139999962,
+          "min": 1008.991234999965,
+          "max": 1019.6220250000479,
           "samples": 10,
-          "workflowTime": 201.1,
-          "workflowMin": 177,
-          "workflowMax": 218,
-          "ttfb": 989,
-          "slurp": 1
+          "workflowTime": 186.3,
+          "workflowMin": 166,
+          "workflowMax": 230,
+          "ttfb": 994.9,
+          "slurp": 1.3
         },
         "Promise.all with 10 concurrent steps": {
-          "mean": 2009.5779632666574,
-          "min": 2007.6891569999862,
-          "max": 2011.713935000007,
+          "mean": 2009.8353036666676,
+          "min": 2006.7191599999787,
+          "max": 2016.8728699999629,
           "samples": 15,
-          "workflowTime": 1342.2666666666667,
-          "workflowMin": 1280,
-          "workflowMax": 1414
+          "workflowTime": 1346.4,
+          "workflowMin": 1306,
+          "workflowMax": 1403
         },
         "Promise.all with 25 concurrent steps": {
-          "mean": 2396.17826561538,
-          "min": 2009.5466169999563,
-          "max": 3017.461884999997,
-          "samples": 13,
-          "workflowTime": 1946.1538461538462,
-          "workflowMin": 1686,
-          "workflowMax": 2353
+          "mean": 2515.750146333332,
+          "min": 2010.5646309999865,
+          "max": 3029.331235999998,
+          "samples": 12,
+          "workflowTime": 2027,
+          "workflowMin": 1684,
+          "workflowMax": 2528
         },
         "Promise.all with 50 concurrent steps": {
-          "mean": 4309.580295714283,
-          "min": 3021.8438050000113,
-          "max": 5037.741470000008,
-          "samples": 7,
-          "workflowTime": 3677.285714285714,
-          "workflowMin": 2603,
-          "workflowMax": 4214
+          "mean": 4148.340613375003,
+          "min": 3017.628764000023,
+          "max": 5037.608078999969,
+          "samples": 8,
+          "workflowTime": 3691.875,
+          "workflowMin": 2767,
+          "workflowMax": 4511
         },
         "Promise.race with 10 concurrent steps": {
-          "mean": 2010.09266233334,
-          "min": 2009.1687180000008,
-          "max": 2013.0939890000154,
+          "mean": 2009.3793621999987,
+          "min": 2006.7247150000185,
+          "max": 2012.5624560000142,
           "samples": 15,
-          "workflowTime": 1351.2666666666667,
-          "workflowMin": 1257,
-          "workflowMax": 1404
+          "workflowTime": 1360.3333333333333,
+          "workflowMin": 1268,
+          "workflowMax": 1433
         },
         "Promise.race with 25 concurrent steps": {
-          "mean": 2514.8305384166692,
-          "min": 2009.328777000017,
-          "max": 3038.702645000012,
+          "mean": 2596.7849477499985,
+          "min": 2008.6888000000035,
+          "max": 3022.3497479999205,
           "samples": 12,
-          "workflowTime": 1942.1666666666667,
-          "workflowMin": 1660,
-          "workflowMax": 2426
+          "workflowTime": 2028.3333333333333,
+          "workflowMin": 1623,
+          "workflowMax": 2497
         },
         "Promise.race with 50 concurrent steps": {
-          "mean": 4743.494732857133,
-          "min": 4017.667671000003,
-          "max": 5040.843600000022,
+          "mean": 4449.066978999979,
+          "min": 3011.496662999969,
+          "max": 6031.0634579999605,
           "samples": 7,
-          "workflowTime": 4032,
-          "workflowMin": 3085,
-          "workflowMax": 4576
+          "workflowTime": 3579.8571428571427,
+          "workflowMin": 2473,
+          "workflowMax": 4745
         }
       },
       "frameworks": {
         "express": {
           "workflow with no steps": {
-            "mean": 1009.3949187999995,
-            "min": 1007.0257350000002,
-            "max": 1014.1432350000005,
+            "mean": 1011.7561068000002,
+            "min": 1007.7894319999996,
+            "max": 1031.4227390000015,
             "samples": 10
           },
           "workflow with 1 step": {
-            "mean": 2010.6202487999992,
-            "min": 2009.1713689999997,
-            "max": 2013.0476500000004,
+            "mean": 2009.9743435000007,
+            "min": 2009.020155000002,
+            "max": 2011.2249260000026,
             "samples": 10
           },
           "workflow with 10 sequential steps": {
-            "mean": 11038.125931999997,
-            "min": 11033.681734000005,
-            "max": 11044.674008999995,
+            "mean": 11035.840459666666,
+            "min": 11034.689081999997,
+            "max": 11036.989350999997,
             "samples": 3
           },
           "workflow with 25 sequential steps": {
-            "mean": 28059.96785133334,
-            "min": 28055.14289400002,
-            "max": 28065.495406000002,
+            "mean": 28058.441368999996,
+            "min": 28057.499049999984,
+            "max": 28060.217589000007,
             "samples": 3
           },
           "workflow with 50 sequential steps": {
-            "mean": 55094.779160999984,
-            "min": 55093.39961099997,
-            "max": 55096.158711,
+            "mean": 55091.070981500015,
+            "min": 55089.607439000014,
+            "max": 55092.53452400002,
             "samples": 2
           },
           "workflow with stream": {
-            "mean": 1010.5430263999908,
-            "min": 1009.5227569999988,
-            "max": 1011.4970730000059,
+            "mean": 1010.3786994999973,
+            "min": 1008.9348020000034,
+            "max": 1011.7683360000374,
             "samples": 10
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 2009.9366721999947,
-            "min": 2008.5381749999942,
-            "max": 2012.0679370000144,
+            "mean": 2009.070874933328,
+            "min": 2007.116697999998,
+            "max": 2011.0868710000068,
             "samples": 15
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 2512.7130954999934,
-            "min": 2008.4554239999852,
-            "max": 3018.2590489999857,
+            "mean": 2595.824982583348,
+            "min": 2008.7190500000142,
+            "max": 3019.0973110000486,
             "samples": 12
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 4016.268828250002,
-            "min": 3008.85699999996,
-            "max": 5020.1187250000075,
+            "mean": 3890.297830125004,
+            "min": 3016.24246400001,
+            "max": 4021.7901160000474,
             "samples": 8
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 2009.7167456666707,
-            "min": 2008.0748310000054,
-            "max": 2012.0301779999863,
+            "mean": 2010.4779987333343,
+            "min": 2007.9740870000096,
+            "max": 2014.9485950000235,
             "samples": 15
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 2399.2262653077128,
-            "min": 2008.4952740001027,
-            "max": 3031.1788820000365,
-            "samples": 13
+            "mean": 2600.376702916668,
+            "min": 2007.8960010000155,
+            "max": 3039.241909000033,
+            "samples": 12
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 4151.520569249988,
-            "min": 3010.9659580000443,
-            "max": 6035.497722,
-            "samples": 8
+            "mean": 5027.624910499978,
+            "min": 4013.1990109999897,
+            "max": 6044.043259999948,
+            "samples": 6
           }
         },
         "nextjs-turbopack": {},
         "nitro-v3": {
           "workflow with no steps": {
-            "mean": 1011.2199469999999,
-            "min": 1007.6983580000006,
-            "max": 1030.6075809999998,
+            "mean": 1009.6987022999999,
+            "min": 1008.0699009999998,
+            "max": 1013.5456349999995,
             "samples": 10,
-            "workflowTime": 52,
-            "workflowMin": 37,
-            "workflowMax": 68
+            "workflowTime": 56,
+            "workflowMin": 50,
+            "workflowMax": 64
           },
           "workflow with 1 step": {
-            "mean": 2011.5143534000003,
-            "min": 2009.4483309999996,
-            "max": 2014.3175349999983,
+            "mean": 2010.1339674000003,
+            "min": 2008.5635580000016,
+            "max": 2013.2725449999998,
             "samples": 10,
-            "workflowTime": 1131.6,
-            "workflowMin": 1120,
-            "workflowMax": 1169
+            "workflowTime": 1119.3,
+            "workflowMin": 1103,
+            "workflowMax": 1137
           },
           "workflow with 10 sequential steps": {
-            "mean": 11042.727710333338,
-            "min": 11037.095696999997,
-            "max": 11047.999715000013,
+            "mean": 11036.928797666666,
+            "min": 11034.200517000005,
+            "max": 11040.195858999992,
             "samples": 3,
-            "workflowTime": 10864.333333333334,
-            "workflowMin": 10862,
-            "workflowMax": 10866
+            "workflowTime": 10860.333333333334,
+            "workflowMin": 10837,
+            "workflowMax": 10880
           },
           "workflow with 25 sequential steps": {
-            "mean": 28064.083808666666,
-            "min": 28058.691884,
-            "max": 28068.164837999997,
+            "mean": 28056.758707666664,
+            "min": 28054.01574599999,
+            "max": 28058.206049,
             "samples": 3,
-            "workflowTime": 27224,
-            "workflowMin": 27164,
-            "workflowMax": 27269
+            "workflowTime": 27142,
+            "workflowMin": 27129,
+            "workflowMax": 27157
           },
           "workflow with 50 sequential steps": {
-            "mean": 55608.011905999985,
-            "min": 55110.07414499999,
-            "max": 56105.94966699998,
+            "mean": 55088.83288500001,
+            "min": 55087.73713999998,
+            "max": 55089.92863000004,
             "samples": 2,
-            "workflowTime": 55156,
-            "workflowMin": 55095,
-            "workflowMax": 55217
+            "workflowTime": 55015.5,
+            "workflowMin": 54986,
+            "workflowMax": 55045
           },
           "workflow with stream": {
-            "mean": 1010.4511115999834,
-            "min": 1008.0879710000008,
-            "max": 1011.8340889999527,
+            "mean": 1012.0902139999962,
+            "min": 1008.991234999965,
+            "max": 1019.6220250000479,
             "samples": 10,
-            "workflowTime": 201.1,
-            "workflowMin": 177,
-            "workflowMax": 218,
-            "ttfb": 989,
-            "slurp": 1
+            "workflowTime": 186.3,
+            "workflowMin": 166,
+            "workflowMax": 230,
+            "ttfb": 994.9,
+            "slurp": 1.3
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 2009.5779632666574,
-            "min": 2007.6891569999862,
-            "max": 2011.713935000007,
+            "mean": 2009.8353036666676,
+            "min": 2006.7191599999787,
+            "max": 2016.8728699999629,
             "samples": 15,
-            "workflowTime": 1342.2666666666667,
-            "workflowMin": 1280,
-            "workflowMax": 1414
+            "workflowTime": 1346.4,
+            "workflowMin": 1306,
+            "workflowMax": 1403
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 2396.17826561538,
-            "min": 2009.5466169999563,
-            "max": 3017.461884999997,
-            "samples": 13,
-            "workflowTime": 1946.1538461538462,
-            "workflowMin": 1686,
-            "workflowMax": 2353
+            "mean": 2515.750146333332,
+            "min": 2010.5646309999865,
+            "max": 3029.331235999998,
+            "samples": 12,
+            "workflowTime": 2027,
+            "workflowMin": 1684,
+            "workflowMax": 2528
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 4309.580295714283,
-            "min": 3021.8438050000113,
-            "max": 5037.741470000008,
-            "samples": 7,
-            "workflowTime": 3677.285714285714,
-            "workflowMin": 2603,
-            "workflowMax": 4214
+            "mean": 4148.340613375003,
+            "min": 3017.628764000023,
+            "max": 5037.608078999969,
+            "samples": 8,
+            "workflowTime": 3691.875,
+            "workflowMin": 2767,
+            "workflowMax": 4511
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 2010.09266233334,
-            "min": 2009.1687180000008,
-            "max": 2013.0939890000154,
+            "mean": 2009.3793621999987,
+            "min": 2006.7247150000185,
+            "max": 2012.5624560000142,
             "samples": 15,
-            "workflowTime": 1351.2666666666667,
-            "workflowMin": 1257,
-            "workflowMax": 1404
+            "workflowTime": 1360.3333333333333,
+            "workflowMin": 1268,
+            "workflowMax": 1433
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 2514.8305384166692,
-            "min": 2009.328777000017,
-            "max": 3038.702645000012,
+            "mean": 2596.7849477499985,
+            "min": 2008.6888000000035,
+            "max": 3022.3497479999205,
             "samples": 12,
-            "workflowTime": 1942.1666666666667,
-            "workflowMin": 1660,
-            "workflowMax": 2426
+            "workflowTime": 2028.3333333333333,
+            "workflowMin": 1623,
+            "workflowMax": 2497
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 4743.494732857133,
-            "min": 4017.667671000003,
-            "max": 5040.843600000022,
+            "mean": 4449.066978999979,
+            "min": 3011.496662999969,
+            "max": 6031.0634579999605,
             "samples": 7,
-            "workflowTime": 4032,
-            "workflowMin": 3085,
-            "workflowMax": 4576
+            "workflowTime": 3579.8571428571427,
+            "workflowMin": 2473,
+            "workflowMax": 4745
           }
         }
       }
@@ -689,835 +616,391 @@
       "status": "measured",
       "metrics": {
         "workflow with no steps": {
-          "mean": 2078.8641734,
-          "min": 912.5038769999992,
-          "max": 3484.659238,
+          "mean": 2315.6557287,
+          "min": 1857.7914299999975,
+          "max": 5383.928097999999,
           "samples": 10,
-          "workflowTime": 622.8,
-          "workflowMin": 448,
-          "workflowMax": 1747
+          "workflowTime": 858.4,
+          "workflowMin": 370,
+          "workflowMax": 4302
         },
         "workflow with 1 step": {
-          "mean": 3395.3887193,
-          "min": 3325.7681079999966,
-          "max": 3506.465168999999,
+          "mean": 3239.7185203000017,
+          "min": 2977.728280999996,
+          "max": 3666.653876000004,
           "samples": 10,
-          "workflowTime": 2081.6,
-          "workflowMin": 1929,
-          "workflowMax": 2233
+          "workflowTime": 1991.9,
+          "workflowMin": 1857,
+          "workflowMax": 2230
         },
         "workflow with 10 sequential steps": {
-          "mean": 18904.00476299999,
-          "min": 17310.391724999994,
-          "max": 20497.617800999986,
+          "mean": 21151.721446499992,
+          "min": 17013.816666999992,
+          "max": 25289.626225999993,
           "samples": 2,
-          "workflowTime": 17590.5,
-          "workflowMin": 16054,
-          "workflowMax": 19127
+          "workflowTime": 19889,
+          "workflowMin": 15893,
+          "workflowMax": 23885
         },
         "workflow with 25 sequential steps": {
-          "mean": 41103.77558599999,
-          "min": 40975.470151999994,
-          "max": 41232.08101999998,
+          "mean": 44658.25328800001,
+          "min": 41729.902119000006,
+          "max": 47586.60445700001,
           "samples": 2,
-          "workflowTime": 39521.5,
-          "workflowMin": 38957,
-          "workflowMax": 40086
+          "workflowTime": 43444.5,
+          "workflowMin": 40770,
+          "workflowMax": 46119
         },
         "workflow with 50 sequential steps": {
-          "mean": 84521.85326049998,
-          "min": 84135.24764099997,
-          "max": 84908.45887999999,
+          "mean": 84449.87145150002,
+          "min": 82825.309526,
+          "max": 86074.43337700004,
           "samples": 2,
-          "workflowTime": 82799,
-          "workflowMin": 82276,
-          "workflowMax": 83322
+          "workflowTime": 83738,
+          "workflowMin": 81969,
+          "workflowMax": 85507
         },
         "workflow with stream": {
-          "mean": 3669.424646600004,
-          "min": 2211.2546149999835,
-          "max": 12251.170189000026,
+          "mean": 2844.9163192000065,
+          "min": 2009.4714809999568,
+          "max": 3446.8516560000135,
           "samples": 10,
-          "workflowTime": 2565.8,
-          "workflowMin": 1376,
-          "workflowMax": 11280,
-          "ttfb": 3019.2,
-          "slurp": 162.9
+          "workflowTime": 1660.7,
+          "workflowMin": 1363,
+          "workflowMax": 2374,
+          "ttfb": 2251.2,
+          "slurp": 126.5
         },
         "Promise.all with 10 concurrent steps": {
-          "mean": 3466.1706088888845,
-          "min": 3337.1164310000604,
-          "max": 3644.3216409999877,
-          "samples": 9,
-          "workflowTime": 2163.4444444444443,
-          "workflowMin": 1953,
-          "workflowMax": 2425
+          "mean": 3229.6226558999974,
+          "min": 2972.8268590000225,
+          "max": 4320.33927700005,
+          "samples": 10,
+          "workflowTime": 2163.9,
+          "workflowMin": 1924,
+          "workflowMax": 2894
         },
         "Promise.all with 25 concurrent steps": {
-          "mean": 3582.7825265555616,
-          "min": 3350.888966000057,
-          "max": 4700.442986999988,
+          "mean": 3508.032600777793,
+          "min": 2582.109006999992,
+          "max": 6930.59589300002,
           "samples": 9,
-          "workflowTime": 2464.5555555555557,
-          "workflowMin": 2138,
-          "workflowMax": 3443
+          "workflowTime": 2548.222222222222,
+          "workflowMin": 1974,
+          "workflowMax": 5608
         },
         "Promise.all with 50 concurrent steps": {
-          "mean": 4781.642383571399,
-          "min": 3404.759505999973,
-          "max": 8478.602427999955,
-          "samples": 7,
-          "workflowTime": 3525.4285714285716,
-          "workflowMin": 2369,
-          "workflowMax": 7311
+          "mean": 3962.831372750021,
+          "min": 2972.4032300000545,
+          "max": 7691.318643000093,
+          "samples": 8,
+          "workflowTime": 3299.25,
+          "workflowMin": 2378,
+          "workflowMax": 6308
         },
         "Promise.race with 10 concurrent steps": {
-          "mean": 3596.435968222213,
-          "min": 3350.5969659999246,
-          "max": 4151.234941000002,
-          "samples": 9,
-          "workflowTime": 2059.222222222222,
-          "workflowMin": 1972,
-          "workflowMax": 2204
+          "mean": 3313.8316557000276,
+          "min": 2987.3281699999934,
+          "max": 5477.837025000015,
+          "samples": 10,
+          "workflowTime": 2184.5,
+          "workflowMin": 1844,
+          "workflowMax": 4317
         },
         "Promise.race with 25 concurrent steps": {
-          "mean": 4430.6056042857235,
-          "min": 3347.868960000109,
-          "max": 9105.067665999988,
-          "samples": 7,
-          "workflowTime": 2468.4285714285716,
-          "workflowMin": 2173,
-          "workflowMax": 3594
+          "mean": 4082.306965249998,
+          "min": 3015.669686999987,
+          "max": 8324.447808999917,
+          "samples": 8,
+          "workflowTime": 2327,
+          "workflowMin": 1950,
+          "workflowMax": 3581
         },
         "Promise.race with 50 concurrent steps": {
-          "mean": 5186.807638857131,
-          "min": 3326.371058000019,
-          "max": 14135.782123000012,
-          "samples": 7,
-          "workflowTime": 4101,
-          "workflowMin": 2119,
-          "workflowMax": 13459
+          "mean": 4077.5781293749897,
+          "min": 2946.257442000089,
+          "max": 6701.970763999969,
+          "samples": 8,
+          "workflowTime": 3365.875,
+          "workflowMin": 2265,
+          "workflowMax": 5666
         }
       },
       "frameworks": {
         "express": {
           "workflow with no steps": {
-            "mean": 1976.5155968,
-            "min": 1845.9561050000011,
-            "max": 2189.7225819999985,
+            "mean": 2183.0561496000005,
+            "min": 1329.5852490000034,
+            "max": 2600.2305699999997,
             "samples": 10
           },
           "workflow with 1 step": {
-            "mean": 3091.2681875999997,
-            "min": 2975.894736999995,
-            "max": 3384.104161000003,
+            "mean": 3546.408241599999,
+            "min": 3374.3913719999982,
+            "max": 4468.256576,
             "samples": 10
           },
           "workflow with 10 sequential steps": {
-            "mean": 18876.351078499996,
-            "min": 17001.195978999996,
-            "max": 20751.506177999996,
+            "mean": 17167.9298125,
+            "min": 16912.629522999996,
+            "max": 17423.230102,
             "samples": 2
           },
           "workflow with 25 sequential steps": {
-            "mean": 41597.888737500005,
-            "min": 41191.304925000004,
-            "max": 42004.472550000006,
+            "mean": 40847.77594499999,
+            "min": 40433.60029899998,
+            "max": 41261.95159099999,
             "samples": 2
           },
           "workflow with 50 sequential steps": {
-            "mean": 83179.86040049998,
-            "min": 82871.952291,
-            "max": 83487.76850999997,
+            "mean": 88655.671749,
+            "min": 84327.435681,
+            "max": 92983.907817,
             "samples": 2
           },
           "workflow with stream": {
-            "mean": 2852.598271900002,
-            "min": 1918.3896410000161,
-            "max": 6652.555945000029,
+            "mean": 3506.805063000001,
+            "min": 2360.4098870000453,
+            "max": 7336.839942999999,
             "samples": 10
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 3046.3107843999983,
-            "min": 2358.730242999969,
-            "max": 3409.065048999968,
-            "samples": 10
+            "mean": 3677.212066222228,
+            "min": 3437.7074620000785,
+            "max": 5027.053252000012,
+            "samples": 9
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 3474.026692222196,
-            "min": 3001.4734770000214,
-            "max": 4418.102241999935,
-            "samples": 9
+            "mean": 3819.517364375002,
+            "min": 3489.34629399993,
+            "max": 4901.230723000015,
+            "samples": 8
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 3863.7882504444183,
-            "min": 3004.347455000039,
-            "max": 7761.781925999909,
-            "samples": 9
+            "mean": 3789.6660085000185,
+            "min": 3374.081928999978,
+            "max": 5468.289654999971,
+            "samples": 8
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 3120.6729222000345,
-            "min": 2958.4435300000478,
-            "max": 3555.2041680000257,
-            "samples": 10
+            "mean": 3462.9632176666832,
+            "min": 3333.074182000011,
+            "max": 3798.0718040000647,
+            "samples": 9
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 3121.3178842000198,
-            "min": 2991.556322999997,
-            "max": 3237.937522000051,
-            "samples": 10
+            "mean": 3712.2194429999863,
+            "min": 3473.1634989999,
+            "max": 4916.450233000098,
+            "samples": 9
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 3712.148627555554,
-            "min": 2964.3486630000407,
-            "max": 4499.982936999993,
-            "samples": 9
+            "mean": 3933.6546225000056,
+            "min": 3405.1077720000176,
+            "max": 5114.900240999996,
+            "samples": 8
           }
         },
         "nextjs-turbopack": {
           "workflow with no steps": {
-            "mean": 1829.9379527,
-            "min": 1724.3376019999996,
-            "max": 2187.4338510000016,
+            "mean": 2209.7130248,
+            "min": 1295.6415349999997,
+            "max": 3454.429133999998,
             "samples": 10
           },
           "workflow with 1 step": {
-            "mean": 4253.468368899999,
-            "min": 2860.837615999997,
-            "max": 15754.352890000002,
+            "mean": 3336.8756624000002,
+            "min": 3227.7068419999996,
+            "max": 3550.4972810000036,
             "samples": 10
           },
           "workflow with 10 sequential steps": {
-            "mean": 17085.179602999997,
-            "min": 17055.546881999995,
-            "max": 17114.812324,
+            "mean": 20220.514847500002,
+            "min": 17458.860146000006,
+            "max": 22982.169549,
             "samples": 2
           },
           "workflow with 25 sequential steps": {
-            "mean": 40266.9857915,
-            "min": 39868.287565000006,
-            "max": 40665.684018,
+            "mean": 41859.610739500014,
+            "min": 41607.32360500001,
+            "max": 42111.89787400002,
             "samples": 2
           },
           "workflow with 50 sequential steps": {
-            "mean": 84175.99411550001,
-            "min": 83354.86723700003,
-            "max": 84997.120994,
+            "mean": 87911.438521,
+            "min": 85657.21328800003,
+            "max": 90165.66375399998,
             "samples": 2
           },
           "workflow with stream": {
-            "mean": 2429.6735017,
-            "min": 1848.1461990000098,
-            "max": 3142.8568819999928,
+            "mean": 2863.6279198999982,
+            "min": 2279.1386710000224,
+            "max": 3585.492832000018,
             "samples": 10
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 3191.581708600011,
-            "min": 2865.8019909999566,
-            "max": 4181.4409450000385,
-            "samples": 10
+            "mean": 3540.127611333336,
+            "min": 3285.4476520000026,
+            "max": 4756.364355999976,
+            "samples": 9
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 4622.469051428555,
-            "min": 2930.148887999938,
-            "max": 7569.293589000008,
-            "samples": 7
+            "mean": 4109.629843222223,
+            "min": 3283.497146000038,
+            "max": 7111.869363999926,
+            "samples": 9
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 4337.7808981428725,
-            "min": 2872.84063900006,
-            "max": 7559.057547000004,
-            "samples": 7
+            "mean": 3829.015339555542,
+            "min": 3191.9703839999856,
+            "max": 5955.612480000011,
+            "samples": 9
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 3207.9852801000116,
-            "min": 2894.300086000003,
-            "max": 4069.2674069999484,
-            "samples": 10
+            "mean": 3492.0535863333303,
+            "min": 3386.597905999981,
+            "max": 3697.6401899999473,
+            "samples": 9
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 4619.184486857133,
-            "min": 2861.570061999955,
-            "max": 13384.05542400002,
-            "samples": 7
+            "mean": 6336.543526200019,
+            "min": 3496.56281100004,
+            "max": 13684.741152000031,
+            "samples": 5
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 3397.3878636666727,
-            "min": 2872.345144000021,
-            "max": 6406.362320999964,
-            "samples": 9
+            "mean": 3825.197499625021,
+            "min": 3176.411044999957,
+            "max": 5841.549842000008,
+            "samples": 8
           }
         },
         "nitro-v3": {
           "workflow with no steps": {
-            "mean": 2078.8641734,
-            "min": 912.5038769999992,
-            "max": 3484.659238,
+            "mean": 2315.6557287,
+            "min": 1857.7914299999975,
+            "max": 5383.928097999999,
             "samples": 10,
-            "workflowTime": 622.8,
-            "workflowMin": 448,
-            "workflowMax": 1747
+            "workflowTime": 858.4,
+            "workflowMin": 370,
+            "workflowMax": 4302
           },
           "workflow with 1 step": {
-            "mean": 3395.3887193,
-            "min": 3325.7681079999966,
-            "max": 3506.465168999999,
+            "mean": 3239.7185203000017,
+            "min": 2977.728280999996,
+            "max": 3666.653876000004,
             "samples": 10,
-            "workflowTime": 2081.6,
-            "workflowMin": 1929,
-            "workflowMax": 2233
+            "workflowTime": 1991.9,
+            "workflowMin": 1857,
+            "workflowMax": 2230
           },
           "workflow with 10 sequential steps": {
-            "mean": 18904.00476299999,
-            "min": 17310.391724999994,
-            "max": 20497.617800999986,
+            "mean": 21151.721446499992,
+            "min": 17013.816666999992,
+            "max": 25289.626225999993,
             "samples": 2,
-            "workflowTime": 17590.5,
-            "workflowMin": 16054,
-            "workflowMax": 19127
+            "workflowTime": 19889,
+            "workflowMin": 15893,
+            "workflowMax": 23885
           },
           "workflow with 25 sequential steps": {
-            "mean": 41103.77558599999,
-            "min": 40975.470151999994,
-            "max": 41232.08101999998,
+            "mean": 44658.25328800001,
+            "min": 41729.902119000006,
+            "max": 47586.60445700001,
             "samples": 2,
-            "workflowTime": 39521.5,
-            "workflowMin": 38957,
-            "workflowMax": 40086
+            "workflowTime": 43444.5,
+            "workflowMin": 40770,
+            "workflowMax": 46119
           },
           "workflow with 50 sequential steps": {
-            "mean": 84521.85326049998,
-            "min": 84135.24764099997,
-            "max": 84908.45887999999,
+            "mean": 84449.87145150002,
+            "min": 82825.309526,
+            "max": 86074.43337700004,
             "samples": 2,
-            "workflowTime": 82799,
-            "workflowMin": 82276,
-            "workflowMax": 83322
+            "workflowTime": 83738,
+            "workflowMin": 81969,
+            "workflowMax": 85507
           },
           "workflow with stream": {
-            "mean": 3669.424646600004,
-            "min": 2211.2546149999835,
-            "max": 12251.170189000026,
+            "mean": 2844.9163192000065,
+            "min": 2009.4714809999568,
+            "max": 3446.8516560000135,
             "samples": 10,
-            "workflowTime": 2565.8,
-            "workflowMin": 1376,
-            "workflowMax": 11280,
-            "ttfb": 3019.2,
-            "slurp": 162.9
+            "workflowTime": 1660.7,
+            "workflowMin": 1363,
+            "workflowMax": 2374,
+            "ttfb": 2251.2,
+            "slurp": 126.5
           },
           "Promise.all with 10 concurrent steps": {
-            "mean": 3466.1706088888845,
-            "min": 3337.1164310000604,
-            "max": 3644.3216409999877,
-            "samples": 9,
-            "workflowTime": 2163.4444444444443,
-            "workflowMin": 1953,
-            "workflowMax": 2425
+            "mean": 3229.6226558999974,
+            "min": 2972.8268590000225,
+            "max": 4320.33927700005,
+            "samples": 10,
+            "workflowTime": 2163.9,
+            "workflowMin": 1924,
+            "workflowMax": 2894
           },
           "Promise.all with 25 concurrent steps": {
-            "mean": 3582.7825265555616,
-            "min": 3350.888966000057,
-            "max": 4700.442986999988,
+            "mean": 3508.032600777793,
+            "min": 2582.109006999992,
+            "max": 6930.59589300002,
             "samples": 9,
-            "workflowTime": 2464.5555555555557,
-            "workflowMin": 2138,
-            "workflowMax": 3443
+            "workflowTime": 2548.222222222222,
+            "workflowMin": 1974,
+            "workflowMax": 5608
           },
           "Promise.all with 50 concurrent steps": {
-            "mean": 4781.642383571399,
-            "min": 3404.759505999973,
-            "max": 8478.602427999955,
-            "samples": 7,
-            "workflowTime": 3525.4285714285716,
-            "workflowMin": 2369,
-            "workflowMax": 7311
+            "mean": 3962.831372750021,
+            "min": 2972.4032300000545,
+            "max": 7691.318643000093,
+            "samples": 8,
+            "workflowTime": 3299.25,
+            "workflowMin": 2378,
+            "workflowMax": 6308
           },
           "Promise.race with 10 concurrent steps": {
-            "mean": 3596.435968222213,
-            "min": 3350.5969659999246,
-            "max": 4151.234941000002,
-            "samples": 9,
-            "workflowTime": 2059.222222222222,
-            "workflowMin": 1972,
-            "workflowMax": 2204
+            "mean": 3313.8316557000276,
+            "min": 2987.3281699999934,
+            "max": 5477.837025000015,
+            "samples": 10,
+            "workflowTime": 2184.5,
+            "workflowMin": 1844,
+            "workflowMax": 4317
           },
           "Promise.race with 25 concurrent steps": {
-            "mean": 4430.6056042857235,
-            "min": 3347.868960000109,
-            "max": 9105.067665999988,
-            "samples": 7,
-            "workflowTime": 2468.4285714285716,
-            "workflowMin": 2173,
-            "workflowMax": 3594
+            "mean": 4082.306965249998,
+            "min": 3015.669686999987,
+            "max": 8324.447808999917,
+            "samples": 8,
+            "workflowTime": 2327,
+            "workflowMin": 1950,
+            "workflowMax": 3581
           },
           "Promise.race with 50 concurrent steps": {
-            "mean": 5186.807638857131,
-            "min": 3326.371058000019,
-            "max": 14135.782123000012,
-            "samples": 7,
-            "workflowTime": 4101,
-            "workflowMin": 2119,
-            "workflowMax": 13459
+            "mean": 4077.5781293749897,
+            "min": 2946.257442000089,
+            "max": 6701.970763999969,
+            "samples": 8,
+            "workflowTime": 3365.875,
+            "workflowMin": 2265,
+            "workflowMax": 5666
           }
         }
       }
     },
     "mongodb": {
-      "status": "measured",
-      "metrics": {
-        "workflow with no steps": {
-          "mean": 1007.0235434000002,
-          "min": 1005.2735659999998,
-          "max": 1008.3689709999999,
-          "samples": 10,
-          "workflowTime": 62.6,
-          "workflowMin": 49,
-          "workflowMax": 76
-        },
-        "workflow with 1 step": {
-          "mean": 2007.1891127,
-          "min": 2005.4804049999984,
-          "max": 2008.1708830000007,
-          "samples": 10,
-          "workflowTime": 1293.5,
-          "workflowMin": 1250,
-          "workflowMax": 1341
-        },
-        "workflow with 10 sequential steps": {
-          "mean": 13014.048562000005,
-          "min": 13012.816839000006,
-          "max": 13014.735258000008,
-          "samples": 3,
-          "workflowTime": 12187.666666666666,
-          "workflowMin": 12154,
-          "workflowMax": 12234
-        },
-        "workflow with 25 sequential steps": {
-          "mean": 31028.4279485,
-          "min": 31025.115713999985,
-          "max": 31031.740183000016,
-          "samples": 2,
-          "workflowTime": 30339,
-          "workflowMin": 30335,
-          "workflowMax": 30343
-        },
-        "workflow with 50 sequential steps": {
-          "mean": 61055.979672,
-          "min": 61054.79578600003,
-          "max": 61057.16355799997,
-          "samples": 2,
-          "workflowTime": 60712,
-          "workflowMin": 60680,
-          "workflowMax": 60744
-        },
-        "workflow with stream": {
-          "mean": 1007.7045273000083,
-          "min": 1007.2679020000505,
-          "max": 1008.9882750000106,
-          "samples": 10,
-          "workflowTime": 487.6,
-          "workflowMin": 474,
-          "workflowMax": 499,
-          "ttfb": 955.2,
-          "slurp": 1.5
-        },
-        "Promise.all with 10 concurrent steps": {
-          "mean": 3006.968988300004,
-          "min": 3005.422644999984,
-          "max": 3008.4397620000527,
-          "samples": 10,
-          "workflowTime": 2157.7,
-          "workflowMin": 2071,
-          "workflowMax": 2257
-        },
-        "Promise.all with 25 concurrent steps": {
-          "mean": 5174.798464166689,
-          "min": 5006.484387000033,
-          "max": 6009.38956000004,
-          "samples": 6,
-          "workflowTime": 4656,
-          "workflowMin": 4291,
-          "workflowMax": 5125
-        },
-        "Promise.all with 50 concurrent steps": {
-          "mean": 10346.748578333354,
-          "min": 10012.614843000018,
-          "max": 11013.691989000014,
-          "samples": 3,
-          "workflowTime": 9723.333333333334,
-          "workflowMin": 9332,
-          "workflowMax": 10051
-        },
-        "Promise.race with 10 concurrent steps": {
-          "mean": 3006.3216157000106,
-          "min": 3003.5810969999875,
-          "max": 3008.946105000039,
-          "samples": 10,
-          "workflowTime": 2189.9,
-          "workflowMin": 2116,
-          "workflowMax": 2252
-        },
-        "Promise.race with 25 concurrent steps": {
-          "mean": 5175.320116000007,
-          "min": 5007.674791999976,
-          "max": 6007.829543999978,
-          "samples": 6,
-          "workflowTime": 4754.166666666667,
-          "workflowMin": 4371,
-          "workflowMax": 5115
-        },
-        "Promise.race with 50 concurrent steps": {
-          "mean": 10344.052434666703,
-          "min": 10009.95640200004,
-          "max": 11011.074378999998,
-          "samples": 3,
-          "workflowTime": 9642.333333333334,
-          "workflowMin": 9173,
-          "workflowMax": 10031
-        }
-      },
+      "status": "pending",
+      "metrics": {},
       "frameworks": {
-        "nextjs-turbopack": {
-          "workflow with no steps": {
-            "mean": 1007.0235434000002,
-            "min": 1005.2735659999998,
-            "max": 1008.3689709999999,
-            "samples": 10,
-            "workflowTime": 62.6,
-            "workflowMin": 49,
-            "workflowMax": 76
-          },
-          "workflow with 1 step": {
-            "mean": 2007.1891127,
-            "min": 2005.4804049999984,
-            "max": 2008.1708830000007,
-            "samples": 10,
-            "workflowTime": 1293.5,
-            "workflowMin": 1250,
-            "workflowMax": 1341
-          },
-          "workflow with 10 sequential steps": {
-            "mean": 13014.048562000005,
-            "min": 13012.816839000006,
-            "max": 13014.735258000008,
-            "samples": 3,
-            "workflowTime": 12187.666666666666,
-            "workflowMin": 12154,
-            "workflowMax": 12234
-          },
-          "workflow with 25 sequential steps": {
-            "mean": 31028.4279485,
-            "min": 31025.115713999985,
-            "max": 31031.740183000016,
-            "samples": 2,
-            "workflowTime": 30339,
-            "workflowMin": 30335,
-            "workflowMax": 30343
-          },
-          "workflow with 50 sequential steps": {
-            "mean": 61055.979672,
-            "min": 61054.79578600003,
-            "max": 61057.16355799997,
-            "samples": 2,
-            "workflowTime": 60712,
-            "workflowMin": 60680,
-            "workflowMax": 60744
-          },
-          "workflow with stream": {
-            "mean": 1007.7045273000083,
-            "min": 1007.2679020000505,
-            "max": 1008.9882750000106,
-            "samples": 10,
-            "workflowTime": 487.6,
-            "workflowMin": 474,
-            "workflowMax": 499,
-            "ttfb": 955.2,
-            "slurp": 1.5
-          },
-          "Promise.all with 10 concurrent steps": {
-            "mean": 3006.968988300004,
-            "min": 3005.422644999984,
-            "max": 3008.4397620000527,
-            "samples": 10,
-            "workflowTime": 2157.7,
-            "workflowMin": 2071,
-            "workflowMax": 2257
-          },
-          "Promise.all with 25 concurrent steps": {
-            "mean": 5174.798464166689,
-            "min": 5006.484387000033,
-            "max": 6009.38956000004,
-            "samples": 6,
-            "workflowTime": 4656,
-            "workflowMin": 4291,
-            "workflowMax": 5125
-          },
-          "Promise.all with 50 concurrent steps": {
-            "mean": 10346.748578333354,
-            "min": 10012.614843000018,
-            "max": 11013.691989000014,
-            "samples": 3,
-            "workflowTime": 9723.333333333334,
-            "workflowMin": 9332,
-            "workflowMax": 10051
-          },
-          "Promise.race with 10 concurrent steps": {
-            "mean": 3006.3216157000106,
-            "min": 3003.5810969999875,
-            "max": 3008.946105000039,
-            "samples": 10,
-            "workflowTime": 2189.9,
-            "workflowMin": 2116,
-            "workflowMax": 2252
-          },
-          "Promise.race with 25 concurrent steps": {
-            "mean": 5175.320116000007,
-            "min": 5007.674791999976,
-            "max": 6007.829543999978,
-            "samples": 6,
-            "workflowTime": 4754.166666666667,
-            "workflowMin": 4371,
-            "workflowMax": 5115
-          },
-          "Promise.race with 50 concurrent steps": {
-            "mean": 10344.052434666703,
-            "min": 10009.95640200004,
-            "max": 11011.074378999998,
-            "samples": 3,
-            "workflowTime": 9642.333333333334,
-            "workflowMin": 9173,
-            "workflowMax": 10031
-          }
-        }
+        "nextjs-turbopack": {}
       }
     },
     "redis": {
-      "status": "measured",
-      "metrics": {
-        "workflow with no steps": {
-          "mean": 1004.5109794999998,
-          "min": 1003.9645260000002,
-          "max": 1005.5967279999986,
-          "samples": 10,
-          "workflowTime": 37.5,
-          "workflowMin": 30,
-          "workflowMax": 68
-        },
-        "workflow with 1 step": {
-          "mean": 2005.9094780000003,
-          "min": 2005.3907229999968,
-          "max": 2006.630745999999,
-          "samples": 10,
-          "workflowTime": 1081.1,
-          "workflowMin": 1073,
-          "workflowMax": 1102
-        },
-        "workflow with 10 sequential steps": {
-          "mean": 11023.421724333335,
-          "min": 11021.605015000001,
-          "max": 11026.457583000003,
-          "samples": 3,
-          "workflowTime": 10589.666666666666,
-          "workflowMin": 10574,
-          "workflowMax": 10615
-        },
-        "workflow with 25 sequential steps": {
-          "mean": 27053.13432466667,
-          "min": 27047.977413999994,
-          "max": 27057.43236800001,
-          "samples": 3,
-          "workflowTime": 26517.333333333332,
-          "workflowMin": 26475,
-          "workflowMax": 26545
-        },
-        "workflow with 50 sequential steps": {
-          "mean": 54095.075786,
-          "min": 54094.67819100001,
-          "max": 54095.47338099999,
-          "samples": 2,
-          "workflowTime": 53646,
-          "workflowMin": 53587,
-          "workflowMax": 53705
-        },
-        "workflow with stream": {
-          "mean": 1006.5736624999903,
-          "min": 1006.2549169999547,
-          "max": 1007.003217999998,
-          "samples": 10,
-          "workflowTime": 117.2,
-          "workflowMin": 108,
-          "workflowMax": 163,
-          "ttfb": 999.8,
-          "slurp": 1.3
-        },
-        "Promise.all with 10 concurrent steps": {
-          "mean": 2005.8267084666645,
-          "min": 2004.7928729999694,
-          "max": 2006.416102999996,
-          "samples": 15,
-          "workflowTime": 1191.2666666666667,
-          "workflowMin": 1171,
-          "workflowMax": 1319
-        },
-        "Promise.all with 25 concurrent steps": {
-          "mean": 3007.311176200013,
-          "min": 3006.255314000009,
-          "max": 3008.2652440000093,
-          "samples": 10,
-          "workflowTime": 2352.7,
-          "workflowMin": 2289,
-          "workflowMax": 2415
-        },
-        "Promise.all with 50 concurrent steps": {
-          "mean": 4009.120274500012,
-          "min": 4007.612802000018,
-          "max": 4010.9994930000394,
-          "samples": 8,
-          "workflowTime": 3826.75,
-          "workflowMin": 3744,
-          "workflowMax": 3910
-        },
-        "Promise.race with 10 concurrent steps": {
-          "mean": 2005.490069733335,
-          "min": 2004.7152700000443,
-          "max": 2006.6298869999591,
-          "samples": 15,
-          "workflowTime": 1191.4666666666667,
-          "workflowMin": 1158,
-          "workflowMax": 1328
-        },
-        "Promise.race with 25 concurrent steps": {
-          "mean": 3007.3643245999933,
-          "min": 3006.451348999981,
-          "max": 3008.080103000044,
-          "samples": 10,
-          "workflowTime": 2376.5,
-          "workflowMin": 2327,
-          "workflowMax": 2405
-        },
-        "Promise.race with 50 concurrent steps": {
-          "mean": 4133.786103999999,
-          "min": 4008.129179999931,
-          "max": 5011.079563000007,
-          "samples": 8,
-          "workflowTime": 3872.5,
-          "workflowMin": 3751,
-          "workflowMax": 4111
-        }
-      },
+      "status": "pending",
+      "metrics": {},
       "frameworks": {
-        "nextjs-turbopack": {
-          "workflow with no steps": {
-            "mean": 1004.5109794999998,
-            "min": 1003.9645260000002,
-            "max": 1005.5967279999986,
-            "samples": 10,
-            "workflowTime": 37.5,
-            "workflowMin": 30,
-            "workflowMax": 68
-          },
-          "workflow with 1 step": {
-            "mean": 2005.9094780000003,
-            "min": 2005.3907229999968,
-            "max": 2006.630745999999,
-            "samples": 10,
-            "workflowTime": 1081.1,
-            "workflowMin": 1073,
-            "workflowMax": 1102
-          },
-          "workflow with 10 sequential steps": {
-            "mean": 11023.421724333335,
-            "min": 11021.605015000001,
-            "max": 11026.457583000003,
-            "samples": 3,
-            "workflowTime": 10589.666666666666,
-            "workflowMin": 10574,
-            "workflowMax": 10615
-          },
-          "workflow with 25 sequential steps": {
-            "mean": 27053.13432466667,
-            "min": 27047.977413999994,
-            "max": 27057.43236800001,
-            "samples": 3,
-            "workflowTime": 26517.333333333332,
-            "workflowMin": 26475,
-            "workflowMax": 26545
-          },
-          "workflow with 50 sequential steps": {
-            "mean": 54095.075786,
-            "min": 54094.67819100001,
-            "max": 54095.47338099999,
-            "samples": 2,
-            "workflowTime": 53646,
-            "workflowMin": 53587,
-            "workflowMax": 53705
-          },
-          "workflow with stream": {
-            "mean": 1006.5736624999903,
-            "min": 1006.2549169999547,
-            "max": 1007.003217999998,
-            "samples": 10,
-            "workflowTime": 117.2,
-            "workflowMin": 108,
-            "workflowMax": 163,
-            "ttfb": 999.8,
-            "slurp": 1.3
-          },
-          "Promise.all with 10 concurrent steps": {
-            "mean": 2005.8267084666645,
-            "min": 2004.7928729999694,
-            "max": 2006.416102999996,
-            "samples": 15,
-            "workflowTime": 1191.2666666666667,
-            "workflowMin": 1171,
-            "workflowMax": 1319
-          },
-          "Promise.all with 25 concurrent steps": {
-            "mean": 3007.311176200013,
-            "min": 3006.255314000009,
-            "max": 3008.2652440000093,
-            "samples": 10,
-            "workflowTime": 2352.7,
-            "workflowMin": 2289,
-            "workflowMax": 2415
-          },
-          "Promise.all with 50 concurrent steps": {
-            "mean": 4009.120274500012,
-            "min": 4007.612802000018,
-            "max": 4010.9994930000394,
-            "samples": 8,
-            "workflowTime": 3826.75,
-            "workflowMin": 3744,
-            "workflowMax": 3910
-          },
-          "Promise.race with 10 concurrent steps": {
-            "mean": 2005.490069733335,
-            "min": 2004.7152700000443,
-            "max": 2006.6298869999591,
-            "samples": 15,
-            "workflowTime": 1191.4666666666667,
-            "workflowMin": 1158,
-            "workflowMax": 1328
-          },
-          "Promise.race with 25 concurrent steps": {
-            "mean": 3007.3643245999933,
-            "min": 3006.451348999981,
-            "max": 3008.080103000044,
-            "samples": 10,
-            "workflowTime": 2376.5,
-            "workflowMin": 2327,
-            "workflowMax": 2405
-          },
-          "Promise.race with 50 concurrent steps": {
-            "mean": 4133.786103999999,
-            "min": 4008.129179999931,
-            "max": 5011.079563000007,
-            "samples": 8,
-            "workflowTime": 3872.5,
-            "workflowMin": 3751,
-            "workflowMax": 4111
-          }
-        }
+        "nextjs-turbopack": {}
       }
     },
     "turso": {
