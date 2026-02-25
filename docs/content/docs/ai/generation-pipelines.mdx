@@ -22,13 +22,13 @@ Process multiple items through an AI pipeline by combining `Promise.all` with st
 
 ```typescript title="workflows/batch-generate.ts" lineNumbers
 import { generateText } from "ai";
-import { openai } from "@workflow/ai/openai"; // [!code highlight]
+import { gateway } from "@ai-sdk/gateway";
 
 async function generateContent(prompt: string) {
   "use step";
 
   const { text } = await generateText({ // [!code highlight]
-    model: openai("gpt-4o"),
+    model: gateway("openai/gpt-4o"),
     prompt,
   });
 
@@ -50,59 +50,93 @@ Each call to `generateContent` runs as an independent step. If one fails, it ret
 
 ## Image and Media Generation
 
-For workflows that call third-party generation services, use [`getWritable()`](/docs/api-reference/workflow/get-writable) to stream progress updates back to the client while the generation runs.
+Workflows that call third-party generation services (image generators, video encoders, audio synthesis) need to wait for an external job to complete. There are two patterns depending on whether the service supports webhooks.
 
-```typescript title="workflows/image-generate.ts" lineNumbers
-import { getWritable, getStepMetadata } from "workflow";
+### Webhooks (Preferred)
 
-type ProgressUpdate = {
-  status: string;
-  imageUrl?: string;
-};
+If the service supports webhooks or callbacks, use [`createWebhook()`](/docs/api-reference/workflow/create-webhook) to pause the workflow until the external service reports completion. The workflow suspends without consuming resources and resumes when the webhook is called.
 
-async function generateImage(prompt: string) {
+```typescript title="workflows/image-generate-webhook.ts" lineNumbers
+import { createWebhook, sleep } from "workflow";
+
+async function submitImageJob(prompt: string, callbackUrl: string) {
   "use step";
 
-  const { stepId } = getStepMetadata(); // [!code highlight]
-  const writable = getWritable<ProgressUpdate>(); // [!code highlight]
-  const writer = writable.getWriter();
-
-  try {
-    await writer.write({ status: "Submitting generation request..." });
-
-    // Call your image generation service
-    const response = await fetch("https://api.example.com/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, requestId: stepId }), // [!code highlight]
-    });
-    const { jobId } = await response.json() as { jobId: string };
-
-    // Poll for completion
-    let result: { status: string; url?: string } | undefined;
-    while (!result?.url) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const poll = await fetch(`https://api.example.com/status/${jobId}`);
-      result = await poll.json() as { status: string; url?: string };
-      await writer.write({ status: `Generation ${result.status}...` }); // [!code highlight]
-    }
-
-    await writer.write({ status: "complete", imageUrl: result.url }); // [!code highlight]
-    return result.url;
-  } finally {
-    writer.releaseLock(); // [!code highlight]
-  }
+  const response = await fetch("https://api.example.com/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, callbackUrl }), // [!code highlight]
+  });
+  const { jobId } = await response.json() as { jobId: string };
+  return jobId;
 }
 
 export async function imageGenerationWorkflow(prompt: string) {
   "use workflow";
 
-  const imageUrl = await generateImage(prompt);
-  return { imageUrl };
+  const webhook = createWebhook<{ imageUrl: string }>(); // [!code highlight]
+  const jobId = await submitImageJob(prompt, webhook.url); // [!code highlight]
+
+  // Workflow suspends here — no compute used while waiting
+  const result = await Promise.race([ // [!code highlight]
+    webhook.then((req) => req.json()), // [!code highlight]
+    sleep("10 minutes").then(() => ({ timedOut: true }) as const), // [!code highlight]
+  ]); // [!code highlight]
+
+  if ("timedOut" in result) {
+    throw new Error(`Image job ${jobId} timed out`);
+  }
+
+  return { imageUrl: result.imageUrl };
 }
 ```
 
-The client receives progress updates in real time. If the step fails midway through polling, the retry re-executes the entire step from the beginning - so make sure your generation service supports idempotent requests or that you can handle duplicate submissions.
+The workflow hands the webhook URL to the external service and suspends. When the service calls the webhook with the result, the workflow resumes and returns the image URL. The `Promise.race` with `sleep` adds a timeout so the workflow does not wait indefinitely.
+
+### Workflow-Level Polling
+
+If the service does not support webhooks, poll at the **workflow level** using `sleep()` between steps. This lets the workflow suspend between each poll rather than holding a step open.
+
+```typescript title="workflows/image-generate-poll.ts" lineNumbers
+import { sleep } from "workflow";
+
+async function submitImageJob(prompt: string) {
+  "use step";
+
+  const response = await fetch("https://api.example.com/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  const { jobId } = await response.json() as { jobId: string };
+  return jobId;
+}
+
+async function checkJobStatus(jobId: string) {
+  "use step";
+
+  const response = await fetch(`https://api.example.com/status/${jobId}`);
+  return response.json() as Promise<{ status: string; url?: string }>;
+}
+
+export async function imageGenerationWorkflow(prompt: string) {
+  "use workflow";
+
+  const jobId = await submitImageJob(prompt); // [!code highlight]
+
+  // Poll at the workflow level — workflow suspends between checks
+  let result: { status: string; url?: string };
+  while (true) { // [!code highlight]
+    await sleep("5 seconds"); // [!code highlight]
+    result = await checkJobStatus(jobId); // [!code highlight]
+    if (result.url) break;
+  } // [!code highlight]
+
+  return { imageUrl: result.url };
+}
+```
+
+Each `sleep()` suspends the workflow without consuming compute. Each `checkJobStatus` call runs as its own step, so failures are retried independently.
 
 ## Multi-Stage Pipelines
 
@@ -110,13 +144,13 @@ Chain AI steps to build processing pipelines where each stage transforms the out
 
 ```typescript title="workflows/analyze-pipeline.ts" lineNumbers
 import { generateText } from "ai";
-import { openai } from "@workflow/ai/openai"; // [!code highlight]
+import { gateway } from "@ai-sdk/gateway";
 
 async function extractEntities(text: string) {
   "use step";
 
   const { text: entities } = await generateText({
-    model: openai("gpt-4o"),
+    model: gateway("openai/gpt-4o"),
     system: "Extract all named entities from the text. Return as JSON array.",
     prompt: text,
   });
@@ -128,7 +162,7 @@ async function analyzeSentiment(text: string) {
   "use step";
 
   const { text: sentiment } = await generateText({
-    model: openai("gpt-4o"),
+    model: gateway("openai/gpt-4o"),
     system: "Analyze the sentiment. Return: positive, negative, or neutral.",
     prompt: text,
   });
@@ -144,7 +178,7 @@ async function generateSummary(
   "use step";
 
   const { text: summary } = await generateText({
-    model: openai("gpt-4o"),
+    model: gateway("openai/gpt-4o"),
     system: "Write a brief summary incorporating the extracted entities and sentiment analysis.",
     prompt: `Text: ${text}\nEntities: ${entities.join(", ")}\nSentiment: ${sentiment}`,
   });
@@ -171,7 +205,7 @@ Use `Promise.all` to process multiple documents through AI analysis concurrently
 
 ```typescript title="workflows/fan-out.ts" lineNumbers
 import { generateText } from "ai";
-declare function getModel(): Parameters<typeof generateText>[0]["model"]; // @setup
+import { gateway } from "@ai-sdk/gateway";
 
 type AnalysisResult = {
   documentId: string;
@@ -186,7 +220,7 @@ async function analyzeDocument(
   "use step";
 
   const { text } = await generateText({
-    model: getModel(),
+    model: gateway("openai/gpt-4o"),
     system: "Analyze this document. Return JSON with 'summary' (string) and 'topics' (string array).",
     prompt: content,
   });
@@ -290,7 +324,7 @@ export async function POST(request: Request) {
 }
 ```
 
-For more streaming patterns, see the [Streaming](/docs/foundations/streaming) guide.
+To consume this stream on the client, read from the response body as a `ReadableStream`. For details on parsing workflow streams and connecting them to your UI, see the [Streaming](/docs/foundations/streaming) guide.
 
 ## Error Handling for AI Services
 
