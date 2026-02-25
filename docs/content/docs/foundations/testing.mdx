@@ -406,6 +406,117 @@ export async function raceStressWorkflow() {
 }
 ```
 
+## Integration Testing with a Sidecar Server
+
+The examples above assume a dev server is already running. For CI or repeatable local runs, you can automate this by spawning a dev server as a sidecar process inside a Vitest [global setup file](https://vitest.dev/config/#globalsetup). This pattern was pioneered by [Mux for testing `@mux/ai`](https://www.mux.com/blog/launching-durable-ai-workflows-for-video-with-mux-ai#testing) and works with any framework — Next.js, Nitro, or the standalone CLI.
+
+The idea is simple: start the server before any tests run, wait until it is ready, then tear it down when the suite finishes.
+
+### Dedicated Vitest Config
+
+Create a separate Vitest config that applies the `workflow()` Vite plugin and targets only your integration tests. This keeps workflow-specific transforms out of your regular unit test runs.
+
+```typescript title="vitest.integration.config.ts" lineNumbers
+import { defineConfig } from "vitest/config";
+import { workflow } from "workflow/vite"; // [!code highlight]
+
+export default defineConfig({
+  plugins: [workflow()], // [!code highlight]
+  test: {
+    include: ["**/*.integration.test.ts"], // [!code highlight]
+    globalSetup: "./vitest.integration.setup.ts",
+    testTimeout: 300_000, // 5 minutes — workflows can take a while
+  },
+});
+```
+
+<Callout type="info">
+The `workflow/vite` plugin applies the same compiler transforms used in development, so your test environment matches production behavior.
+</Callout>
+
+### Global Setup: Spawn and Teardown
+
+The global setup script starts your dev server, waits for it to be ready, then exposes a `teardown` function that kills the process.
+
+```typescript title="vitest.integration.setup.ts" lineNumbers
+import { spawn, type ChildProcess } from "node:child_process";
+
+let server: ChildProcess;
+
+export async function setup() {
+  const port = process.env.PORT ?? "3000";
+
+  server = spawn("npx", ["next", "dev", "--port", port], { // [!code highlight]
+    stdio: "pipe",
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: port },
+  });
+
+  // Wait for the server to be ready
+  await new Promise<void>((resolve, reject) => { // [!code highlight]
+    const timeout = setTimeout(() => reject(new Error("Server did not start")), 30_000);
+
+    server.stdout?.on("data", (data: Buffer) => {
+      if (data.toString().includes("Ready")) { // [!code highlight]
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+
+    server.stderr?.on("data", (data: Buffer) => {
+      console.error(data.toString());
+    });
+
+    server.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+
+  // Make the URL available to tests
+  process.env.DEPLOYMENT_URL = `http://localhost:${port}`; // [!code highlight]
+}
+
+export async function teardown() {
+  server?.kill(); // [!code highlight]
+}
+```
+
+Adjust the spawn command for your setup — use `npx workflow dev` for the standalone CLI, `npx nitro dev` for Nitro, or any other dev command.
+
+### Writing Integration Tests
+
+With the sidecar running, integration tests use `start()` exactly like the examples earlier in this guide. The only difference is that they run against the server spawned by the global setup.
+
+```typescript title="workflows/order.integration.test.ts" lineNumbers
+import { describe, it, expect } from "vitest";
+import { start } from "workflow/api";
+import { processOrderWorkflow } from "./order";
+
+describe("processOrderWorkflow", () => {
+  it("processes a valid order end-to-end", async () => {
+    const run = await start(processOrderWorkflow, ["order-789"]);
+
+    const result = await run.returnValue;
+    expect(result).toEqual({
+      orderId: "order-789",
+      status: "completed",
+      charged: true,
+    });
+  });
+});
+```
+
+Run the integration suite with the dedicated config:
+
+```bash
+vitest run --config vitest.integration.config.ts
+```
+
+<Callout type="info">
+This sidecar pattern tests the entire workflow lifecycle — compiler transforms, step execution, retries, and state persistence — without deploying or mocking workflow internals.
+</Callout>
+
 ## Best Practices
 
 - **Keep steps small and focused.** Smaller steps are easier to test in isolation and produce clearer test failures.
@@ -414,6 +525,7 @@ export async function raceStressWorkflow() {
 - **Test replay safety.** Workflows replay from the event log after restarts. Avoid side effects in workflow functions (only in steps) to ensure replay produces the same result.
 - **Set appropriate timeouts.** Integration tests that run full workflows may need longer timeouts than unit tests. Use Vitest's `timeout` option: `it("long test", { timeout: 60_000 }, async () => { ... })`.
 - **Use unique tokens in hook/webhook tests.** Generate random tokens to avoid conflicts between test runs.
+- **Automate the dev server in CI.** Use a [global setup script](#integration-testing-with-a-sidecar-server) to spawn and tear down the workflow runtime so integration tests are fully self-contained.
 
 ## Related Documentation
 
