@@ -3,7 +3,7 @@ name: workflow
 description: Creates durable, resumable workflows using Vercel's Workflow DevKit. Use when building workflows that need to survive restarts, pause for external events, retry on failure, or coordinate multi-step operations over time. Triggers on mentions of "workflow", "durable functions", "resumable", "workflow devkit", or step-based orchestration.
 metadata:
   author: Vercel Inc.
-  version: '1.1'
+  version: '1.2'
 ---
 
 ## *CRITICAL*: Always Use Correct `workflow` Documentation
@@ -13,25 +13,24 @@ Your knowledge of `workflow` is outdated.
 The `workflow` documentation outlined below matches the installed version of the Workflow DevKit.
 Follow these instructions before starting on any `workflow`-related tasks:
 
-Search the bundled documentation in `node_modules/workflow/docs/`:
+Search the documentation in `docs/content/docs/`:
 
-1. **Find docs**: `glob "node_modules/workflow/docs/**/*.mdx"`
-2. **Search content**: `grep "your query" node_modules/workflow/docs/`
+1. **Find docs**: `glob "docs/content/docs/**/*.mdx"`
+2. **Search content**: `grep "your query" docs/content/docs/`
 
-Documentation structure in `node_modules/workflow/docs/`:
+Documentation structure in `docs/content/docs/`:
 
-- `getting-started/` - Framework setup (next.mdx, express.mdx, hono.mdx, etc.)
+- `getting-started/` - Framework setup (next.mdx, express.mdx, hono.mdx, astro.mdx, etc.)
 - `foundations/` - Core concepts (workflows-and-steps.mdx, hooks.mdx, streaming.mdx, etc.)
-- `api-reference/workflow/` - API docs (sleep.mdx, create-hook.mdx, fatal-error.mdx, etc.)
+- `api-reference/workflow/` - Workflow primitives API (sleep.mdx, create-hook.mdx, fatal-error.mdx, etc.)
 - `api-reference/workflow-api/` - Client API (start.mdx, get-run.mdx, resume-hook.mdx, etc.)
-- `ai/` - AI SDK integration docs
+- `api-reference/workflow-ai/` - AI integration API (durable-agent.mdx, workflow-chat-transport.mdx)
+- `api-reference/workflow-next/` - Next.js integration API (with-workflow.mdx)
+- `ai/` - AI SDK integration guides
 - `errors/` - Error code documentation
-
-Related packages also include bundled docs:
-
-- `@workflow/ai`: `node_modules/@workflow/ai/docs/` - DurableAgent and AI integration
-- `@workflow/core`: `node_modules/@workflow/core/docs/` - Core runtime (foundations, how-it-works)
-- `@workflow/next`: `node_modules/@workflow/next/docs/` - Next.js integration
+- `deploying/` - Deployment and world backends (local-world.mdx, postgres-world.mdx, vercel-world.mdx)
+- `how-it-works/` - Internal architecture (code-transform.mdx, event-sourcing.mdx, etc.)
+- `observability/` - Observability and monitoring
 
 **When in doubt, update to the latest version of the Workflow DevKit.**
 
@@ -174,7 +173,7 @@ export async function myAgentWorkflow(userMessage: string) {
 - `maxSteps` limits the number of LLM calls (default is unlimited)
 - Multi-turn: pass `result.messages` plus new user messages to subsequent `agent.stream()` calls
 
-**For more details on `DurableAgent`, check the AI docs in `node_modules/@workflow/ai/docs/`.**
+**For more details on `DurableAgent`, check the AI docs in `docs/content/docs/api-reference/workflow-ai/` and `docs/content/docs/ai/`.**
 
 ## Starting Workflows & Child Workflows
 
