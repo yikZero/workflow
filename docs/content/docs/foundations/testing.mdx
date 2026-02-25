@@ -408,7 +408,7 @@ export async function raceStressWorkflow() {
 
 ## Integration Testing with a Sidecar Server
 
-The examples above assume a dev server is already running. For CI or repeatable local runs, you can automate this by spawning a dev server as a sidecar process inside a Vitest [global setup file](https://vitest.dev/config/#globalsetup). This pattern was pioneered by [Mux for testing `@mux/ai`](https://www.mux.com/blog/launching-durable-ai-workflows-for-video-with-mux-ai#testing) and works with any framework — Next.js, Nitro, or the standalone CLI.
+The examples above assume a dev server is already running. For CI or repeatable local runs, you can automate this by spawning a dev server as a sidecar process inside a Vitest [global setup file](https://vitest.dev/config/globalsetup.html). This pattern was pioneered by [Mux for testing `@mux/ai`](https://www.mux.com/blog/launching-durable-ai-workflows-for-video-with-mux-ai#testing) and works with any framework — Next.js, Nitro, or the standalone CLI.
 
 The idea is simple: start the server before any tests run, wait until it is ready, then tear it down when the suite finishes.
 
