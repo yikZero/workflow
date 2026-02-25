@@ -6,6 +6,7 @@ import {
   WorkflowInvokePayloadSchema,
   type WorkflowRun,
 } from '@workflow/world';
+import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
@@ -137,9 +138,8 @@ export function workflowEntrypoint(
 
                 return await withThrottleRetry(async () => {
                   let workflowStartedAt = -1;
+                  let workflowRun = await world.runs.get(runId);
                   try {
-                    let workflowRun = await world.runs.get(runId);
-
                     if (workflowRun.status === 'pending') {
                       // Transition run to 'running' via event (event-sourced architecture)
                       const result = await world.events.create(runId, {
@@ -250,8 +250,11 @@ export function workflowEntrypoint(
                           ...Attribute.WorkflowEventsCount(events.length),
                         });
                         // Resolve the encryption key for this run's deployment
-                        const encryptionKey =
-                          await world.getEncryptionKeyForRun?.(runId);
+                        const rawKey =
+                          await world.getEncryptionKeyForRun?.(workflowRun);
+                        const encryptionKey = rawKey
+                          ? await importKey(rawKey)
+                          : undefined;
                         return await runWorkflow(
                           workflowCode,
                           workflowRun,
@@ -262,13 +265,31 @@ export function workflowEntrypoint(
                     );
 
                     // Complete the workflow run via event (event-sourced architecture)
-                    await world.events.create(runId, {
-                      eventType: 'run_completed',
-                      specVersion: SPEC_VERSION_CURRENT,
-                      eventData: {
-                        output: result,
-                      },
-                    });
+                    try {
+                      await world.events.create(runId, {
+                        eventType: 'run_completed',
+                        specVersion: SPEC_VERSION_CURRENT,
+                        eventData: {
+                          output: result,
+                        },
+                      });
+                    } catch (err) {
+                      if (
+                        WorkflowAPIError.is(err) &&
+                        (err.status === 409 || err.status === 410)
+                      ) {
+                        runtimeLogger.warn(
+                          'Tried completing workflow run, but run has already finished.',
+                          {
+                            workflowRunId: runId,
+                            message: err.message,
+                          }
+                        );
+                        return;
+                      } else {
+                        throw err;
+                      }
+                    }
 
                     span?.setAttributes({
                       ...Attribute.WorkflowRunStatus('completed'),
@@ -289,9 +310,7 @@ export function workflowEntrypoint(
                       const result = await handleSuspension({
                         suspension: err,
                         world,
-                        runId,
-                        workflowName,
-                        workflowStartedAt,
+                        run: workflowRun,
                         span,
                       });
 
@@ -372,18 +391,42 @@ export function workflowEntrypoint(
                         errorName,
                         errorStack,
                       });
+
                       // Fail the workflow run via event (event-sourced architecture)
-                      await world.events.create(runId, {
-                        eventType: 'run_failed',
-                        specVersion: SPEC_VERSION_CURRENT,
-                        eventData: {
-                          error: {
-                            message: errorMessage,
-                            stack: errorStack,
+                      try {
+                        await world.events.create(runId, {
+                          eventType: 'run_failed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: {
+                            error: {
+                              message: errorMessage,
+                              stack: errorStack,
+                            },
+                            // TODO: include error codes when we define them
                           },
-                          // TODO: include error codes when we define them
-                        },
-                      });
+                        });
+                      } catch (err) {
+                        if (
+                          WorkflowAPIError.is(err) &&
+                          (err.status === 409 || err.status === 410)
+                        ) {
+                          runtimeLogger.warn(
+                            'Tried failing workflow run, but run has already finished.',
+                            {
+                              workflowRunId: runId,
+                              message: err.message,
+                            }
+                          );
+                          span?.setAttributes({
+                            ...Attribute.WorkflowErrorName(errorName),
+                            ...Attribute.WorkflowErrorMessage(errorMessage),
+                            ...Attribute.ErrorType(errorName),
+                          });
+                          return;
+                        } else {
+                          throw err;
+                        }
+                      }
 
                       span?.setAttributes({
                         ...Attribute.WorkflowRunStatus('failed'),

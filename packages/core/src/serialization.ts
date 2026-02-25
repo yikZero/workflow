@@ -1,9 +1,10 @@
+import { types } from 'node:util';
 import { WorkflowRuntimeError } from '@workflow/errors';
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from '@workflow/serde';
-
 import { DevalueError, parse, stringify, unflatten } from 'devalue';
 import { monotonicFactory } from 'ulid';
 import { getSerializationClass } from './class-serialization.js';
+import type { CryptoKey } from './encryption.js';
 import {
   createFlushableState,
   flushablePipe,
@@ -553,7 +554,13 @@ function getCommonReducers(global: Record<string, any> = globalThis) {
       return valid ? value.toISOString() : '.';
     },
     Error: (value) => {
-      if (!(value instanceof global.Error)) return false;
+      // Use types.isNativeError() instead of `instanceof global.Error`
+      // because errors may originate from a different VM context (e.g.
+      // FatalError from the host context passed into a VM-context workflow).
+      // `instanceof` checks fail across VM boundaries since each context
+      // has its own Error constructor, but isNativeError() uses V8's
+      // internal type tag which works across all contexts.
+      if (!types.isNativeError(value)) return false;
       return {
         name: value.name,
         message: value.message,
@@ -1382,7 +1389,7 @@ function getStepRevivers(
 export async function dehydrateWorkflowArguments(
   value: unknown,
   runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   ops: Promise<void>[] = [],
   global: Record<string, any> = globalThis,
   v1Compat = false
@@ -1416,7 +1423,7 @@ export async function dehydrateWorkflowArguments(
 export async function hydrateWorkflowArguments(
   value: Uint8Array | unknown,
   _runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {
@@ -1455,7 +1462,7 @@ export async function hydrateWorkflowArguments(
 export async function dehydrateWorkflowReturnValue(
   value: unknown,
   _runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
@@ -1490,7 +1497,7 @@ export async function dehydrateWorkflowReturnValue(
 export async function hydrateWorkflowReturnValue(
   value: Uint8Array | unknown,
   runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   ops: Promise<void>[] = [],
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
@@ -1531,7 +1538,7 @@ export async function hydrateWorkflowReturnValue(
 export async function dehydrateStepArguments(
   value: unknown,
   _runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
@@ -1565,7 +1572,7 @@ export async function dehydrateStepArguments(
 export async function hydrateStepArguments(
   value: Uint8Array | unknown,
   runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   ops: Promise<any>[] = [],
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
@@ -1607,7 +1614,7 @@ export async function hydrateStepArguments(
 export async function dehydrateStepReturnValue(
   value: unknown,
   runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   ops: Promise<any>[] = [],
   global: Record<string, any> = globalThis,
   v1Compat = false
@@ -1641,7 +1648,7 @@ export async function dehydrateStepReturnValue(
 export async function hydrateStepReturnValue(
   value: Uint8Array | unknown,
   _runId: string,
-  _key: Uint8Array | undefined,
+  _key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
 ) {

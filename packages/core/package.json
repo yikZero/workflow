@@ -1,6 +1,6 @@
 {
   "name": "@workflow/core",
-  "version": "4.1.0-beta.57",
+  "version": "4.1.0-beta.60",
   "description": "Core runtime and engine for Workflow DevKit",
   "type": "module",
   "main": "dist/index.js",
@@ -64,6 +64,10 @@
       "types": "./dist/serialization-format.d.ts",
       "default": "./dist/serialization-format.js"
     },
+    "./encryption": {
+      "types": "./dist/encryption.d.ts",
+      "default": "./dist/encryption.js"
+    },
     "./_workflow": "./dist/workflow/index.js"
   },
   "scripts": {
@@ -89,7 +93,7 @@
     "@workflow/world-local": "workspace:*",
     "@workflow/world-vercel": "workspace:*",
     "debug": "4.4.3",
-    "devalue": "5.6.0",
+    "devalue": "5.6.3",
     "ms": "2.1.3",
     "nanoid": "5.1.6",
     "seedrandom": "3.0.5",
