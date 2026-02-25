@@ -367,7 +367,7 @@ async function callAIService(prompt: string) {
 callAIService.maxRetries = 5; // Allow more retries for AI services // [!code highlight]
 ```
 
-The `metadata.attempt` value starts at 0 and increments on each retry, enabling exponential backoff. For a full breakdown of retry semantics, see [Errors and Retries](/docs/foundations/errors-and-retries).
+The `metadata.attempt` value starts at 1 and increments on each retry, enabling exponential backoff. For a full breakdown of retry semantics, see [Errors and Retries](/docs/foundations/errors-and-retries).
 
 <Callout type="info">
 When retrying AI generation steps, ensure your requests are idempotent. If your service does not deduplicate requests, retries may produce duplicate content. See [Idempotency](/docs/foundations/idempotency) for strategies.
