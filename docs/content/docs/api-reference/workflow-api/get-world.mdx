@@ -68,7 +68,7 @@ export async function GET(req: Request) {
 Cancel a running workflow:
 
 ```typescript lineNumbers
-import { getWorld } from "workflow/runtime";
+import { getWorld, cancelRun } from "@workflow/core/runtime";
 
 export async function POST(req: Request) {
   const { runId } = await req.json();
@@ -79,9 +79,9 @@ export async function POST(req: Request) {
 
   try {
     const world = getWorld(); // [!code highlight]
-    const run = await world.runs.cancel(runId); // [!code highlight]
+    await cancelRun(world, runId); // [!code highlight]
 
-    return Response.json({ status: run.status });
+    return Response.json({ status: "cancelled" });
   } catch (error) {
     return Response.json(
       { error: "Failed to cancel workflow run" },
