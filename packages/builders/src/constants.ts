@@ -22,4 +22,5 @@ export const WORKFLOW_QUEUE_TRIGGER = {
   maxDeliveries: 64, // Maximum number of delivery attempts (default: 3)
   retryAfterSeconds: 5, // Delay between retries (default: 60)
   initialDelaySeconds: 0, // Initial delay before first delivery (default: 0)
+  maxConcurrency: 1, // Only one workflow invocation in-flight at a time
 };

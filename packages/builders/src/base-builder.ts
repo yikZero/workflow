@@ -1066,6 +1066,7 @@ export const OPTIONS = handler;`;
         maxDeliveries?: number;
         retryAfterSeconds?: number;
         initialDelaySeconds?: number;
+        maxConcurrency?: number;
       }>;
     }
   ): Promise<void> {

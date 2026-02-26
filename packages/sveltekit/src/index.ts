@@ -27,6 +27,7 @@ process.on('beforeExit', () => {
             maxDeliveries: 64,
             retryAfterSeconds: 5,
             initialDelaySeconds: 0,
+            maxConcurrency: 1,
           },
         ],
       },
