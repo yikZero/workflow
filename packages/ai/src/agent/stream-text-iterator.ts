@@ -483,6 +483,7 @@ function normalizeFinishReason(raw: unknown): FinishReason | undefined {
 /**
  * Strip OpenAI's itemId from providerMetadata (requires reasoning items we don't preserve).
  * Preserves all other provider metadata (e.g., Gemini's thoughtSignature).
+ * See https://github.com/vercel/workflow/issues/880
  */
 function sanitizeProviderMetadataForToolCall(
   metadata: unknown
