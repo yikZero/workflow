@@ -33,7 +33,7 @@ Sleep is a built-in function in Workflow DevKit, so exposing it as a tool is as 
 Add a new "sleep" tool to the `tools` defined in `workflows/chat/steps/tools.ts`:
 
 ```typescript title="workflows/chat/steps/tools.ts" lineNumbers
-import { getWritable, sleep } from "workflow"; // [!code highlight]
+import { sleep } from "workflow"; // [!code highlight]
 
 // ... existing imports ...
 
@@ -110,7 +110,7 @@ export default function ChatPage() {
                         part.type === "tool-checkFlightStatus" ||
                         part.type === "tool-getAirportInfo" ||
                         part.type === "tool-bookFlight" ||
-                        part.type === "tool-checkBaggageAllowance"
+                        part.type === "tool-checkBaggageAllowance" ||
                         part.type === "tool-sleep" // [!code highlight]
                       ) {
                         // ...
@@ -162,6 +162,8 @@ Aside from providing `sleep()` as a tool, there are other use cases for Agents t
 When hitting API rate limits, use `RetryableError` with a delay:
 
 ```typescript lineNumbers
+import { RetryableError } from "workflow";
+
 async function callRateLimitedAPI(endpoint: string) {
   "use step";
 

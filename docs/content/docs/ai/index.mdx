@@ -148,7 +148,7 @@ Our tools are mostly mocked out for the sake of the example. We use AI SDK's `to
 import { tool } from "ai";
 import { z } from "zod";
 
-export const tools = {
+export const flightBookingTools = {
   searchFlights: tool({
     description: "Search for flights",
     inputSchema: z.object({ query: z.string() }),
@@ -256,7 +256,7 @@ Move the agent logic into a separate function, which will serve as our workflow 
 ```typescript title="workflows/chat/workflow.ts" lineNumbers
 import { DurableAgent } from "@workflow/ai/agent"; // [!code highlight]
 import { getWritable } from "workflow"; // [!code highlight]
-import { tools } from "@/ai/tools";
+import { flightBookingTools } from "@/ai/tools";
 import { openai } from "@workflow/ai/openai";
 import type { ModelMessage, UIMessageChunk } from "ai";
 
