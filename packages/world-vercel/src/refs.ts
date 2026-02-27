@@ -9,7 +9,11 @@ import {
   trace,
   UrlFull,
 } from './telemetry.js';
-import { type APIConfig, getHttpConfig } from './utils.js';
+import {
+  type APIConfig,
+  fetchWithNetworkErrorHandling,
+  getHttpConfig,
+} from './utils.js';
 
 /**
  * A ref descriptor as returned by workflow-server when `remoteRefBehavior=lazy`.
@@ -105,7 +109,7 @@ export async function resolveRefDescriptor(
         ...PeerService('workflow-server'),
       });
 
-      const response = await fetch(
+      const response = await fetchWithNetworkErrorHandling(
         new Request(url, { method: 'GET', headers })
       );
 

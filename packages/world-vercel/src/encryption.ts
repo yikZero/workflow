@@ -14,6 +14,7 @@ import { webcrypto } from 'node:crypto';
 import { getVercelOidcToken } from '@vercel/oidc';
 import type { WorkflowRun, World } from '@workflow/world';
 import * as z from 'zod';
+import { fetchWithNetworkErrorHandling } from './utils.js';
 
 const KEY_BYTES = 32; // 256 bits = 32 bytes (AES-256)
 
@@ -112,7 +113,7 @@ export async function fetchRunKey(
   if (options?.teamId) {
     params.set('teamId', options.teamId);
   }
-  const response = await fetch(
+  const response = await fetchWithNetworkErrorHandling(
     `https://api.vercel.com/v1/workflow/run-key/${deploymentId}?${params}`,
     {
       headers: {

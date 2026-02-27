@@ -138,6 +138,70 @@ export function deserializeError<T extends Record<string, any>>(obj: any): T {
   return obj as T;
 }
 
+/**
+ * Transient network error codes that indicate connection-level failures.
+ * These are not HTTP status codes — they come from the OS/Node.js networking
+ * layer and surface as `cause.code` on the TypeError thrown by `fetch()`.
+ */
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET', // undici socket error
+  'UND_ERR_CONNECT_TIMEOUT', // undici connect timeout
+]);
+
+/**
+ * Check whether an error thrown by `fetch()` is a transient network error
+ * (e.g. ECONNRESET). Node's `fetch` (undici) throws a `TypeError` whose
+ * `.cause` carries the underlying OS error code.
+ */
+export function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  const cause = (err as any).cause;
+  if (!cause) return false;
+  const code: unknown = cause.code ?? cause.cause?.code;
+  if (typeof code === 'string' && TRANSIENT_NETWORK_ERROR_CODES.has(code)) {
+    return true;
+  }
+  // Also match by message as a fallback (e.g. "fetch failed")
+  const msg: string = cause.message ?? '';
+  return msg.includes('ECONNRESET') || msg.includes('fetch failed');
+}
+
+/**
+ * Wraps a `fetch()` call so that transient network errors (ECONNRESET, etc.)
+ * are re-thrown as `WorkflowAPIError` with status 500. This lets the existing
+ * `withServerErrorRetry` retry logic handle them transparently.
+ */
+export async function fetchWithNetworkErrorHandling(
+  input: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    if (isTransientNetworkError(err)) {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      throw new WorkflowAPIError(
+        `Network error (${(err as any).cause?.code ?? 'unknown'}): ${(err as Error).message}`,
+        { url, status: 500, cause: err }
+      );
+    }
+    throw err;
+  }
+}
+
 const getUserAgent = () => {
   const deploymentId = process.env.VERCEL_DEPLOYMENT_ID;
   if (deploymentId) {
@@ -276,7 +340,7 @@ export async function makeRequest<T>({
         body,
         headers,
       });
-      const response = await fetch(request);
+      const response = await fetchWithNetworkErrorHandling(request);
 
       span?.setAttributes({
         ...HttpResponseStatusCode(response.status),

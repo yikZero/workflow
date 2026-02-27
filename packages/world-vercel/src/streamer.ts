@@ -1,5 +1,10 @@
 import type { Streamer } from '@workflow/world';
-import { type APIConfig, getHttpConfig, type HttpConfig } from './utils.js';
+import {
+  type APIConfig,
+  fetchWithNetworkErrorHandling,
+  getHttpConfig,
+  type HttpConfig,
+} from './utils.js';
 
 function getStreamUrl(
   name: string,
@@ -62,12 +67,15 @@ export function createStreamer(config?: APIConfig): Streamer {
       const resolvedRunId = await runId;
 
       const httpConfig = await getHttpConfig(config);
-      await fetch(getStreamUrl(name, resolvedRunId, httpConfig), {
-        method: 'PUT',
-        body: chunk,
-        headers: httpConfig.headers,
-        duplex: 'half',
-      });
+      await fetchWithNetworkErrorHandling(
+        getStreamUrl(name, resolvedRunId, httpConfig),
+        {
+          method: 'PUT',
+          body: chunk,
+          headers: httpConfig.headers,
+          duplex: 'half',
+        }
+      );
     },
 
     async writeToStreamMulti(
@@ -86,12 +94,15 @@ export function createStreamer(config?: APIConfig): Streamer {
       httpConfig.headers.set('X-Stream-Multi', 'true');
 
       const body = encodeMultiChunks(chunks);
-      await fetch(getStreamUrl(name, resolvedRunId, httpConfig), {
-        method: 'PUT',
-        body,
-        headers: httpConfig.headers,
-        duplex: 'half',
-      });
+      await fetchWithNetworkErrorHandling(
+        getStreamUrl(name, resolvedRunId, httpConfig),
+        {
+          method: 'PUT',
+          body,
+          headers: httpConfig.headers,
+          duplex: 'half',
+        }
+      );
     },
 
     async closeStream(name: string, runId: string | Promise<string>) {
@@ -100,10 +111,13 @@ export function createStreamer(config?: APIConfig): Streamer {
 
       const httpConfig = await getHttpConfig(config);
       httpConfig.headers.set('X-Stream-Done', 'true');
-      await fetch(getStreamUrl(name, resolvedRunId, httpConfig), {
-        method: 'PUT',
-        headers: httpConfig.headers,
-      });
+      await fetchWithNetworkErrorHandling(
+        getStreamUrl(name, resolvedRunId, httpConfig),
+        {
+          method: 'PUT',
+          headers: httpConfig.headers,
+        }
+      );
     },
 
     async readFromStream(name: string, startIndex?: number) {
@@ -112,7 +126,9 @@ export function createStreamer(config?: APIConfig): Streamer {
       if (typeof startIndex === 'number') {
         url.searchParams.set('startIndex', String(startIndex));
       }
-      const res = await fetch(url, { headers: httpConfig.headers });
+      const res = await fetchWithNetworkErrorHandling(url, {
+        headers: httpConfig.headers,
+      });
       if (!res.ok) throw new Error(`Failed to fetch stream: ${res.status}`);
       return res.body as ReadableStream<Uint8Array>;
     },
@@ -120,7 +136,9 @@ export function createStreamer(config?: APIConfig): Streamer {
     async listStreamsByRunId(runId: string) {
       const httpConfig = await getHttpConfig(config);
       const url = new URL(`${httpConfig.baseUrl}/v2/runs/${runId}/streams`);
-      const res = await fetch(url, { headers: httpConfig.headers });
+      const res = await fetchWithNetworkErrorHandling(url, {
+        headers: httpConfig.headers,
+      });
       if (!res.ok) throw new Error(`Failed to list streams: ${res.status}`);
       return (await res.json()) as string[];
     },
