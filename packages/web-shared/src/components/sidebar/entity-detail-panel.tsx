@@ -53,7 +53,6 @@ export interface SelectedSpanInfo {
  */
 export function EntityDetailPanel({
   run,
-  hooks,
   onStreamClick,
   spanDetailData,
   spanDetailError,
@@ -66,8 +65,6 @@ export function EntityDetailPanel({
   selectedSpan,
 }: {
   run: WorkflowRun;
-  /** All hooks for the current run (used as fallback for token lookup). */
-  hooks?: Hook[];
   /** Callback when a stream reference is clicked */
   onStreamClick?: (streamId: string) => void;
   /** Pre-fetched span detail data for the selected span. */
@@ -196,24 +193,19 @@ export function EntityDetailPanel({
   const error = spanDetailError ?? undefined;
   const loading = spanDetailLoading ?? false;
 
-  // Get the hook token for resolving (prefer fetched data, then hooks array fallback)
+  // Get the hook token for resolving (prefer fetched data, then span inline data)
   const hookToken = useMemo(() => {
     if (resource !== 'hook' || !resourceId) return undefined;
     // 1. Try the externally-fetched detail data first
     if (isHook(spanDetailData) && spanDetailData.token) {
       return spanDetailData.token;
     }
-    // 2. Try the hooks array (always has tokens)
-    const hookFromArray = hooks?.find((h) => h.hookId === resourceId);
-    if (hookFromArray?.token) {
-      return hookFromArray.token;
-    }
-    // 3. Try the span's inline data (partial hook from events - may lack token)
+    // 2. Try the span's inline data (reconstructed from hook_created event)
     if (isHook(data) && (data as Hook).token) {
       return (data as Hook).token;
     }
     return undefined;
-  }, [resource, resourceId, spanDetailData, data, hooks]);
+  }, [resource, resourceId, spanDetailData, data]);
 
   useEffect(() => {
     if (error && selectedSpan && resource) {

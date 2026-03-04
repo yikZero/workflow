@@ -6,10 +6,11 @@ import {
   hydrateResourceIO,
   hydrateResourceIOWithKey,
   isEncryptedMarker,
+  stepEventsToStepEntity,
   StreamViewer,
   WorkflowTraceViewer,
 } from '@workflow/web-shared';
-import type { Event, Step, WorkflowRun } from '@workflow/world';
+import type { Event, WorkflowRun } from '@workflow/world';
 import {
   AlertCircle,
   GitBranch,
@@ -81,12 +82,10 @@ import { Skeleton } from './ui/skeleton';
  */
 function GraphTabContent({
   run,
-  allSteps,
   allEvents,
   env,
 }: {
   run: WorkflowRun;
-  allSteps: Step[] | null;
   allEvents: Event[] | null;
   env: EnvMap;
 }) {
@@ -120,17 +119,36 @@ function GraphTabContent({
     );
   }, [graphManifest, run.workflowName]);
 
+  // Reconstruct step entities from events for the graph mapper
+  const stepsFromEvents = useMemo(() => {
+    if (!allEvents) return [];
+    const stepEventsMap = new Map<string, Event[]>();
+    for (const event of allEvents) {
+      if (event.eventType.startsWith('step_') && event.correlationId) {
+        const existing = stepEventsMap.get(event.correlationId);
+        if (existing) {
+          existing.push(event);
+        } else {
+          stepEventsMap.set(event.correlationId, [event]);
+        }
+      }
+    }
+    return Array.from(stepEventsMap.values())
+      .map(stepEventsToStepEntity)
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+  }, [allEvents]);
+
   // Map run data to execution overlay
   const execution = useMemo(() => {
     if (!workflowGraph || !run.runId) return null;
 
     return mapRunToExecution(
       run,
-      allSteps || [],
+      stepsFromEvents as any,
       allEvents || [],
       workflowGraph
     );
-  }, [workflowGraph, run, allSteps, allEvents]);
+  }, [workflowGraph, run, stepsFromEvents, allEvents]);
 
   if (graphLoading) {
     return (
@@ -310,14 +328,11 @@ export function RunDetailView({
     serverConfig.backendId === 'local' ||
     serverConfig.backendId === '@workflow/world-local';
 
-  // Fetch all run data with live updates
+  // Fetch run + events for the trace viewer (steps/hooks are fetched on-demand by sidebar)
   const {
     run: runData,
-    steps: allSteps,
-    hooks: allHooks,
     events: allEvents,
     loading,
-    auxiliaryDataLoading,
     error,
     update,
     loadMoreTraceData,
@@ -546,11 +561,7 @@ export function RunDetailView({
                 {/* Decrypt button — shown when any run/step data is encrypted */}
                 {(isEncryptedMarker(run.input) ||
                   isEncryptedMarker(run.output) ||
-                  isEncryptedMarker(run.error) ||
-                  allSteps.some(
-                    (s) =>
-                      isEncryptedMarker(s.input) || isEncryptedMarker(s.output)
-                  )) && (
+                  isEncryptedMarker(run.error)) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span>
@@ -591,7 +602,7 @@ export function RunDetailView({
                   runId={runId}
                   runStatus={run.status}
                   events={allEvents}
-                  eventsLoading={auxiliaryDataLoading}
+                  eventsLoading={loading}
                   loading={loading}
                   onRerunClick={handleRerunClick}
                   onCancelClick={handleCancelClick}
@@ -748,9 +759,7 @@ export function RunDetailView({
                 <div className="h-full">
                   <WorkflowTraceViewer
                     error={error}
-                    steps={allSteps}
                     events={allEvents}
-                    hooks={allHooks}
                     run={run}
                     isLoading={loading}
                     spanDetailData={spanDetailData}
@@ -775,7 +784,6 @@ export function RunDetailView({
                 <div className="h-full">
                   <EventListView
                     events={allEvents}
-                    steps={allSteps}
                     run={run}
                     onLoadEventData={handleLoadEventData}
                     encryptionKey={encryptionKey ?? undefined}
@@ -881,7 +889,6 @@ export function RunDetailView({
                   <div className="h-full min-h-[500px]">
                     <GraphTabContent
                       run={run}
-                      allSteps={allSteps}
                       allEvents={allEvents}
                       env={env}
                     />
@@ -890,13 +897,6 @@ export function RunDetailView({
               </TabsContent>
             )}
           </Tabs>
-
-          {auxiliaryDataLoading && (
-            <div className="fixed flex items-center gap-2 left-8 bottom-8 bg-background border rounded-md px-4 py-2 shadow-lg">
-              <Loader2 className="size-4 animate-spin" />
-              <span className="text-sm">Fetching data...</span>
-            </div>
-          )}
         </div>
       </div>
     </>
