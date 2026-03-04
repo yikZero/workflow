@@ -4,6 +4,8 @@ import {
   ErrorBoundary,
   EventListView,
   hydrateResourceIO,
+  hydrateResourceIOWithKey,
+  isEncryptedMarker,
   StreamViewer,
   WorkflowTraceViewer,
 } from '@workflow/web-shared';
@@ -14,8 +16,10 @@ import {
   HelpCircle,
   List,
   Loader2,
+  Lock,
+  Unlock,
 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert';
@@ -37,6 +41,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '~/components/ui/breadcrumb';
+import { Button } from '~/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import {
   Tooltip,
@@ -46,7 +51,9 @@ import {
 import { mapRunToExecution } from '~/lib/flow-graph/graph-execution-mapper';
 import { useWorkflowGraphManifest } from '~/lib/flow-graph/use-workflow-graph';
 import { useStreamReader } from '~/lib/hooks/use-stream-reader';
-import { fetchEvent } from '~/lib/rpc-client';
+
+import { fetchEvent, getEncryptionKeyForRun } from '~/lib/rpc-client';
+
 import type { EnvMap } from '~/lib/types';
 import {
   cancelRun,
@@ -248,6 +255,10 @@ export function RunDetailView({
     [env]
   );
 
+  // Ref for encryption key so event loading callbacks can access it
+  // without being recreated when the key changes
+  const encryptionKeyRef = useRef<Uint8Array | null>(null);
+
   const handleResolveHook = useCallback(
     async (hookToken: string, payload: unknown) => {
       await resumeHook(env, hookToken, payload);
@@ -257,13 +268,39 @@ export function RunDetailView({
 
   const handleLoadEventData = useCallback(
     async (event: Event) => {
+      const isRunLevelEvent = RUN_LEVEL_EVENT_TYPES.has(event.eventType);
+
+      if (!isRunLevelEvent && event.correlationId) {
+        const { error, result } = await unwrapServerActionResult(
+          fetchEventsByCorrelationId(env, event.correlationId, {
+            sortOrder: 'asc',
+            limit: 100,
+            withData: true,
+          })
+        );
+        if (error) {
+          throw error;
+        }
+        const rawEvent = result.data.find((e) => e.eventId === event.eventId);
+        if (!rawEvent) return null;
+        const fullEvent = encryptionKeyRef.current
+          ? await hydrateResourceIOWithKey(rawEvent, encryptionKeyRef.current)
+          : hydrateResourceIO(rawEvent);
+        if ('eventData' in fullEvent) {
+          return fullEvent.eventData;
+        }
+        return null;
+      }
+
       const { error, result } = await unwrapServerActionResult(
         fetchEvent(env, event.runId, event.eventId, 'all')
       );
       if (error) {
         throw error;
       }
-      const fullEvent = hydrateResourceIO(result);
+      const fullEvent = encryptionKeyRef.current
+        ? await hydrateResourceIOWithKey(result, encryptionKeyRef.current)
+        : hydrateResourceIO(result);
       if ('eventData' in fullEvent) {
         return fullEvent.eventData;
       }
@@ -281,7 +318,9 @@ export function RunDetailView({
       if (error) {
         throw error;
       }
-      const fullEvent = hydrateResourceIO(result);
+      const fullEvent = encryptionKeyRef.current
+        ? await hydrateResourceIOWithKey(result, encryptionKeyRef.current)
+        : hydrateResourceIO(result);
       if ('eventData' in fullEvent) {
         return fullEvent.eventData;
       }
@@ -311,6 +350,12 @@ export function RunDetailView({
   } = useWorkflowTraceViewerData(env, runId, { live: true });
   const run = runData ?? ({} as WorkflowRun);
 
+  // Encryption key persisted for the lifetime of this run page.
+  // Once fetched (via Decrypt button), it's used automatically for all
+  // subsequent resource + event hydration, even across span selection changes.
+  const [encryptionKey, setEncryptionKey] = useState<Uint8Array | null>(null);
+  encryptionKeyRef.current = encryptionKey;
+
   const [spanSelection, setSpanSelection] = useState<SpanSelectionInfo | null>(
     null
   );
@@ -318,6 +363,7 @@ export function RunDetailView({
     data: spanDetailData,
     loading: spanDetailLoading,
     error: spanDetailError,
+    refresh: refreshSpanDetail,
   } = useWorkflowResourceData(
     env,
     spanSelection?.resource ?? 'run',
@@ -329,8 +375,31 @@ export function RunDetailView({
           spanSelection?.resourceId &&
           spanSelection.resource !== 'hook'
       ),
+      encryptionKey: encryptionKey ?? undefined,
     }
   );
+
+  const handleDecrypt = useCallback(async () => {
+    if (encryptionKey) {
+      // Key already available — just re-fetch to trigger decrypted hydration
+      refreshSpanDetail();
+      return;
+    }
+    // Fetch the key for this run
+    const { error: keyError, result: keyResult } =
+      await unwrapServerActionResult(getEncryptionKeyForRun(env, runId));
+    if (keyError) {
+      toast.error(`Failed to fetch encryption key: ${keyError.message}`);
+      return;
+    }
+    if (!keyResult) {
+      toast.error('Encryption is not configured for this deployment.');
+      return;
+    }
+    setEncryptionKey(keyResult);
+    // Refresh will happen automatically via the state change propagating
+    // to useWorkflowResourceData's encryptionKey option
+  }, [encryptionKey, env, runId, refreshSpanDetail]);
 
   const handleSpanSelect = useCallback((info: SpanSelectionInfo) => {
     setSpanSelection(info);
@@ -497,8 +566,50 @@ export function RunDetailView({
               </div>
 
               <div className="flex items-center justify-between gap-2">
-                {/* Right side controls */}
                 <LiveStatus hasError={hasError} errorMessage={errorMessage} />
+                {/* Decrypt button — shown when any run/step data is encrypted */}
+                {(isEncryptedMarker(run.input) ||
+                  isEncryptedMarker(run.output) ||
+                  isEncryptedMarker(run.error) ||
+                  allSteps.some(
+                    (s) =>
+                      isEncryptedMarker(s.input) || isEncryptedMarker(s.output)
+                  )) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleDecrypt}
+                          disabled={!!encryptionKey}
+                        >
+                          {encryptionKey ? (
+                            <Unlock className="h-4 w-4" />
+                          ) : (
+                            <Lock className="h-4 w-4" />
+                          )}
+                          {encryptionKey ? 'Decrypted' : 'Decrypt'}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {encryptionKey ? (
+                        <p>
+                          Data has been decrypted for this workflow run. All
+                          encrypted input, output, and event data is now visible
+                          across all tabs.
+                        </p>
+                      ) : (
+                        <p>
+                          This run&apos;s data is end-to-end encrypted. Decrypt
+                          to reveal input, output, and event data across all
+                          tabs for this workflow run.
+                        </p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <RunActionsButtons
                   env={env}
                   runId={runId}
@@ -677,6 +788,7 @@ export function RunDetailView({
                     onLoadMoreSpans={loadMoreTraceData}
                     hasMoreSpans={hasMoreTraceData}
                     isLoadingMoreSpans={isLoadingMoreTraceData}
+                    encryptionKey={encryptionKey ?? undefined}
                   />
                 </div>
               </ErrorBoundary>
@@ -690,6 +802,7 @@ export function RunDetailView({
                     steps={allSteps}
                     run={run}
                     onLoadEventData={handleLoadEventData}
+                    encryptionKey={encryptionKey ?? undefined}
                   />
                 </div>
               </ErrorBoundary>
