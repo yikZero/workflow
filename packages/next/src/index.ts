@@ -32,7 +32,8 @@ export function withWorkflow(
   if (!process.env.VERCEL_DEPLOYMENT_ID) {
     if (!process.env.WORKFLOW_TARGET_WORLD) {
       process.env.WORKFLOW_TARGET_WORLD = 'local';
-      process.env.WORKFLOW_LOCAL_DATA_DIR = '.next/workflow-data';
+      process.env.WORKFLOW_LOCAL_DATA_DIR ??=
+        workflows?.local?.dataDir ?? '.next/workflow-data';
     }
     const maybePort = workflows?.local?.port;
     if (maybePort) {
