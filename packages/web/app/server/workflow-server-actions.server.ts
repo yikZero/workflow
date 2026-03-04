@@ -726,40 +726,24 @@ export async function fetchEvents(
 }
 
 /**
- * Fetch events by correlation ID
+ * Fetch a single event by run ID and event ID
  */
-export async function fetchEventsByCorrelationId(
+export async function fetchEvent(
   worldEnv: EnvMap,
-  correlationId: string,
-  params: {
-    cursor?: string;
-    sortOrder?: 'asc' | 'desc';
-    limit?: number;
-    withData?: boolean;
-  }
-): Promise<ServerActionResult<PaginatedResult<Event>>> {
-  const { cursor, sortOrder = 'asc', limit = 1000, withData = false } = params;
+  runId: string,
+  eventId: string,
+  resolveData: 'none' | 'all' = 'all'
+): Promise<ServerActionResult<Event>> {
   try {
     const world = await getWorldFromEnv(worldEnv);
-    const result = await world.events.listByCorrelationId({
-      correlationId,
-      pagination: { cursor, limit, sortOrder },
-      resolveData: withData ? 'all' : 'none',
-    });
-    return createResponse({
-      data: result.data as Event[],
-      cursor: result.cursor ?? undefined,
-      hasMore: result.hasMore,
-    });
+    const event = await world.events.get(runId, eventId, { resolveData });
+    return createResponse(event as Event);
   } catch (error) {
-    return createServerActionError<PaginatedResult<Event>>(
-      error,
-      'world.events.listByCorrelationId',
-      {
-        correlationId,
-        ...params,
-      }
-    );
+    return createServerActionError<Event>(error, 'world.events.get', {
+      runId,
+      eventId,
+      resolveData,
+    });
   }
 }
 

@@ -11,13 +11,11 @@ vi.mock('~/lib/rpc-client', () => ({
   fetchSteps: vi.fn(),
   fetchHooks: vi.fn(),
   fetchEvents: vi.fn(),
-  fetchEventsByCorrelationId: vi.fn(),
 }));
 
 import type { WorkflowRun } from '@workflow/world';
 import {
   fetchEvents,
-  fetchEventsByCorrelationId,
   fetchHooks,
   fetchRun,
   fetchSteps,
@@ -52,7 +50,6 @@ function emptyPage() {
 describe('useWorkflowTraceViewerData', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchEventsByCorrelationId).mockReturnValue(emptyPage());
   });
 
   it('shows complete trace data on load', async () => {

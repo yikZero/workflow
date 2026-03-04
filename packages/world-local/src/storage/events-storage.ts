@@ -54,7 +54,7 @@ async function deleteAllWaitsForRun(
 
 /**
  * Creates the events storage implementation using the filesystem.
- * Implements the Storage['events'] interface with create, list, and listByCorrelationId operations.
+ * Implements the Storage['events'] interface with create, get, and list operations.
  */
 export function createEventsStorage(basedir: string): Storage['events'] {
   return {
@@ -721,6 +721,17 @@ export function createEventsStorage(basedir: string): Storage['events'] {
       };
     },
 
+    async get(runId, eventId, params) {
+      const compositeKey = `${runId}-${eventId}`;
+      const eventPath = path.join(basedir, 'events', `${compositeKey}.json`);
+      const event = await readJSON(eventPath, EventSchema);
+      if (!event) {
+        throw new Error(`Event ${eventId} in run ${runId} not found`);
+      }
+      const resolveData = params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
+      return filterEventData(event, resolveData);
+    },
+
     async list(params) {
       const { runId } = params;
       const resolveData = params.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
@@ -728,37 +739,6 @@ export function createEventsStorage(basedir: string): Storage['events'] {
         directory: path.join(basedir, 'events'),
         schema: EventSchema,
         filePrefix: `${runId}-`,
-        // Events in chronological order (oldest first) by default,
-        // different from the default for other list calls.
-        sortOrder: params.pagination?.sortOrder ?? 'asc',
-        limit: params.pagination?.limit,
-        cursor: params.pagination?.cursor,
-        getCreatedAt: getObjectCreatedAt('evnt'),
-        getId: (event) => event.eventId,
-      });
-
-      // If resolveData is "none", remove eventData from events
-      if (resolveData === 'none') {
-        return {
-          ...result,
-          data: result.data.map((event) => {
-            const { eventData: _eventData, ...rest } = event as any;
-            return rest;
-          }),
-        };
-      }
-
-      return result;
-    },
-
-    async listByCorrelationId(params) {
-      const correlationId = params.correlationId;
-      const resolveData = params.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
-      const result = await paginatedFileSystemQuery({
-        directory: path.join(basedir, 'events'),
-        schema: EventSchema,
-        // No filePrefix - search all events
-        filter: (event) => event.correlationId === correlationId,
         // Events in chronological order (oldest first) by default,
         // different from the default for other list calls.
         sortOrder: params.pagination?.sortOrder ?? 'asc',

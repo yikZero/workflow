@@ -3,7 +3,7 @@ import type {
   CreateEventRequest,
   Event,
   EventResult,
-  ListEventsByCorrelationIdParams,
+  GetEventParams,
   ListEventsParams,
   RunCreatedEventRequest,
 } from './events.js';
@@ -98,17 +98,17 @@ export interface Storage {
 
   steps: {
     get(
-      runId: string | undefined,
+      runId: string,
       stepId: string,
       params: GetStepParams & { resolveData: 'none' }
     ): Promise<StepWithoutData>;
     get(
-      runId: string | undefined,
+      runId: string,
       stepId: string,
       params?: GetStepParams & { resolveData?: 'all' }
     ): Promise<Step>;
     get(
-      runId: string | undefined,
+      runId: string,
       stepId: string,
       params?: GetStepParams
     ): Promise<Step | StepWithoutData>;
@@ -155,10 +155,13 @@ export interface Storage {
       params?: CreateEventParams
     ): Promise<EventResult>;
 
+    get(
+      runId: string,
+      eventId: string,
+      params?: GetEventParams
+    ): Promise<Event>;
+
     list(params: ListEventsParams): Promise<PaginatedResponse<Event>>;
-    listByCorrelationId(
-      params: ListEventsByCorrelationIdParams
-    ): Promise<PaginatedResponse<Event>>;
   };
 
   hooks: {

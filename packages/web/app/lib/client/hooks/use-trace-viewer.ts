@@ -3,7 +3,6 @@ import type { Event, Hook, Step, WorkflowRun } from '@workflow/world';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchEvents,
-  fetchEventsByCorrelationId,
   fetchHooks,
   fetchRun,
   fetchSteps,
@@ -11,7 +10,6 @@ import {
 import type { EnvMap } from '~/lib/types';
 import { unwrapServerActionResult } from '~/lib/client/workflow-errors';
 import {
-  MAX_ITEMS,
   mergeById,
   pollResource,
 } from '~/lib/client/workflow-primitives';
@@ -20,50 +18,6 @@ const LIVE_POLL_LIMIT = 10;
 const TRACE_VIEWER_BATCH_SIZE = 50;
 const LIVE_STEP_UPDATE_INTERVAL_MS = 2000;
 const LIVE_UPDATE_INTERVAL_MS = 5000;
-
-async function fetchAllEventsForCorrelationId(
-  env: EnvMap,
-  correlationId: string
-): Promise<Event[]> {
-  let eventsData: Event[] = [];
-  let cursor: string | undefined;
-
-  while (true) {
-    const { error, result } = await unwrapServerActionResult(
-      fetchEventsByCorrelationId(env, correlationId, {
-        cursor,
-        sortOrder: 'asc',
-        limit: 1000,
-      })
-    );
-    if (error) {
-      break;
-    }
-
-    eventsData = [...eventsData, ...result.data];
-    if (!result.hasMore || !result.cursor || eventsData.length >= MAX_ITEMS) {
-      break;
-    }
-    cursor = result.cursor;
-  }
-
-  return eventsData;
-}
-
-async function fetchEventsForCorrelationIds(
-  env: EnvMap,
-  correlationIds: string[]
-): Promise<Event[]> {
-  if (correlationIds.length === 0) {
-    return [];
-  }
-  const results = await Promise.all(
-    correlationIds.map((correlationId) =>
-      fetchAllEventsForCorrelationId(env, correlationId)
-    )
-  );
-  return results.flat();
-}
 
 /**
  * Returns (and keeps up-to-date) all data related to a run.
@@ -146,21 +100,9 @@ export function useWorkflowTraceViewerData(
       ? []
       : eventsResult.result.data.map(hydrateResourceIO);
 
-    const correlationIds = [
-      ...nextSteps.map((step) => step.stepId),
-      ...nextHooks.map((hook) => hook.hookId),
-    ];
-    const correlationEventsRaw = await fetchEventsForCorrelationIds(
-      env,
-      correlationIds
-    );
-    const correlationEvents = correlationEventsRaw.map(hydrateResourceIO);
-
     setSteps(nextSteps);
     setHooks(nextHooks);
-    setEvents(
-      mergeById<Event>([], [...initialEvents, ...correlationEvents], 'eventId')
-    );
+    setEvents(mergeById<Event>([], initialEvents, 'eventId'));
 
     setStepsCursor(
       stepsResult.error || !stepsResult.result.hasMore
@@ -267,18 +209,8 @@ export function useWorkflowTraceViewerData(
         setHooks((prev) => mergeById(prev, nextHooks, 'hookId'));
       }
 
-      const newCorrelationIds = [
-        ...nextSteps.map((step) => step.stepId),
-        ...nextHooks.map((hook) => hook.hookId),
-      ];
-      const correlationEventsRaw = await fetchEventsForCorrelationIds(
-        env,
-        newCorrelationIds
-      );
-      const correlationEvents = correlationEventsRaw.map(hydrateResourceIO);
-      const allNewEvents = [...nextEvents, ...correlationEvents];
-      if (allNewEvents.length > 0) {
-        setEvents((prev) => mergeById(prev, allNewEvents, 'eventId'));
+      if (nextEvents.length > 0) {
+        setEvents((prev) => mergeById(prev, nextEvents, 'eventId'));
       }
 
       const nextStepsHasMore = nextStepsResult.error

@@ -10,7 +10,7 @@ import {
   WorkflowWebAPIError,
 } from '~/lib/client/workflow-errors';
 import {
-  fetchEventsByCorrelationId,
+  fetchEvents,
   fetchHook,
   fetchRun,
   fetchStep,
@@ -103,10 +103,16 @@ export function useWorkflowResourceData(
       return;
     }
     if (resource === 'sleep') {
+      if (!runId) {
+        setError(
+          new Error('runId is required for loading sleep details')
+        );
+        return;
+      }
       const { error, result } = await unwrapServerActionResult(
-        fetchEventsByCorrelationId(env, resourceId, {
+        fetchEvents(env, runId, {
           sortOrder: 'asc',
-          limit: 100,
+          limit: 1000,
           withData: true,
         })
       );
@@ -114,8 +120,11 @@ export function useWorkflowResourceData(
         setError(error);
         return;
       }
-      const events = (result.data as unknown as Event[]).map(hydrateResourceIO);
-      const data = waitEventsToWaitEntity(events);
+      const allEvents = (result.data as unknown as Event[]).map(hydrateResourceIO);
+      const waitEvents = allEvents.filter(
+        (e) => e.correlationId === resourceId
+      );
+      const data = waitEventsToWaitEntity(waitEvents);
       if (data === null) {
         setError(
           new Error(

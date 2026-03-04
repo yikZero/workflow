@@ -2,6 +2,7 @@ import { RunNotSupportedError, WorkflowAPIError } from '@workflow/errors';
 import type {
   Event,
   EventResult,
+  GetEventParams,
   Hook,
   ListEventsParams,
   ListHooksParams,
@@ -1046,6 +1047,30 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
         wait,
       };
     },
+    async get(
+      runId: string,
+      eventId: string,
+      params?: GetEventParams
+    ): Promise<Event> {
+      const [value] = await drizzle
+        .select()
+        .from(events)
+        .where(
+          and(eq(events.runId, runId), eq(events.eventId, eventId))
+        )
+        .limit(1);
+
+      if (!value) {
+        throw new WorkflowAPIError(`Event not found: ${eventId}`, {
+          status: 404,
+        });
+      }
+
+      value.eventData ||= value.eventDataJson;
+      const parsed = EventSchema.parse(compact(value));
+      const resolveData = params?.resolveData ?? 'all';
+      return filterEventData(parsed, resolveData);
+    },
     async list(params: ListEventsParams): Promise<PaginatedResponse<Event>> {
       const limit = params?.pagination?.limit ?? 100;
       const sortOrder = params.pagination?.sortOrder || 'asc';
@@ -1059,40 +1084,6 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
         .where(
           and(
             eq(events.runId, params.runId),
-            map(params.pagination?.cursor, (c) =>
-              order.compare(events.eventId, c)
-            )
-          )
-        )
-        .orderBy(order.by)
-        .limit(limit + 1);
-
-      const values = all.slice(0, limit);
-
-      const resolveData = params?.resolveData ?? 'all';
-      return {
-        data: values.map((v) => {
-          v.eventData ||= v.eventDataJson;
-          const parsed = EventSchema.parse(compact(v));
-          return filterEventData(parsed, resolveData);
-        }),
-        cursor: values.at(-1)?.eventId ?? null,
-        hasMore: all.length > limit,
-      };
-    },
-    async listByCorrelationId(params) {
-      const limit = params?.pagination?.limit ?? 100;
-      const sortOrder = params.pagination?.sortOrder || 'asc';
-      const order =
-        sortOrder === 'desc'
-          ? { by: desc(events.eventId), compare: lt }
-          : { by: events.eventId, compare: gt };
-      const all = await drizzle
-        .select()
-        .from(events)
-        .where(
-          and(
-            eq(events.correlationId, params.correlationId),
             map(params.pagination?.cursor, (c) =>
               order.compare(events.eventId, c)
             )
@@ -1186,15 +1177,10 @@ export function createStepsStorage(drizzle: Drizzle): Storage['steps'] {
 
   return {
     get: (async (runId, stepId, params) => {
-      // If runId is not provided, query only by stepId
-      const whereClause = runId
-        ? and(eq(steps.stepId, stepId), eq(steps.runId, runId))
-        : eq(steps.stepId, stepId);
-
       const [value] = await drizzle
         .select()
         .from(steps)
-        .where(whereClause)
+        .where(and(eq(steps.runId, runId), eq(steps.stepId, stepId)))
         .limit(1);
 
       if (!value) {
