@@ -268,30 +268,6 @@ export function RunDetailView({
 
   const handleLoadEventData = useCallback(
     async (event: Event) => {
-      const isRunLevelEvent = RUN_LEVEL_EVENT_TYPES.has(event.eventType);
-
-      if (!isRunLevelEvent && event.correlationId) {
-        const { error, result } = await unwrapServerActionResult(
-          fetchEventsByCorrelationId(env, event.correlationId, {
-            sortOrder: 'asc',
-            limit: 100,
-            withData: true,
-          })
-        );
-        if (error) {
-          throw error;
-        }
-        const rawEvent = result.data.find((e) => e.eventId === event.eventId);
-        if (!rawEvent) return null;
-        const fullEvent = encryptionKeyRef.current
-          ? await hydrateResourceIOWithKey(rawEvent, encryptionKeyRef.current)
-          : hydrateResourceIO(rawEvent);
-        if ('eventData' in fullEvent) {
-          return fullEvent.eventData;
-        }
-        return null;
-      }
-
       const { error, result } = await unwrapServerActionResult(
         fetchEvent(env, event.runId, event.eventId, 'all')
       );
