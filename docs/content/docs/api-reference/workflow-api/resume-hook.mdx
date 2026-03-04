@@ -138,7 +138,7 @@ import { resumeHook } from "workflow/api";
 // Generic webhook handler that forwards data to a hook
 export async function POST(request: Request) {
   const url = new URL(request.url);
-  const token = url.searchParams.get("token");
+  const token = url.searchParams.get('token');
 
   if (!token) {
     return Response.json({ error: "Missing token" }, { status: 400 });

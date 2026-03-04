@@ -35,6 +35,12 @@ export async function nameWorkflow() {
 
 ## API Signature
 
+```typescript
+defineHook<TInput, TOutput = TInput>(
+  { schema } = {},
+): TypedHook<TInput, TOutput>;
+```
+
 ### Parameters
 
 <TSDoc
@@ -48,21 +54,14 @@ showSections={['parameters']}
 
 <TSDoc
 definition={`
-interface DefineHook<T> {
-  /**
-
-* Creates a new hook with the defined payload type.
-  */
-  create: (options?: HookOptions) => Hook<T>;
-
-  /**
-
-* Resumes a hook by sending a payload with the defined type.
-   */
-  resume: (token: string, payload: T) => Promise<HookEntity | null>;
+interface TypedHook<TInput, TOutput = TInput> {
+  create(options?: HookOptions): Hook<TOutput>;
+  resume(token: string, payload: TInput): Promise<HookEntity>;
 }
-export default DefineHook;`}
+export default TypedHook;`}
 />
+
+Use `TypedHook.Input<T>` to extract the input payload type from a typed hook definition.
 
 ## Examples
 

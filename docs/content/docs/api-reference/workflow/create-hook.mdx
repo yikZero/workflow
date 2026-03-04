@@ -146,7 +146,7 @@ export async function handoffWorkflow(channelId: string) {
   "use workflow";
 
   const hook = createHook<{ message: string; handoff?: boolean }>({
-    token: `channel:${channelId}`
+    token: `channel:${channelId}`,
   });
 
   for await (const payload of hook) {
@@ -176,7 +176,7 @@ export async function scopedHookWorkflow(channelId: string) {
 
   {
     using hook = createHook<{ message: string }>({ // [!code highlight]
-      token: `channel:${channelId}`
+      token: `channel:${channelId}`,
     });
 
     const payload = await hook;
