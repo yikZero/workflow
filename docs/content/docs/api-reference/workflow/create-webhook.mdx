@@ -100,7 +100,7 @@ async function sendResponse(request: RequestWithResponse) { // [!code highlight]
 export async function respondingWebhookWorkflow() {
   "use workflow";
 
-  using webhook = createWebhook();
+  using webhook = createWebhook({ respondWith: 'manual' });
   console.log("Webhook URL:", webhook.url);
 
   const request = await webhook;
@@ -142,6 +142,7 @@ export async function githubWebhookWorkflow(repoName: string) {
   // Use a deterministic token based on the repository
   using webhook = createWebhook({ // [!code highlight]
     token: `github_webhook:${repoName}`, // [!code highlight]
+    respondWith: 'manual', // [!code highlight]
   }); // [!code highlight]
 
   console.log("Configure GitHub webhook:", webhook.url);
@@ -192,12 +193,14 @@ export async function slackCommandWorkflow(channelId: string) {
 
   using webhook = createWebhook({
     token: `slack_command:${channelId}`,
+    respondWith: 'manual',
   });
 
   for await (const request of webhook) { // [!code highlight]
-    const formData = await request.formData();
-    const command = formData.get("command");
-    const text = formData.get("text");
+    const body = await request.text();
+    const params = new URLSearchParams(body);
+    const command = params.get("command");
+    const text = params.get("text");
 
     if (command === "/status") {
       // Respond immediately to Slack
