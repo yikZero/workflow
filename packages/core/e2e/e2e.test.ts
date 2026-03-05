@@ -516,10 +516,13 @@ describe('e2e', () => {
 
     // Discover the randomly generated webhook tokens via hooks.list
     const world = getWorld();
-    const { data: hooks } = await world.hooks.list({ runId: run.runId });
+    const { data: hooks } = await world.hooks.list({
+      runId: run.runId,
+      pagination: { sortOrder: 'asc' },
+    });
     expect(hooks).toHaveLength(3);
 
-    // Hooks are returned in creation order; extract tokens
+    // Hooks are returned in creation order (ascending); extract tokens
     const [token, token2, token3] = hooks.map((h) => h.token);
 
     // Webhook with default response
