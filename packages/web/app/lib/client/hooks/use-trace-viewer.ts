@@ -46,29 +46,15 @@ export function useWorkflowTraceViewerData(
     setLoading(true);
     setError(null);
 
-    const [runResult, stepsResult, hooksResult, eventsResult] =
-      await Promise.all([
-        unwrapServerActionResult(fetchRun(env, runId, 'none')),
-        unwrapServerActionResult(
-          fetchSteps(env, runId, {
-            sortOrder: 'asc',
-            limit: TRACE_VIEWER_BATCH_SIZE,
-          })
-        ),
-        unwrapServerActionResult(
-          fetchHooks(env, {
-            runId,
-            sortOrder: 'asc',
-            limit: TRACE_VIEWER_BATCH_SIZE,
-          })
-        ),
-        unwrapServerActionResult(
-          fetchEvents(env, runId, {
-            sortOrder: 'asc',
-            limit: TRACE_VIEWER_BATCH_SIZE,
-          })
-        ),
-      ]);
+    const [runResult, eventsResult] = await Promise.all([
+      unwrapServerActionResult(fetchRun(env, runId, 'none')),
+      unwrapServerActionResult(
+        fetchEvents(env, runId, {
+          sortOrder: 'asc',
+          limit: INITIAL_PAGE_SIZE,
+        })
+      ),
+    ]);
 
     if (runResult.error) {
       setError(runResult.error);
