@@ -3,7 +3,7 @@
  */
 
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
-import type { Event, Step, WorkflowRun } from '@workflow/world';
+import type { Event, WorkflowRun } from '@workflow/world';
 import type { Span, SpanEvent } from '../trace-viewer/types';
 import { shouldShowVerticalLine } from './event-colors';
 import { calculateDuration, dateToOtelTime } from './trace-time-utils';
@@ -117,28 +117,80 @@ export function waitToSpan(
   };
 }
 
+export const stepEventsToStepEntity = (
+  events: Event[]
+): {
+  stepId: string;
+  runId: string;
+  stepName: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  attempt: number;
+  createdAt: Date;
+  updatedAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  specVersion?: number;
+} | null => {
+  const createdEvent = events.find(
+    (event) => event.eventType === 'step_created'
+  );
+  if (!createdEvent) {
+    return null;
+  }
+  const startedEvents = events.filter((e) => e.eventType === 'step_started');
+  const completedEvent = events.find((e) => e.eventType === 'step_completed');
+  const failedEvent = events.find((e) => e.eventType === 'step_failed');
+  const retryingEvents = events.filter((e) => e.eventType === 'step_retrying');
+
+  let status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  if (completedEvent) {
+    status = 'completed';
+  } else if (failedEvent && retryingEvents.length === 0) {
+    status = 'failed';
+  } else if (startedEvents.length > 0) {
+    status = 'running';
+  } else {
+    status = 'pending';
+  }
+
+  const lastEvent = events[events.length - 1];
+  return {
+    stepId: createdEvent.correlationId,
+    runId: createdEvent.runId,
+    stepName: createdEvent.eventData?.stepName ?? '',
+    status,
+    attempt: retryingEvents.length + 1,
+    createdAt: createdEvent.createdAt,
+    updatedAt: lastEvent?.createdAt ?? createdEvent.createdAt,
+    startedAt: startedEvents[0]?.createdAt,
+    completedAt:
+      completedEvent?.createdAt ?? failedEvent?.createdAt ?? undefined,
+    specVersion: createdEvent.specVersion,
+  };
+};
+
 /**
- * Converts a workflow Step to an OpenTelemetry Span
+ * Converts step events to an OpenTelemetry Span
  */
 export function stepToSpan(
-  step: Step,
   stepEvents: Event[],
-  nowTime?: Date,
-  maxEndTime?: Date
-): Span {
+  run: WorkflowRun,
+  nowTime?: Date
+): Span | null {
+  const step = stepEventsToStepEntity(stepEvents);
+  if (!step) {
+    return null;
+  }
   const now = nowTime ?? new Date();
   const parsedName = parseStepName(String(step.stepName));
 
-  // Only embed identification fields — not the full object with
-  // input/output/error which may contain non-cloneable types.
-  // The detail panel fetches full data separately via spanDetailData.
-  const { input: _i, output: _o, error: _e, ...stepIdentity } = step;
   const attributes = {
     resource: 'step' as const,
-    data: stepIdentity,
+    data: step,
   };
 
   const resource = 'step';
+  const maxEndTime = new Date(run.completedAt || now);
   const endTime = new Date(step.completedAt ?? maxEndTime ?? now);
 
   // Include ALL correlated events on the span so the sidebar detail view
@@ -187,6 +239,7 @@ export const hookEventsToHookEntity = (
 ): {
   hookId: string;
   runId: string;
+  token?: string;
   createdAt: Date;
   receivedCount: number;
   lastReceivedAt?: Date;
@@ -208,6 +261,7 @@ export const hookEventsToHookEntity = (
   return {
     hookId: createdEvent.correlationId,
     runId: createdEvent.runId,
+    token: createdEvent.eventData?.token,
     createdAt: createdEvent.createdAt,
     receivedCount: receivedEvents.length,
     lastReceivedAt: lastReceivedEvent?.createdAt || undefined,
