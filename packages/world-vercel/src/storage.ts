@@ -30,7 +30,6 @@ export function createStorage(config?: APIConfig): Storage {
         createWorkflowRunEvent(runId, data, params, config),
       get: (runId, eventId, params) => getEvent(runId, eventId, params, config),
       list: (params) => getWorkflowRunEvents(params, config),
-      listByCorrelationId: (params) => getWorkflowRunEvents(params, config),
     },
     hooks: {
       get: (hookId, params) => getHook(hookId, params, config),

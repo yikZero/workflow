@@ -10,12 +10,7 @@ import {
   unwrapServerActionResult,
   WorkflowWebAPIError,
 } from '~/lib/client/workflow-errors';
-import {
-  fetchEventsByCorrelationId,
-  fetchHook,
-  fetchRun,
-  fetchStep,
-} from '~/lib/rpc-client';
+import { fetchEvents, fetchHook, fetchRun, fetchStep } from '~/lib/rpc-client';
 import type { EnvMap } from '~/lib/types';
 
 // Helper function to fetch resource and get correlation ID
@@ -122,10 +117,14 @@ export function useWorkflowResourceData(
       return;
     }
     if (resource === 'sleep') {
+      if (!runId) {
+        setError(new Error('runId is required for loading sleep details'));
+        return;
+      }
       const { error, result } = await unwrapServerActionResult(
-        fetchEventsByCorrelationId(env, resourceId, {
+        fetchEvents(env, runId, {
           sortOrder: 'asc',
-          limit: 100,
+          limit: 1000,
           withData: true,
         })
       );
@@ -134,10 +133,13 @@ export function useWorkflowResourceData(
         return;
       }
       try {
-        const events = await Promise.all(
-          (result.data as unknown as Event[]).map(hydrate)
+        const allEvents = (result.data as unknown as Event[]).map(
+          hydrateResourceIO
         );
-        const data = waitEventsToWaitEntity(events);
+        const waitEvents = await Promise.all(
+          allEvents.filter((e) => e.correlationId === resourceId).map(hydrate)
+        );
+        const data = waitEventsToWaitEntity(waitEvents);
         if (data === null) {
           setError(
             new Error(
