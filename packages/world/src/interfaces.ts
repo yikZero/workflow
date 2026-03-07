@@ -9,6 +9,7 @@ import type {
   RunCreatedEventRequest,
 } from './events.js';
 import type { GetHookParams, Hook, ListHooksParams } from './hooks.js';
+import type { SnapshotMetadata } from './snapshots.js';
 import type { Queue } from './queue.js';
 import type {
   GetWorkflowRunParams,
@@ -172,6 +173,51 @@ export interface Storage {
     get(hookId: string, params?: GetHookParams): Promise<Hook>;
     getByToken(token: string, params?: GetHookParams): Promise<Hook>;
     list(params: ListHooksParams): Promise<PaginatedResponse<Hook>>;
+  };
+
+  /**
+   * VM snapshot storage for the snapshot-based runtime.
+   *
+   * Snapshots capture the state of the QuickJS WASM VM at a suspension point,
+   * allowing workflow execution to resume from the exact point of suspension
+   * instead of replaying the full event log.
+   *
+   * The metadata (including lastEventId) is stored alongside the snapshot data
+   * so that on restore, only events created after the snapshot need to be fetched.
+   */
+  snapshots: {
+    /**
+     * Save a VM snapshot for a workflow run.
+     * Each save overwrites the previous snapshot for this run.
+     *
+     * @param runId - The workflow run ID
+     * @param data - The serialized snapshot bytes (from QuickJS.serializeSnapshot())
+     * @param metadata - Snapshot metadata including the last processed event ID
+     */
+    save(
+      runId: string,
+      data: Uint8Array,
+      metadata: SnapshotMetadata
+    ): Promise<void>;
+
+    /**
+     * Load the most recent VM snapshot for a workflow run.
+     * Returns null if no snapshot exists (first invocation).
+     *
+     * @param runId - The workflow run ID
+     * @returns The snapshot data and metadata, or null if not found
+     */
+    load(
+      runId: string
+    ): Promise<{ data: Uint8Array; metadata: SnapshotMetadata } | null>;
+
+    /**
+     * Delete the snapshot for a workflow run.
+     * Called when the workflow reaches a terminal state (completed, failed, cancelled).
+     *
+     * @param runId - The workflow run ID
+     */
+    delete(runId: string): Promise<void>;
   };
 }
 

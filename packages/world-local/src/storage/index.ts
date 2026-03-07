@@ -3,6 +3,7 @@ import { instrumentObject } from '../instrumentObject.js';
 import { createEventsStorage } from './events-storage.js';
 import { createHooksStorage } from './hooks-storage.js';
 import { createRunsStorage } from './runs-storage.js';
+import { createSnapshotsStorage } from './snapshots-storage.js';
 import { createStepsStorage } from './steps-storage.js';
 
 /**
@@ -21,6 +22,7 @@ export function createStorage(basedir: string): Storage {
     steps: createStepsStorage(basedir),
     events: createEventsStorage(basedir),
     hooks: createHooksStorage(basedir),
+    snapshots: createSnapshotsStorage(basedir),
   };
 
   // Instrument all storage methods with tracing
@@ -30,5 +32,6 @@ export function createStorage(basedir: string): Storage {
     steps: instrumentObject('world.steps', storage.steps),
     events: instrumentObject('world.events', storage.events),
     hooks: instrumentObject('world.hooks', storage.hooks),
+    snapshots: instrumentObject('world.snapshots', storage.snapshots),
   };
 }

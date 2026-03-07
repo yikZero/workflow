@@ -29,6 +29,8 @@ export {
   LegacySerializedDataSchemaV1,
   SerializedDataSchema,
 } from './serialization.js';
+export type * from './snapshots.js';
+export { SnapshotMetadataSchema } from './snapshots.js';
 export type * from './shared.js';
 export {
   PaginatedResponseSchema,
