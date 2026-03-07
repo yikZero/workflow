@@ -94,6 +94,39 @@ globalThis.__stepCounter = 0;
 globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
 
+// Stubs for Web APIs that the workflow bundle may reference but are not
+// available in QuickJS. These are only needed if the workflow uses streams,
+// which are not yet supported in the snapshot runtime.
+if (typeof TransformStream === "undefined") {
+  globalThis.TransformStream = function() { throw new Error("TransformStream not supported in snapshot runtime"); };
+}
+if (typeof ReadableStream === "undefined") {
+  globalThis.ReadableStream = function() { throw new Error("ReadableStream not supported in snapshot runtime"); };
+}
+if (typeof WritableStream === "undefined") {
+  globalThis.WritableStream = function() { throw new Error("WritableStream not supported in snapshot runtime"); };
+}
+if (typeof TextEncoder === "undefined") {
+  globalThis.TextEncoder = function() {};
+  globalThis.TextEncoder.prototype.encode = function(s) { return new Uint8Array(0); };
+}
+if (typeof TextDecoder === "undefined") {
+  globalThis.TextDecoder = function() {};
+  globalThis.TextDecoder.prototype.decode = function() { return ""; };
+}
+if (typeof Headers === "undefined") {
+  globalThis.Headers = function() {};
+}
+if (typeof URL === "undefined") {
+  globalThis.URL = function(u) { this.href = u; this.toString = function() { return u; }; };
+}
+if (typeof console === "undefined") {
+  globalThis.console = { log: function(){}, error: function(){}, warn: function(){}, info: function(){} };
+}
+// Stub exports/module for CJS bundle format
+globalThis.exports = {};
+globalThis.module = { exports: globalThis.exports };
+
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   return function() {
     var args = Array.prototype.slice.call(arguments);

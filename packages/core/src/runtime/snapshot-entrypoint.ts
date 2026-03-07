@@ -40,13 +40,9 @@ export async function runWorkflowWithSnapshots(params: {
   const world = getWorld();
   const runId = workflowRun.runId;
 
-  // Extract workflow ID from the code's manifest comment
-  const workflowId = extractWorkflowId(workflowCode, workflowName);
-  if (!workflowId) {
-    throw new Error(
-      `Could not find workflow ID for "${workflowName}" in the workflow bundle`
-    );
-  }
+  // The workflowName from the queue topic is already the full workflow ID
+  // (e.g. "workflow//./workflows/1_simple//simple")
+  const workflowId = workflowName;
 
   // Check for existing snapshot
   const existingSnapshot = await world.snapshots.load(runId);
@@ -292,41 +288,3 @@ export async function runWorkflowWithSnapshots(params: {
 }
 
 // ---- Helpers ----
-
-/**
- * Extract the workflow ID from the compiled bundle's manifest comment.
- * The SWC plugin generates a comment like:
- *   /**__internal_workflows{"workflows":{"file.ts":{"name":{"workflowId":"workflow//..."}}}}* /
- */
-function extractWorkflowId(
-  workflowCode: string,
-  workflowName: string
-): string | null {
-  const match = workflowCode.match(/\/\*\*__internal_workflows(.*?)\*\//);
-  if (!match) return null;
-
-  try {
-    const manifest = JSON.parse(match[1]);
-    const workflows = manifest.workflows;
-    if (!workflows) return null;
-
-    // Search all files for a matching workflow name
-    for (const file of Object.values(workflows) as Record<
-      string,
-      { workflowId: string }
-    >[]) {
-      for (const [name, info] of Object.entries(file)) {
-        if (
-          name === workflowName ||
-          info.workflowId.endsWith(`//${workflowName}`)
-        ) {
-          return info.workflowId;
-        }
-      }
-    }
-  } catch {
-    // JSON parse failed — malformed manifest
-  }
-
-  return null;
-}
