@@ -1,270 +1,307 @@
-/**
- * Standalone test for the snapshot runtime.
- *
- * Proves the core mechanism: run workflow code in QuickJS, suspend on a step,
- * snapshot, restore, resolve the step, and verify the workflow completes.
- */
-
 import { describe, it, expect } from 'vitest';
 import { QuickJS } from 'quickjs-wasi';
+import { runSnapshotWorkflow } from './snapshot-runtime.js';
 
-describe('snapshot runtime - proof of concept', () => {
-  it('should run a simple workflow, snapshot on step, restore and complete', async () => {
-    // ---- Phase 1: First run — workflow hits a step and suspends ----
+function makeRun(overrides: Record<string, unknown> = {}) {
+  return {
+    runId: 'wrun_test123',
+    workflowName: 'test-workflow',
+    status: 'running' as const,
+    startedAt: new Date('2025-01-01T00:00:00Z'),
+    createdAt: new Date('2025-01-01T00:00:00Z'),
+    updatedAt: new Date('2025-01-01T00:00:00Z'),
+    specVersion: 2,
+    ...overrides,
+  };
+}
 
-    const vm1 = await QuickJS.create();
+describe('runSnapshotWorkflow', () => {
+  it('should run a simple workflow with no steps to completion', async () => {
+    const result = await runSnapshotWorkflow({
+      workflowCode: `
+        globalThis.__private_workflows = new Map();
+        async function hello() { return 42; }
+        hello.workflowId = "workflow//test//hello";
+        globalThis.__private_workflows.set("workflow//test//hello", hello);
+      `,
+      workflowId: 'workflow//test//hello',
+      workflowRun: makeRun(),
+      events: [],
+      existingSnapshot: null,
+    });
 
-    // Track pending step invocations on the host side
-    const pendingSteps = new Map<
-      string,
-      { resolve: (val: any) => void; reject: (val: any) => void }
-    >();
-    let stepCounter = 0;
+    expect(result.completed).toBeDefined();
+    expect(result.completed?.result).toBe('42');
+  });
 
-    // Install the WORKFLOW_USE_STEP symbol
-    // This must return a FUNCTION that, when called with args, returns a Promise
-    {
-      using useStepFactory = vm1.newFunction('useStep', (...args) => {
-        const stepId = args[0].toString();
+  it('should suspend on first step and return pending operations', async () => {
+    const result = await runSnapshotWorkflow({
+      workflowCode: `
+        var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+        async function workflow() {
+          var a = await add(10, 7);
+          return a;
+        }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [],
+      existingSnapshot: null,
+    });
 
-        // Return a function that creates a deferred promise when called
-        using fn = vm1.newFunction(`step_${stepId}`, (...stepArgs) => {
-          const correlationId = `step_${stepCounter++}`;
-          const deferred = vm1.newPromise();
+    expect(result.suspended).toBeDefined();
+    expect(result.suspended?.pendingOperations).toHaveLength(1);
+    expect(result.suspended?.pendingOperations[0]).toMatchObject({
+      type: 'step',
+      stepId: 'step//test//add',
+      correlationId: 'step_0',
+    });
+    expect(result.suspended?.snapshot).toBeInstanceOf(Uint8Array);
+  });
 
-          // Store the resolve/reject functions on a global for retrieval after restore
-          {
-            using resolvers = vm1.global.getProp('__resolvers');
-            using resolveHandle = vm1.evalCode(
-              `(function(v) { globalThis['__resolve_${correlationId}'] = v; })`
-            );
-            // Actually, simpler approach: store the resolve func directly on globalThis
-            vm1.setProp(
-              vm1.global,
-              `__resolve_${correlationId}`,
-              deferred.handle.getProp('then')
-            );
-          }
+  it('should restore from snapshot and complete after step resolves', async () => {
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: `
+        var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+        async function workflow() { return await add(10, 7); }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [],
+      existingSnapshot: null,
+    });
+    expect(r1.suspended).toBeDefined();
 
-          // Actually, let's use a much simpler approach:
-          // Store the resolve function on globalThis keyed by correlationId
-          vm1
-            .unwrapResult(
-              vm1.evalCode(`
-            globalThis.__pending = globalThis.__pending || {};
-            globalThis.__pending["${correlationId}"] = {};
-          `)
-            )
-            .dispose();
+    const r2 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [
+        {
+          eventId: 'evnt_001',
+          runId: 'wrun_test123',
+          eventType: 'step_completed',
+          correlationId: 'step_0',
+          eventData: { output: 17 },
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r1.suspended!.snapshot,
+        metadata: { lastEventId: null, createdAt: new Date() },
+      },
+    });
 
-          // We need to store the resolve function handle so we can call it after restore
-          // The simplest way: eval code that creates the promise and stores the resolve func
-          // on the global, all inside QuickJS
-          return deferred.handle;
-        });
+    expect(r2.completed?.result).toBe('17');
+  });
 
-        return fn.dup();
-      });
+  it('should handle multi-step workflows across multiple snapshots', async () => {
+    const code = `
+      var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+      async function workflow() {
+        var a = await add(10, 7);
+        var b = await add(a, 8);
+        return b;
+      }
+      workflow.workflowId = "workflow//test//workflow";
+      globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+    `;
+    const run = makeRun();
 
-      using sym = vm1.newSymbolFor('WORKFLOW_USE_STEP');
-      vm1.setProp(vm1.global, sym, useStepFactory);
-    }
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: code,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [],
+      existingSnapshot: null,
+    });
+    expect(r1.suspended?.pendingOperations[0]?.correlationId).toBe('step_0');
 
-    // Nope — this approach of mixing host-side Deferred with QuickJS-side storage
-    // is getting complicated. Let me try a fully QuickJS-side approach instead.
-    vm1.dispose();
+    const r2 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [
+        {
+          eventId: 'evnt_001',
+          runId: run.runId,
+          eventType: 'step_completed',
+          correlationId: 'step_0',
+          eventData: { output: 17 },
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r1.suspended!.snapshot,
+        metadata: { lastEventId: null, createdAt: new Date() },
+      },
+    });
+    expect(r2.suspended?.pendingOperations[0]?.correlationId).toBe('step_1');
 
-    // ---- Take 2: Do everything inside QuickJS ----
+    const r3 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [
+        {
+          eventId: 'evnt_002',
+          runId: run.runId,
+          eventType: 'step_completed',
+          correlationId: 'step_1',
+          eventData: { output: 25 },
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r2.suspended!.snapshot,
+        metadata: { lastEventId: 'evnt_001', createdAt: new Date() },
+      },
+    });
+    expect(r3.completed?.result).toBe('25');
+  });
 
+  it('should handle sleep suspension and wake', async () => {
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: `
+        async function workflow() {
+          await globalThis[Symbol.for("WORKFLOW_SLEEP")]("5s");
+          return "woke up";
+        }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [],
+      existingSnapshot: null,
+    });
+    expect(r1.suspended).toBeDefined();
+    expect(r1.suspended?.pendingOperations[0]).toMatchObject({
+      type: 'wait',
+      correlationId: 'wait_0',
+    });
+
+    const r2 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [
+        {
+          eventId: 'evnt_001',
+          runId: 'wrun_test123',
+          eventType: 'wait_completed',
+          correlationId: 'wait_0',
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r1.suspended!.snapshot,
+        metadata: { lastEventId: null, createdAt: new Date() },
+      },
+    });
+    expect(r2.completed?.result).toBe('"woke up"');
+  });
+
+  it('should handle step failure with try/catch in workflow', async () => {
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: `
+        var fail = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//fail");
+        async function workflow() {
+          try { await fail(); return "nope"; }
+          catch (e) { return "caught: " + e.message; }
+        }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [],
+      existingSnapshot: null,
+    });
+    expect(r1.suspended).toBeDefined();
+
+    const r2 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: makeRun(),
+      events: [
+        {
+          eventId: 'evnt_001',
+          runId: 'wrun_test123',
+          eventType: 'step_failed',
+          correlationId: 'step_0',
+          eventData: { error: { message: 'boom' } },
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r1.suspended!.snapshot,
+        metadata: { lastEventId: null, createdAt: new Date() },
+      },
+    });
+    expect(r2.completed?.result).toBe('"caught: boom"');
+  });
+});
+
+describe('raw QuickJS proof of concept', () => {
+  it('should run, snapshot, restore, and complete', async () => {
     const vm = await QuickJS.create();
 
-    // Install useStep: returns a function that, when called, creates a promise
-    // and stores the resolve/reject on globalThis.__resolvers[correlationId]
     vm.unwrapResult(
       vm.evalCode(`
       globalThis.__private_workflows = new Map();
       globalThis.__resolvers = {};
+      globalThis.__pending = [];
       globalThis.__stepCounter = 0;
-      globalThis.__pendingStepIds = [];
+      globalThis.__workflowResult = undefined;
 
       globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId) {
-        return function(...args) {
-          const correlationId = "step_" + (globalThis.__stepCounter++);
-          globalThis.__pendingStepIds.push(correlationId);
-          return new Promise((resolve, reject) => {
-            globalThis.__resolvers[correlationId] = { resolve, reject, stepId, args };
+        return function() {
+          var args = Array.prototype.slice.call(arguments);
+          var cid = "step_" + (globalThis.__stepCounter++);
+          globalThis.__pending.push({ type: "step", correlationId: cid, stepId: stepId });
+          return new Promise(function(resolve, reject) {
+            globalThis.__resolvers[cid] = { resolve: resolve, reject: reject };
           });
         };
       };
-    `)
-    ).dispose();
 
-    // Evaluate a simple compiled workflow bundle
-    vm.unwrapResult(
-      vm.evalCode(`
-      // Simulated compiled workflow (what the SWC plugin would produce)
-      var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./test//add");
-
-      async function simple(i) {
-        const a = await add(i, 7);
-        const b = await add(a, 8);
-        return b;
-      }
-      simple.workflowId = "workflow//./test//simple";
-      globalThis.__private_workflows.set("workflow//./test//simple", simple);
-    `)
-    ).dispose();
-
-    // Run the workflow
-    vm.unwrapResult(
-      vm.evalCode(`
-      const workflowFn = globalThis.__private_workflows.get("workflow//./test//simple");
-      globalThis.__workflowResult = undefined;
-      globalThis.__workflowError = undefined;
-      workflowFn(10).then(
-        result => { globalThis.__workflowResult = result; },
-        error => { globalThis.__workflowError = error.message; }
-      );
+      var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+      async function simple(i) { var a = await add(i, 7); var b = await add(a, 8); return b; }
+      globalThis.__private_workflows.set("test", simple);
+      globalThis.__private_workflows.get("test")(10).then(function(r) { globalThis.__workflowResult = r; });
     `)
     ).dispose();
     vm.executePendingJobs();
 
-    // Check: workflow should be suspended on first step
-    const pendingIds1 = vm.dump(
-      vm.unwrapResult(vm.evalCode('globalThis.__pendingStepIds'))
-    );
-    expect(pendingIds1).toEqual(['step_0']);
-
-    // Check: workflow result should not be set yet
-    const result1 = vm.dump(
-      vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'))
-    );
-    expect(result1).toBeUndefined();
-
-    // ---- Phase 2: Snapshot the VM ----
-
-    const snapshot = vm.snapshot();
-    const serialized = QuickJS.serializeSnapshot(snapshot);
+    const snap1 = vm.snapshot();
     vm.dispose();
 
-    // ---- Phase 3: Restore and resolve the first step ----
-
-    const vm2 = await QuickJS.restore(QuickJS.deserializeSnapshot(serialized));
-
-    // Resolve step_0 with result: add(10, 7) = 17
+    const vm2 = await QuickJS.restore(snap1);
     vm2
       .unwrapResult(
-        vm2.evalCode(`
-      globalThis.__resolvers["step_0"].resolve(17);
-    `)
+        vm2.evalCode('globalThis.__resolvers["step_0"].resolve(17);')
       )
       .dispose();
     vm2.executePendingJobs();
-
-    // The workflow should now be suspended on step_1
-    const pendingIds2 = vm2.dump(
-      vm2.unwrapResult(vm2.evalCode('globalThis.__pendingStepIds'))
-    );
-    expect(pendingIds2).toEqual(['step_0', 'step_1']);
-
-    // ---- Phase 4: Snapshot again, restore, resolve the second step ----
-
-    const snapshot2 = vm2.snapshot();
-    const serialized2 = QuickJS.serializeSnapshot(snapshot2);
+    const snap2 = vm2.snapshot();
     vm2.dispose();
 
-    const vm3 = await QuickJS.restore(QuickJS.deserializeSnapshot(serialized2));
-
-    // Resolve step_1 with result: add(17, 8) = 25
+    const vm3 = await QuickJS.restore(snap2);
     vm3
       .unwrapResult(
-        vm3.evalCode(`
-      globalThis.__resolvers["step_1"].resolve(25);
-    `)
+        vm3.evalCode('globalThis.__resolvers["step_1"].resolve(25);')
       )
       .dispose();
     vm3.executePendingJobs();
 
-    // The workflow should now be complete
-    const finalResult = vm3.dump(
-      vm3.unwrapResult(vm3.evalCode('globalThis.__workflowResult'))
-    );
-    expect(finalResult).toBe(25);
-
+    expect(
+      vm3.dump(vm3.unwrapResult(vm3.evalCode('globalThis.__workflowResult')))
+    ).toBe(25);
     vm3.dispose();
-  });
-
-  it('should preserve step metadata across snapshot/restore', async () => {
-    const vm = await QuickJS.create();
-
-    vm.unwrapResult(
-      vm.evalCode(`
-      globalThis.__private_workflows = new Map();
-      globalThis.__resolvers = {};
-      globalThis.__stepCounter = 0;
-
-      globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId) {
-        return function(...args) {
-          const correlationId = "step_" + (globalThis.__stepCounter++);
-          return new Promise((resolve, reject) => {
-            globalThis.__resolvers[correlationId] = {
-              resolve, reject, stepId,
-              args: JSON.stringify(args),
-            };
-          });
-        };
-      };
-
-      var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./test//add");
-
-      async function workflow(x) {
-        'use workflow';
-        const result = await add(x, 5);
-        return result;
-      }
-      globalThis.__private_workflows.set("test", workflow);
-
-      globalThis.__workflowResult = undefined;
-      globalThis.__private_workflows.get("test")(42).then(
-        r => { globalThis.__workflowResult = r; }
-      );
-    `)
-    ).dispose();
-    vm.executePendingJobs();
-
-    // Check the pending step has the right metadata
-    const resolverInfo = vm.dump(
-      vm.unwrapResult(
-        vm.evalCode(`
-      const r = globalThis.__resolvers["step_0"];
-      ({ stepId: r.stepId, args: r.args })
-    `)
-      )
-    );
-    expect(resolverInfo).toEqual({
-      stepId: 'step//./test//add',
-      args: '[42,5]',
-    });
-
-    // Snapshot, restore, resolve
-    const snapshot = vm.snapshot();
-    vm.dispose();
-
-    const vm2 = await QuickJS.restore(snapshot);
-    vm2
-      .unwrapResult(
-        vm2.evalCode(`
-      globalThis.__resolvers["step_0"].resolve(47);
-    `)
-      )
-      .dispose();
-    vm2.executePendingJobs();
-
-    const result = vm2.dump(
-      vm2.unwrapResult(vm2.evalCode('globalThis.__workflowResult'))
-    );
-    expect(result).toBe(47);
-
-    vm2.dispose();
   });
 });

@@ -7,7 +7,10 @@
  * 3. Restores the VM from the snapshot on resumption
  * 4. Only fetches events since the last snapshot
  *
- * This is an alternative to the event-replay runtime in workflow.ts.
+ * The workflow primitives (useStep, sleep, createHook) are implemented as
+ * JavaScript code running inside the QuickJS VM. The host communicates with
+ * the VM by evaluating small JS snippets to read pending operations and
+ * resolve/reject promises.
  */
 
 import seedrandom from 'seedrandom';
@@ -16,38 +19,37 @@ import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 
 // ---- Types ----
 
-interface PendingOperation {
-  type: 'step' | 'hook' | 'wait';
+export interface PendingStep {
+  type: 'step';
   correlationId: string;
-  /** The resolve function handle stored in the VM (for resolving after restore) */
-  resolveCallbackId: number;
-  /** The reject function handle stored in the VM */
-  rejectCallbackId: number;
-  /** Step-specific metadata */
-  stepMetadata?: {
-    stepId: string;
-    stepName: string;
-  };
-  /** Wait-specific metadata */
-  waitMetadata?: {
-    resumeAt: Date;
-  };
-  /** Hook-specific metadata */
-  hookMetadata?: {
-    token?: string;
-  };
+  stepId: string;
+  /** JSON-serialized arguments */
+  args: string;
+  /** Whether a step_created event already exists for this step */
+  hasCreatedEvent: boolean;
 }
 
+export interface PendingWait {
+  type: 'wait';
+  correlationId: string;
+  /** ISO string of when to resume */
+  resumeAt: string;
+  /** Whether a wait_created event already exists for this wait */
+  hasCreatedEvent: boolean;
+}
+
+export type PendingOperation = PendingStep | PendingWait;
+
 export interface SnapshotRuntimeResult {
-  /** The workflow completed with this result */
-  completed?: unknown;
-  /** The workflow suspended with these pending operations */
+  /** The workflow completed with this result (serialized) */
+  completed?: { result: string };
+  /** The workflow suspended with pending operations */
   suspended?: {
     pendingOperations: PendingOperation[];
     snapshot: Uint8Array;
     lastEventId: string | null;
   };
-  /** The workflow failed with this error */
+  /** The workflow failed */
   failed?: {
     message: string;
     stack?: string;
@@ -58,41 +60,103 @@ export interface SnapshotRuntimeResult {
 export interface SnapshotRuntimeOptions {
   /** The compiled workflow bundle code (workflow mode output from SWC) */
   workflowCode: string;
+  /** The workflow ID (e.g. "workflow//./workflows/1_simple//simple") */
+  workflowId: string;
   /** The workflow run entity */
   workflowRun: WorkflowRun;
-  /** All events for the run (first invocation) or delta events (subsequent) */
+  /** Events to process: all events for first run, delta events for subsequent */
   events: Event[];
   /** Existing snapshot to restore from, or null for first invocation */
   existingSnapshot: {
     data: Uint8Array;
     metadata: SnapshotMetadata;
   } | null;
-  /** The WASM module bytes for quickjs-wasi */
+  /** The WASM module bytes for quickjs-wasi (optional, auto-loaded if omitted) */
   wasm?: ArrayBuffer | Uint8Array;
-  /** Encryption key for data, if enabled */
-  encryptionKey?: unknown;
 }
+
+// ---- VM Bootstrap Code ----
+
+/**
+ * JavaScript code that runs inside the QuickJS VM to set up the workflow
+ * primitives. This sets up:
+ * - globalThis.__private_workflows (Map) - workflow registry
+ * - globalThis.__resolvers (Object) - pending promise resolve/reject functions
+ * - globalThis.__pending (Array) - metadata about pending operations
+ * - globalThis[Symbol.for("WORKFLOW_USE_STEP")] - step proxy factory
+ * - globalThis[Symbol.for("WORKFLOW_SLEEP")] - sleep function
+ */
+const VM_BOOTSTRAP = `
+globalThis.__private_workflows = new Map();
+globalThis.__resolvers = {};
+globalThis.__pending = [];
+globalThis.__stepCounter = 0;
+globalThis.__workflowResult = undefined;
+globalThis.__workflowError = undefined;
+
+globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
+  return function() {
+    var args = Array.prototype.slice.call(arguments);
+    var correlationId = "step_" + (globalThis.__stepCounter++);
+    globalThis.__pending.push({
+      type: "step",
+      correlationId: correlationId,
+      stepId: stepId,
+      args: JSON.stringify(args),
+      closureVars: closureVarsFn ? JSON.stringify(closureVarsFn()) : undefined,
+      hasCreatedEvent: false,
+    });
+    return new Promise(function(resolve, reject) {
+      globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
+    });
+  };
+};
+
+globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
+  var correlationId = "wait_" + (globalThis.__stepCounter++);
+  var resumeAt;
+  if (typeof param === "number") {
+    resumeAt = new Date(Date.now() + param).toISOString();
+  } else if (typeof param === "string") {
+    var match = param.match(/^(\\d+)([smhd])$/);
+    if (match) {
+      var value = parseInt(match[1]);
+      var unit = match[2];
+      var ms = value * (unit === "s" ? 1000 : unit === "m" ? 60000 : unit === "h" ? 3600000 : 86400000);
+      resumeAt = new Date(Date.now() + ms).toISOString();
+    } else {
+      resumeAt = new Date(param).toISOString();
+    }
+  } else if (param instanceof Date) {
+    resumeAt = param.toISOString();
+  } else {
+    throw new Error("Invalid sleep parameter: " + param);
+  }
+  globalThis.__pending.push({
+    type: "wait",
+    correlationId: correlationId,
+    resumeAt: resumeAt,
+    hasCreatedEvent: false,
+  });
+  return new Promise(function(resolve, reject) {
+    globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
+  });
+};
+`;
 
 // ---- Runtime ----
 
-/**
- * Execute a workflow using the snapshot-based runtime.
- */
 export async function runSnapshotWorkflow(
   options: SnapshotRuntimeOptions
 ): Promise<SnapshotRuntimeResult> {
-  const { workflowCode, workflowRun, events, existingSnapshot, wasm } = options;
+  const { workflowCode, workflowId, workflowRun, events, existingSnapshot } =
+    options;
 
   const startedAt = workflowRun.startedAt ? +workflowRun.startedAt : Date.now();
 
-  // Deterministic seed (same as the event-replay runtime)
   const seed = `${workflowRun.runId}:${workflowRun.workflowName}:${startedAt}`;
   const rng = seedrandom(seed);
 
-  // Track pending operations (correlationId -> deferred info)
-  const pendingOperations = new Map<string, PendingOperation>();
-
-  // Track the last event ID we've processed
   let lastEventId: string | null =
     existingSnapshot?.metadata.lastEventId ?? null;
   for (const event of events) {
@@ -105,156 +169,219 @@ export async function runSnapshotWorkflow(
     // ---- RESTORE from snapshot ----
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
     vm = await QuickJS.restore(snapshot, {
-      wasm,
-      wasi: {
-        now: () => BigInt(startedAt) * 1_000_000n,
-      },
-      memoryLimit: 64 * 1024 * 1024, // 64 MB
+      wasm: options.wasm,
+      wasi: { now: () => BigInt(startedAt) * 1_000_000n },
+      memoryLimit: 64 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
 
-    // Re-register host callbacks
-    // TODO: re-register useStep, createHook, sleep callbacks
-    // TODO: read __pendingOps from VM to rebuild pendingOperations map
-    // TODO: process delta events to resolve pending promises
+    // Process delta events
+    processEvents(vm, events);
+    vm.executePendingJobs();
   } else {
-    // ---- FIRST RUN: create fresh VM ----
+    // ---- FIRST RUN ----
     vm = await QuickJS.create({
-      wasm,
-      wasi: {
-        now: () => BigInt(startedAt) * 1_000_000n,
-      },
-      memoryLimit: 64 * 1024 * 1024, // 64 MB
+      wasm: options.wasm,
+      wasi: { now: () => BigInt(startedAt) * 1_000_000n },
+      memoryLimit: 64 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
 
-    // Override Math.random with seeded PRNG
+    // Seeded Math.random
     {
       using randomFn = vm.newFunction('random', () => vm.newNumber(rng()));
       using math = vm.global.getProp('Math');
       math.setProp('random', randomFn);
     }
 
-    // Install workflow primitives on globalThis via symbols
-    installWorkflowPrimitives(vm, pendingOperations, rng);
+    // Bootstrap workflow primitives
+    vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
 
     // Execute the workflow bundle
     const evalResult = vm.evalCode(workflowCode, 'workflow.js');
     if (evalResult.isException) {
-      const exc = vm.getException();
-      const error = vm.dump(exc) as Error;
-      exc.dispose();
-      evalResult.dispose();
-      vm.dispose();
-      return {
-        failed: {
-          message: error.message ?? 'Workflow evaluation failed',
-          stack: error.stack,
-          name: error.name,
-        },
-      };
+      return extractError(vm, evalResult, 'Workflow evaluation failed');
     }
     evalResult.dispose();
 
-    // Execute pending jobs (microtasks from the workflow code)
+    // Start the workflow function
+    const startResult = vm.evalCode(`
+      var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
+      if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
+      __wfn().then(
+        function(result) { globalThis.__workflowResult = JSON.stringify(result); },
+        function(error) { globalThis.__workflowError = error.message || String(error); }
+      );
+    `);
+    if (startResult.isException) {
+      return extractError(vm, startResult, 'Failed to start workflow');
+    }
+    startResult.dispose();
+
+    // Process any existing events (replay for first run)
+    processEvents(vm, events);
     vm.executePendingJobs();
   }
 
-  // Check if the workflow completed or suspended
-  if (pendingOperations.size === 0) {
-    // Workflow completed — extract the result
-    // TODO: read the workflow return value from the VM
-    vm.dispose();
-    return { completed: undefined };
-  }
-
-  // Workflow suspended — snapshot the VM
-  const snapshot = vm.snapshot();
-  const serialized = QuickJS.serializeSnapshot(snapshot);
-  vm.dispose();
-
-  return {
-    suspended: {
-      pendingOperations: Array.from(pendingOperations.values()),
-      snapshot: serialized,
-      lastEventId,
-    },
-  };
+  // ---- Check result ----
+  return checkWorkflowState(vm, lastEventId);
 }
 
-// ---- Host function installations ----
+// ---- Event Processing ----
 
-function installWorkflowPrimitives(
+function processEvents(vm: QuickJS, events: Event[]): void {
+  for (const event of events) {
+    const cid = event.correlationId;
+    if (!cid) continue;
+
+    const escapedCid = cid.replace(/"/g, '\\"');
+
+    const eventData =
+      'eventData' in event
+        ? (event.eventData as Record<string, unknown>)
+        : undefined;
+
+    switch (event.eventType) {
+      case 'step_completed': {
+        const output = eventData?.output;
+        const serialized =
+          output !== undefined ? JSON.stringify(output) : 'undefined';
+        vm.unwrapResult(
+          vm.evalCode(
+            `if(globalThis.__resolvers["${escapedCid}"]){` +
+              `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
+              `delete globalThis.__resolvers["${escapedCid}"];}`
+          )
+        ).dispose();
+        markCreated(vm, escapedCid);
+        break;
+      }
+      case 'step_failed': {
+        const errorData = eventData?.error as
+          | Record<string, unknown>
+          | undefined;
+        const msg = (errorData?.message as string) ?? 'Step failed';
+        vm.unwrapResult(
+          vm.evalCode(
+            `if(globalThis.__resolvers["${escapedCid}"]){` +
+              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(msg)}));` +
+              `delete globalThis.__resolvers["${escapedCid}"];}`
+          )
+        ).dispose();
+        markCreated(vm, escapedCid);
+        break;
+      }
+      case 'wait_completed': {
+        vm.unwrapResult(
+          vm.evalCode(
+            `if(globalThis.__resolvers["${escapedCid}"]){` +
+              `globalThis.__resolvers["${escapedCid}"].resolve();` +
+              `delete globalThis.__resolvers["${escapedCid}"];}`
+          )
+        ).dispose();
+        markCreated(vm, escapedCid);
+        break;
+      }
+      case 'step_created':
+      case 'step_started':
+      case 'step_retrying':
+      case 'wait_created': {
+        markCreated(vm, escapedCid);
+        break;
+      }
+    }
+  }
+}
+
+function markCreated(vm: QuickJS, escapedCid: string): void {
+  vm.unwrapResult(
+    vm.evalCode(
+      `var __p=globalThis.__pending.find(function(p){return p.correlationId==="${escapedCid}";});` +
+        `if(__p)__p.hasCreatedEvent=true;`
+    )
+  ).dispose();
+}
+
+// ---- State Checking ----
+
+function checkWorkflowState(
   vm: QuickJS,
-  pendingOperations: Map<string, PendingOperation>,
-  rng: seedrandom.PRNG
-) {
-  // useStep: globalThis[Symbol.for("WORKFLOW_USE_STEP")]
+  lastEventId: string | null
+): SnapshotRuntimeResult {
+  // Check completed
   {
-    using sym = vm.newSymbolFor('WORKFLOW_USE_STEP');
-    // The useStep function returns a function that, when called with args,
-    // creates a step invocation and returns a promise
-    using useStepFactory = vm.newFunction('useStep', function (...args) {
-      const stepId = args[0].toString();
-
-      // Return a function that, when called, creates the step invocation
-      using innerFn = vm.newFunction(`step_${stepId}`, function (..._stepArgs) {
-        const correlationId = `step_${generateUlid(rng)}`;
-        const deferred = vm.newPromise();
-
-        // TODO: Store resolve/reject handles on __resolvers global for
-        // retrieval after snapshot restore
-
-        pendingOperations.set(correlationId, {
-          type: 'step',
-          correlationId,
-          resolveCallbackId: 0, // TODO
-          rejectCallbackId: 0, // TODO
-          stepMetadata: {
-            stepId,
-            stepName: stepId, // TODO: resolve actual step name
-          },
-        });
-
-        return deferred.handle;
-      });
-
-      return innerFn.dup();
-    });
-    vm.setProp(vm.global, sym, useStepFactory);
+    using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
+    if (!h.isUndefined) {
+      const result = h.toString();
+      vm.dispose();
+      return { completed: { result } };
+    }
   }
 
-  // sleep: globalThis[Symbol.for("WORKFLOW_SLEEP")]
+  // Check failed
   {
-    using sym = vm.newSymbolFor('WORKFLOW_SLEEP');
-    using sleepFn = vm.newFunction('sleep', function (..._args) {
-      // TODO: parse duration, create wait invocation, return promise
-      return vm.getUndefined();
-    });
-    vm.setProp(vm.global, sym, sleepFn);
+    using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowError'));
+    if (!h.isUndefined) {
+      const message = h.toString();
+      vm.dispose();
+      return { failed: { message } };
+    }
   }
 
-  // createHook: globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")]
+  // Check suspended
   {
-    using sym = vm.newSymbolFor('WORKFLOW_CREATE_HOOK');
-    using createHookFn = vm.newFunction('createHook', function (..._args) {
-      // TODO: create hook invocation, return hook object
-      return vm.newObject();
-    });
-    vm.setProp(vm.global, sym, createHookFn);
+    using h = vm.unwrapResult(
+      vm.evalCode('Object.keys(globalThis.__resolvers).length > 0')
+    );
+    if (vm.dump(h)) {
+      using pendingH = vm.unwrapResult(
+        vm.evalCode(
+          `globalThis.__pending.filter(function(p){return!!globalThis.__resolvers[p.correlationId];})`
+        )
+      );
+      const pendingOps = vm.dump(pendingH) as PendingOperation[];
+
+      const snapshot = vm.snapshot();
+      const serialized = QuickJS.serializeSnapshot(snapshot);
+      vm.dispose();
+
+      return {
+        suspended: {
+          pendingOperations: pendingOps,
+          snapshot: serialized,
+          lastEventId,
+        },
+      };
+    }
   }
+
+  vm.dispose();
+  return { failed: { message: 'Workflow ended in unknown state' } };
 }
 
 // ---- Helpers ----
 
-function createInterruptHandler(): () => boolean {
-  const start = Date.now();
-  const timeout = 30_000; // 30 second timeout
-  return () => Date.now() - start > timeout;
+function extractError(
+  vm: QuickJS,
+  result: ReturnType<QuickJS['evalCode']>,
+  fallbackMessage: string
+): SnapshotRuntimeResult {
+  const exc = vm.getException();
+  const error = vm.dump(exc) as Error | null;
+  exc.dispose();
+  result.dispose();
+  vm.dispose();
+  return {
+    failed: {
+      message: error?.message ?? fallbackMessage,
+      stack: error?.stack,
+      name: error?.name,
+    },
+  };
 }
 
-function generateUlid(_rng: seedrandom.PRNG): string {
-  // TODO: implement deterministic ULID generation using the seeded RNG
-  // For now, use a simple counter-based approach
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+function createInterruptHandler(): () => boolean {
+  const start = Date.now();
+  const timeout = 30_000;
+  return () => Date.now() - start > timeout;
 }
