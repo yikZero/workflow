@@ -33,6 +33,9 @@ import {
 import { getErrorName, getErrorStack, normalizeUnknownError } from './types.js';
 import { buildWorkflowSuspensionMessage } from './util.js';
 import { runWorkflow } from './workflow.js';
+import { runWorkflowWithSnapshots } from './runtime/snapshot-entrypoint.js';
+
+const USE_SNAPSHOT_RUNTIME = process.env.WORKFLOW_RUNTIME === 'snapshot';
 
 export type { Event, WorkflowRun };
 export { WorkflowSuspension } from './global.js';
@@ -187,6 +190,26 @@ export function workflowEntrypoint(
 
                       return;
                     }
+
+                    // --- Snapshot runtime (opt-in via WORKFLOW_RUNTIME=snapshot) ---
+                    if (USE_SNAPSHOT_RUNTIME) {
+                      runtimeLogger.info('Using snapshot runtime', {
+                        workflowRunId: runId,
+                      });
+                      const snapshotResult = await runWorkflowWithSnapshots({
+                        workflowCode,
+                        workflowName,
+                        workflowRun,
+                      });
+                      if (snapshotResult?.timeoutSeconds !== undefined) {
+                        return {
+                          timeoutSeconds: snapshotResult.timeoutSeconds,
+                        };
+                      }
+                      return;
+                    }
+
+                    // --- Event-replay runtime (default) ---
 
                     // Load all events into memory before running
                     const events = await getAllWorkflowRunEvents(
