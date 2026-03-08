@@ -2,7 +2,7 @@
  * Serialization module — public API.
  *
  * Re-exports the mode-specific serialize/deserialize functions and
- * provides backwards-compatible aliases for the legacy function names.
+ * the codec/format/encryption abstractions.
  */
 
 // Re-export types
@@ -14,6 +14,10 @@ export type {
 } from './types.js';
 export { SerializationFormat } from './types.js';
 
+// Re-export codec interface and mode type
+export type { Codec, SerializationMode } from './codec.js';
+export { devalueCodec } from './codec-devalue.js';
+
 // Re-export format prefix utilities
 export {
   encodeWithFormatPrefix,
@@ -22,11 +26,7 @@ export {
   isEncrypted,
 } from './format.js';
 
-// Re-export codec
-export type { Codec } from './codec.js';
-export { devalueCodec } from './codec-devalue.js';
-
-// Re-export encryption
+// Re-export composable encryption
 export {
   encrypt,
   decrypt,
@@ -40,14 +40,5 @@ import * as step from './step.js';
 import * as client from './client.js';
 export { workflow, step, client };
 
-// Re-export reducers for direct composition (used by stream framing, etc.)
-export {
-  getCommonReducers,
-  getCommonRevivers,
-  revive,
-} from './reducers/common.js';
-export { getClassReducers, getClassRevivers } from './reducers/class.js';
-export {
-  getStepFunctionReducer,
-  getStepFunctionReviver,
-} from './reducers/step-function.js';
+// Re-export revive helper (used by legacy compat in serialization.ts)
+export { revive } from './reducers/common.js';
