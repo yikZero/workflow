@@ -62,23 +62,19 @@ describe('devalue codec', () => {
 
   it('should round-trip primitives', () => {
     for (const value of [42, 'hello', true, null]) {
-      const serialized = devalueCodec.serialize(value, {});
-      const deserialized = devalueCodec.deserialize(serialized, {});
+      const serialized = devalueCodec.serialize(value, 'workflow');
+      const deserialized = devalueCodec.deserialize(serialized, 'workflow');
       expect(deserialized).toEqual(value);
     }
   });
 
-  it('should round-trip with Date reducer/reviver', () => {
+  it('should round-trip Date via workflow mode', () => {
     const date = new Date('2025-01-01T00:00:00Z');
-    const reducers = {
-      Date: (v: any) => (v instanceof Date ? v.toISOString() : false),
-    };
-    const revivers = {
-      Date: (v: any) => new Date(v),
-    };
-
-    const serialized = devalueCodec.serialize(date, reducers);
-    const deserialized = devalueCodec.deserialize(serialized, revivers) as Date;
+    const serialized = devalueCodec.serialize(date, 'workflow');
+    const deserialized = devalueCodec.deserialize(
+      serialized,
+      'workflow'
+    ) as Date;
     expect(deserialized).toBeInstanceOf(Date);
     expect(deserialized.toISOString()).toBe('2025-01-01T00:00:00.000Z');
   });
