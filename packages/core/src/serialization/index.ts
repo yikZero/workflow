@@ -7,12 +7,12 @@
 
 // Re-export types
 export type {
-  SerializationFormatType,
+  FormatPrefix,
   SerializableSpecial,
   Reducers,
   Revivers,
 } from './types.js';
-export { SerializationFormat } from './types.js';
+export { SerializationFormat, isFormatPrefix } from './types.js';
 
 // Re-export codec interface and mode type
 export type { Codec, SerializationMode } from './codec.js';

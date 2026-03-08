@@ -9,8 +9,49 @@ import {
   peekFormatPrefix,
   isEncrypted,
 } from './format.js';
-import { SerializationFormat } from './types.js';
+import { SerializationFormat, isFormatPrefix } from './types.js';
 import { importKey } from '../encryption.js';
+
+// ---- isFormatPrefix type guard ----
+
+describe('isFormatPrefix', () => {
+  it('should accept valid 4-char lowercase alphanumeric strings', () => {
+    expect(isFormatPrefix('devl')).toBe(true);
+    expect(isFormatPrefix('cbor')).toBe(true);
+    expect(isFormatPrefix('json')).toBe(true);
+    expect(isFormatPrefix('encr')).toBe(true);
+    expect(isFormatPrefix('abcd')).toBe(true);
+    expect(isFormatPrefix('v2b1')).toBe(true);
+    expect(isFormatPrefix('0000')).toBe(true);
+    expect(isFormatPrefix('9999')).toBe(true);
+    expect(isFormatPrefix('ab12')).toBe(true);
+  });
+
+  it('should reject strings that are too short', () => {
+    expect(isFormatPrefix('')).toBe(false);
+    expect(isFormatPrefix('a')).toBe(false);
+    expect(isFormatPrefix('ab')).toBe(false);
+    expect(isFormatPrefix('abc')).toBe(false);
+  });
+
+  it('should reject strings that are too long', () => {
+    expect(isFormatPrefix('abcde')).toBe(false);
+    expect(isFormatPrefix('abcdef')).toBe(false);
+  });
+
+  it('should reject uppercase characters', () => {
+    expect(isFormatPrefix('DEVL')).toBe(false);
+    expect(isFormatPrefix('Devl')).toBe(false);
+    expect(isFormatPrefix('devL')).toBe(false);
+  });
+
+  it('should reject special characters', () => {
+    expect(isFormatPrefix('de-l')).toBe(false);
+    expect(isFormatPrefix('de_l')).toBe(false);
+    expect(isFormatPrefix('de.l')).toBe(false);
+    expect(isFormatPrefix('de l')).toBe(false);
+  });
+});
 
 // ---- Format prefix ----
 
@@ -38,6 +79,20 @@ describe('format prefix', () => {
     expect(peekFormatPrefix(encoded)).toBe('devl');
     expect(peekFormatPrefix(new Uint8Array([0, 0, 0, 0]))).toBeNull();
     expect(peekFormatPrefix('not binary')).toBeNull();
+  });
+
+  it('should accept unknown but valid format prefixes', () => {
+    // A future codec can use any [a-z0-9]{4} prefix
+    const payload = new Uint8Array([1, 2, 3]);
+    const encoded = encodeWithFormatPrefix(
+      'cbor' as any,
+      payload
+    ) as Uint8Array;
+    expect(peekFormatPrefix(encoded)).toBe('cbor');
+
+    const decoded = decodeFormatPrefix(encoded);
+    expect(decoded.format).toBe('cbor');
+    expect(decoded.payload).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   it('should detect encrypted data', () => {

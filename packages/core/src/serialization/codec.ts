@@ -14,7 +14,7 @@
  *   plain objects). No Date, Map, Set, typed arrays, etc.
  */
 
-import type { SerializationFormatType } from './types.js';
+import type { FormatPrefix } from './types.js';
 
 /**
  * The serialization mode determines which types are supported and how
@@ -31,7 +31,7 @@ export type SerializationMode = 'workflow' | 'step' | 'client';
 
 export interface Codec {
   /** The 4-character format prefix identifier (e.g. "devl", "cbor", "json") */
-  readonly formatPrefix: SerializationFormatType;
+  readonly formatPrefix: FormatPrefix;
 
   /**
    * Serialize a value to bytes.

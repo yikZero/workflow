@@ -2,23 +2,37 @@
  * Shared types for the serialization system.
  */
 
+// ---- Format Prefix ----
+
 /**
- * Known serialization format identifiers.
- * Each format ID is exactly 4 ASCII characters, matching the convention
- * used for other workflow IDs (wrun, step, wait, etc.)
+ * A format prefix is exactly 4 lowercase alphanumeric characters [a-z0-9].
+ *
+ * This is a branded string type — use `isFormatPrefix()` to validate
+ * at runtime. The `SerializationFormat` object provides well-known
+ * constants, but codecs may define additional prefixes.
+ */
+export type FormatPrefix = string & { readonly __brand: 'FormatPrefix' };
+
+/**
+ * Runtime type guard for format prefix strings.
+ *
+ * Validates that a string is exactly 4 characters of [a-z0-9].
+ */
+export function isFormatPrefix(value: string): value is FormatPrefix {
+  return value.length === 4 && /^[a-z0-9]{4}$/.test(value);
+}
+
+/**
+ * Well-known format prefix constants. Codecs may define additional ones.
  */
 export const SerializationFormat = {
   /** devalue stringify/parse with TextEncoder/TextDecoder */
-  DEVALUE_V1: 'devl',
+  DEVALUE_V1: 'devl' as FormatPrefix,
   /** Encrypted payload (inner payload has its own format prefix) */
-  ENCRYPTED: 'encr',
-  // Future formats (reserved):
-  // JSON: 'json',  // JSON serialization (Python runtime compat)
-  // CBOR: 'cbor',  // CBOR binary serialization
+  ENCRYPTED: 'encr' as FormatPrefix,
 } as const;
 
-export type SerializationFormatType =
-  (typeof SerializationFormat)[keyof typeof SerializationFormat];
+// ---- Serializable Types ----
 
 /**
  * Types that need specialized handling when serialized/deserialized.
