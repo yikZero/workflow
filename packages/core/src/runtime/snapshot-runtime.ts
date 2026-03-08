@@ -16,7 +16,7 @@
 import seedrandom from 'seedrandom';
 import { QuickJS } from 'quickjs-wasi';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
-import { workflow as workflowSerde } from '../serialization/index.js';
+import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
 // ---- Types ----
 
@@ -96,8 +96,7 @@ globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
 
 // Stubs for Web APIs that the workflow bundle may reference but are not
-// available in QuickJS. These are only needed if the workflow uses streams,
-// which are not yet supported in the snapshot runtime.
+// available in QuickJS.
 if (typeof TransformStream === "undefined") {
   globalThis.TransformStream = function() { throw new Error("TransformStream not supported in snapshot runtime"); };
 }
@@ -106,14 +105,6 @@ if (typeof ReadableStream === "undefined") {
 }
 if (typeof WritableStream === "undefined") {
   globalThis.WritableStream = function() { throw new Error("WritableStream not supported in snapshot runtime"); };
-}
-if (typeof TextEncoder === "undefined") {
-  globalThis.TextEncoder = function() {};
-  globalThis.TextEncoder.prototype.encode = function(s) { return new Uint8Array(0); };
-}
-if (typeof TextDecoder === "undefined") {
-  globalThis.TextDecoder = function() {};
-  globalThis.TextDecoder.prototype.decode = function() { return ""; };
 }
 if (typeof Headers === "undefined") {
   globalThis.Headers = function() {};
@@ -127,6 +118,8 @@ if (typeof console === "undefined") {
 // Stub exports/module for CJS bundle format
 globalThis.exports = {};
 globalThis.module = { exports: globalThis.exports };
+// NOTE: TextEncoder/TextDecoder polyfills are provided by the VM serde bundle,
+// which is evaluated before this bootstrap code.
 
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   return function() {
@@ -214,8 +207,9 @@ export async function runSnapshotWorkflow(
       interruptHandler: createInterruptHandler(),
     });
 
-    // Re-register host functions after restore
-    installSerdeHostFunctions(vm);
+    // Note: __wdk_serialize/__wdk_deserialize are JS functions in the VM
+    // (set by the serde bundle), so they survive snapshot/restore as part
+    // of the QuickJS heap. No re-registration needed.
 
     // Process delta events
     processEvents(vm, events);
@@ -236,8 +230,10 @@ export async function runSnapshotWorkflow(
       math.setProp('random', randomFn);
     }
 
-    // Install serialize/deserialize host functions
-    installSerdeHostFunctions(vm);
+    // Evaluate the VM serde bundle — provides TextEncoder/TextDecoder polyfills
+    // and sets __wdk_serialize/__wdk_deserialize on globalThis.
+    // This runs devalue + all workflow reducers/revivers inside the VM.
+    vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
 
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
@@ -438,39 +434,6 @@ function extractError(
       name: error?.name,
     },
   };
-}
-
-/**
- * Install __wdk_serialize and __wdk_deserialize as host functions on the VM.
- *
- * __wdk_serialize: takes a JS value, returns a Uint8Array (devl-prefixed devalue)
- * __wdk_deserialize: takes a Uint8Array, returns a JS value
- *
- * These are host functions because the serializer needs devalue which is
- * bundled on the host side. The data stays as opaque Uint8Array blobs in
- * the VM — the actual serialize/deserialize happens on the host via
- * quickjs-wasi's dump()/hostToHandle()/newUint8Array()/toUint8Array().
- */
-function installSerdeHostFunctions(vm: QuickJS): void {
-  // These are set on globalThis so the VM bootstrap code can call them.
-  // On restore, they're re-installed with new callback IDs — the VM
-  // code accesses them via globalThis at call time, not at definition time.
-  {
-    using serializeFn = vm.newFunction('__wdk_serialize', (...args) => {
-      const value = vm.dump(args[0]);
-      const bytes = workflowSerde.serialize(value);
-      return vm.newUint8Array(bytes);
-    });
-    vm.setProp(vm.global, '__wdk_serialize', serializeFn);
-  }
-  {
-    using deserializeFn = vm.newFunction('__wdk_deserialize', (...args) => {
-      const bytes = args[0].toUint8Array();
-      const value = workflowSerde.deserialize(bytes);
-      return vm.hostToHandle(value);
-    });
-    vm.setProp(vm.global, '__wdk_deserialize', deserializeFn);
-  }
 }
 
 function createInterruptHandler(): () => boolean {

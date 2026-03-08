@@ -12,8 +12,16 @@ import { devalueVmCodec } from './codec-devalue-vm.js';
 import { SerializationFormat, isFormatPrefix } from './types.js';
 
 const FORMAT_PREFIX_LENGTH = 4;
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+let _encoder: { encode(s: string): Uint8Array };
+let _decoder: { decode(d: Uint8Array): string };
+function getEncoder() {
+  if (!_encoder) _encoder = new (globalThis as any).TextEncoder();
+  return _encoder;
+}
+function getDecoder() {
+  if (!_decoder) _decoder = new (globalThis as any).TextDecoder();
+  return _decoder;
+}
 
 /**
  * Serialize a value to format-prefixed bytes.
@@ -23,7 +31,7 @@ const decoder = new TextDecoder();
  */
 export function serialize(value: unknown): Uint8Array {
   const payload = devalueVmCodec.serialize(value, 'workflow');
-  const prefix = encoder.encode(SerializationFormat.DEVALUE_V1);
+  const prefix = getEncoder().encode(SerializationFormat.DEVALUE_V1);
   const result = new Uint8Array(prefix.length + payload.length);
   result.set(prefix, 0);
   result.set(payload, prefix.length);
@@ -51,7 +59,7 @@ export function deserialize(data: Uint8Array | unknown): unknown {
     throw new Error('Data too short to contain format prefix');
   }
 
-  const prefixStr = decoder.decode(data.subarray(0, FORMAT_PREFIX_LENGTH));
+  const prefixStr = getDecoder().decode(data.subarray(0, FORMAT_PREFIX_LENGTH));
   if (!isFormatPrefix(prefixStr)) {
     throw new Error(`Invalid format prefix: "${prefixStr}"`);
   }
