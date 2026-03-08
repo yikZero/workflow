@@ -16,6 +16,7 @@
 import seedrandom from 'seedrandom';
 import { QuickJS } from 'quickjs-wasi';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
+import { workflow as workflowSerde } from '../serialization/index.js';
 
 // ---- Types ----
 
@@ -276,7 +277,19 @@ function processEvents(vm: QuickJS, events: Event[]): void {
 
     switch (event.eventType) {
       case 'step_completed': {
-        const output = eventData?.output;
+        const rawOutput = eventData?.output;
+        // The output may be devalue-serialized (Uint8Array with format prefix)
+        // or a plain value (from the snapshot runtime's JSON path).
+        // Deserialize it on the host side, then pass as JSON to the VM.
+        let output: unknown;
+        try {
+          output =
+            rawOutput instanceof Uint8Array
+              ? workflowSerde.deserialize(rawOutput)
+              : rawOutput;
+        } catch {
+          output = rawOutput;
+        }
         const serialized =
           output !== undefined ? JSON.stringify(output) : 'undefined';
         vm.unwrapResult(

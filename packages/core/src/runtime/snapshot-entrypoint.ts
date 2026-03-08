@@ -12,6 +12,7 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { runtimeLogger } from '../logger.js';
+import { workflow as workflowSerde } from '../serialization/index.js';
 import { getAllWorkflowRunEvents, queueMessage } from './helpers.js';
 import { getWorld } from './world.js';
 import {
@@ -141,7 +142,7 @@ export async function runWorkflowWithSnapshots(params: {
         eventType: 'run_completed',
         specVersion: SPEC_VERSION_CURRENT,
         eventData: {
-          output: JSON.parse(result.completed.result),
+          output: workflowSerde.serialize(JSON.parse(result.completed.result)),
         },
       });
     } catch (err) {
@@ -188,7 +189,7 @@ export async function runWorkflowWithSnapshots(params: {
             correlationId: step.correlationId,
             eventData: {
               stepName: step.stepId,
-              input: JSON.parse(step.args),
+              input: workflowSerde.serialize(JSON.parse(step.args)),
             },
           });
         } catch (err) {
