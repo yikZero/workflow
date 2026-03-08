@@ -29,14 +29,13 @@ import { SerializationFormat, type Reducers, type Revivers } from './types.js';
 function getWorkflowReducers(
   global: Record<string, any> = globalThis
 ): Partial<Reducers> {
+  // Class/Instance reducers MUST come before common reducers because
+  // devalue uses first-match-wins. The common Error reducer would otherwise
+  // preempt Instance for custom Error subclasses with WORKFLOW_SERIALIZE.
   return {
-    ...getCommonReducers(global),
     ...getClassReducers(),
     ...getStepFunctionReducer(),
-    // Note: ReadableStream/WritableStream reducers for workflow mode
-    // are handled separately since they depend on workflow-specific symbols.
-    // They can be merged in here when stream support is added to the
-    // snapshot runtime.
+    ...getCommonReducers(global),
   };
 }
 

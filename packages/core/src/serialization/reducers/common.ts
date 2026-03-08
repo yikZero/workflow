@@ -10,8 +10,7 @@
  */
 
 import { types } from 'node:util';
-import { WEBHOOK_RESPONSE_WRITABLE } from '../../symbols.js';
-import type { Reducers, Revivers, SerializableSpecial } from '../types.js';
+import type { Reducers, Revivers } from '../types.js';
 
 // ---- Base64 helpers ----
 
@@ -95,33 +94,10 @@ export function getCommonReducers(
         source: value.source,
         flags: value.flags,
       },
-    Request: (value) => {
-      if (!(value instanceof global.Request)) return false;
-      const data: SerializableSpecial['Request'] = {
-        method: value.method,
-        url: value.url,
-        headers: value.headers,
-        body: value.body,
-        duplex: value.duplex,
-      };
-      const responseWritable = value[WEBHOOK_RESPONSE_WRITABLE];
-      if (responseWritable) {
-        data.responseWritable = responseWritable;
-      }
-      return data;
-    },
-    Response: (value) => {
-      if (!(value instanceof global.Response)) return false;
-      return {
-        type: value.type,
-        url: value.url,
-        status: value.status,
-        statusText: value.statusText,
-        headers: value.headers,
-        body: value.body,
-        redirected: value.redirected,
-      };
-    },
+    // Request and Response are intentionally NOT in common reducers.
+    // They require mode-specific revivers (stream handling, etc.) and
+    // including them here without matching revivers would cause them
+    // to deserialize as plain objects.
     Set: (value) => value instanceof global.Set && Array.from(value),
     URL: (value) => value instanceof global.URL && value.href,
     URLSearchParams: (value) => {

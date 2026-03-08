@@ -24,13 +24,12 @@ import { SerializationFormat, type Reducers, type Revivers } from './types.js';
 function getStepReducers(
   global: Record<string, any> = globalThis
 ): Partial<Reducers> {
+  // Class/Instance reducers MUST come before common reducers because
+  // devalue uses first-match-wins. The common Error reducer would otherwise
+  // preempt Instance for custom Error subclasses with WORKFLOW_SERIALIZE.
   return {
-    ...getCommonReducers(global),
     ...getClassReducers(),
-    // Note: Stream reducers for step mode need additional parameters
-    // (ops, runId, cryptoKey). These are composed at call sites that
-    // need stream support. For basic step serialization, common + class
-    // reducers are sufficient.
+    ...getCommonReducers(global),
   };
 }
 
