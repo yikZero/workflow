@@ -1,0 +1,191 @@
+/**
+ * Common reducers and revivers for types shared across all serialization modes.
+ *
+ * Handles: ArrayBuffer, BigInt, typed arrays, Date, Error, Headers, Map, Set,
+ * RegExp, Request, Response, URL, URLSearchParams.
+ *
+ * Note: Uses Node.js Buffer for base64 encoding/decoding. For environments
+ * without Buffer (e.g. QuickJS VM), a polyfill or alternative base64
+ * implementation will be needed.
+ */
+
+import { types } from 'node:util';
+import { WEBHOOK_RESPONSE_WRITABLE } from '../../symbols.js';
+import type { Reducers, Revivers, SerializableSpecial } from '../types.js';
+
+// ---- Base64 helpers ----
+
+function arrayBufferToBase64(
+  value: ArrayBufferLike,
+  offset: number,
+  length: number
+): string {
+  // Avoid returning falsy value for zero-length buffers
+  if (length === 0) return '.';
+  // Create a proper copy to avoid ArrayBuffer detachment issues
+  const uint8 = new Uint8Array(value, offset, length);
+  return Buffer.from(uint8).toString('base64');
+}
+
+function viewToBase64(value: ArrayBufferView): string {
+  return arrayBufferToBase64(value.buffer, value.byteOffset, value.byteLength);
+}
+
+function reviveArrayBuffer(
+  value: string,
+  global: Record<string, any>
+): ArrayBuffer {
+  const base64 = value === '.' ? '' : value;
+  const buffer = Buffer.from(base64, 'base64');
+  const arrayBuffer = new global.ArrayBuffer(buffer.length);
+  const uint8Array = new global.Uint8Array(arrayBuffer);
+  uint8Array.set(buffer);
+  return arrayBuffer;
+}
+
+function revive(str: string) {
+  // biome-ignore lint/security/noGlobalEval: Eval is safe here - we are only passing value from `devalue.stringify()`
+  // biome-ignore lint/complexity/noCommaOperator: This is how you do global scope eval
+  return (0, eval)(`(${str})`);
+}
+
+// ---- Reducers ----
+
+export function getCommonReducers(
+  global: Record<string, any> = globalThis
+): Partial<Reducers> {
+  return {
+    ArrayBuffer: (value) =>
+      value instanceof global.ArrayBuffer &&
+      arrayBufferToBase64(value, 0, value.byteLength),
+    BigInt: (value) => typeof value === 'bigint' && value.toString(),
+    BigInt64Array: (value) =>
+      value instanceof global.BigInt64Array && viewToBase64(value),
+    BigUint64Array: (value) =>
+      value instanceof global.BigUint64Array && viewToBase64(value),
+    Date: (value) => {
+      if (!(value instanceof global.Date)) return false;
+      const valid = !Number.isNaN(value.getDate());
+      return valid ? value.toISOString() : '.';
+    },
+    Error: (value) => {
+      // Use types.isNativeError() instead of `instanceof global.Error`
+      // because errors may originate from a different VM context.
+      if (!types.isNativeError(value)) return false;
+      return {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      };
+    },
+    Float32Array: (value) =>
+      value instanceof global.Float32Array && viewToBase64(value),
+    Float64Array: (value) =>
+      value instanceof global.Float64Array && viewToBase64(value),
+    Headers: (value) => value instanceof global.Headers && Array.from(value),
+    Int8Array: (value) =>
+      value instanceof global.Int8Array && viewToBase64(value),
+    Int16Array: (value) =>
+      value instanceof global.Int16Array && viewToBase64(value),
+    Int32Array: (value) =>
+      value instanceof global.Int32Array && viewToBase64(value),
+    Map: (value) => value instanceof global.Map && Array.from(value),
+    RegExp: (value) =>
+      value instanceof global.RegExp && {
+        source: value.source,
+        flags: value.flags,
+      },
+    Request: (value) => {
+      if (!(value instanceof global.Request)) return false;
+      const data: SerializableSpecial['Request'] = {
+        method: value.method,
+        url: value.url,
+        headers: value.headers,
+        body: value.body,
+        duplex: value.duplex,
+      };
+      const responseWritable = value[WEBHOOK_RESPONSE_WRITABLE];
+      if (responseWritable) {
+        data.responseWritable = responseWritable;
+      }
+      return data;
+    },
+    Response: (value) => {
+      if (!(value instanceof global.Response)) return false;
+      return {
+        type: value.type,
+        url: value.url,
+        status: value.status,
+        statusText: value.statusText,
+        headers: value.headers,
+        body: value.body,
+        redirected: value.redirected,
+      };
+    },
+    Set: (value) => value instanceof global.Set && Array.from(value),
+    URL: (value) => value instanceof global.URL && value.href,
+    URLSearchParams: (value) => {
+      if (!(value instanceof global.URLSearchParams)) return false;
+      if (value.size === 0) return '.';
+      return String(value);
+    },
+    Uint8Array: (value) =>
+      value instanceof global.Uint8Array && viewToBase64(value),
+    Uint8ClampedArray: (value) =>
+      value instanceof global.Uint8ClampedArray && viewToBase64(value),
+    Uint16Array: (value) =>
+      value instanceof global.Uint16Array && viewToBase64(value),
+    Uint32Array: (value) =>
+      value instanceof global.Uint32Array && viewToBase64(value),
+  };
+}
+
+// ---- Revivers ----
+
+export function getCommonRevivers(
+  global: Record<string, any> = globalThis
+): Partial<Revivers> {
+  return {
+    ArrayBuffer: (value: string) => reviveArrayBuffer(value, global),
+    BigInt: (value: string) => global.BigInt(value),
+    BigInt64Array: (value: string) =>
+      new global.BigInt64Array(reviveArrayBuffer(value, global)),
+    BigUint64Array: (value: string) =>
+      new global.BigUint64Array(reviveArrayBuffer(value, global)),
+    Date: (value) => new global.Date(value),
+    Error: (value) => {
+      const error = new global.Error(value.message);
+      error.name = value.name;
+      error.stack = value.stack;
+      return error;
+    },
+    Float32Array: (value: string) =>
+      new global.Float32Array(reviveArrayBuffer(value, global)),
+    Float64Array: (value: string) =>
+      new global.Float64Array(reviveArrayBuffer(value, global)),
+    Headers: (value) => new global.Headers(value),
+    Int8Array: (value: string) =>
+      new global.Int8Array(reviveArrayBuffer(value, global)),
+    Int16Array: (value: string) =>
+      new global.Int16Array(reviveArrayBuffer(value, global)),
+    Int32Array: (value: string) =>
+      new global.Int32Array(reviveArrayBuffer(value, global)),
+    Map: (value) => new global.Map(value),
+    RegExp: (value) => new global.RegExp(value.source, value.flags),
+    Set: (value) => new global.Set(value),
+    URL: (value) => new global.URL(value),
+    URLSearchParams: (value) =>
+      new global.URLSearchParams(value === '.' ? '' : value),
+    Uint8Array: (value: string) =>
+      new global.Uint8Array(reviveArrayBuffer(value, global)),
+    Uint8ClampedArray: (value: string) =>
+      new global.Uint8ClampedArray(reviveArrayBuffer(value, global)),
+    Uint16Array: (value: string) =>
+      new global.Uint16Array(reviveArrayBuffer(value, global)),
+    Uint32Array: (value: string) =>
+      new global.Uint32Array(reviveArrayBuffer(value, global)),
+  };
+}
+
+// Re-export for use in legacy compat
+export { revive };
