@@ -189,7 +189,12 @@ export async function runWorkflowWithSnapshots(params: {
             correlationId: step.correlationId,
             eventData: {
               stepName: step.stepId,
-              input: workflowSerde.serialize(JSON.parse(step.args)),
+              input: workflowSerde.serialize({
+                args: JSON.parse(step.args),
+                ...(step.closureVars
+                  ? { closureVars: JSON.parse(step.closureVars) }
+                  : {}),
+              }),
             },
           });
         } catch (err) {

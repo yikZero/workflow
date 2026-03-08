@@ -26,6 +26,8 @@ export interface PendingStep {
   stepId: string;
   /** JSON-serialized arguments */
   args: string;
+  /** JSON-serialized closure variables, if any */
+  closureVars?: string;
   /** Whether a step_created event already exists for this step */
   hasCreatedEvent: boolean;
 }
