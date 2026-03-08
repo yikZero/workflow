@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { QuickJS } from 'quickjs-wasi';
 import { runSnapshotWorkflow } from './snapshot-runtime.js';
+import { deserialize } from '../serialization/workflow-vm.js';
+
+/** Helper to deserialize the format-prefixed result bytes */
+function unwrapResult(result: Uint8Array): unknown {
+  return deserialize(result);
+}
 
 function makeRun(overrides: Record<string, unknown> = {}) {
   return {
@@ -31,7 +37,7 @@ describe('runSnapshotWorkflow', () => {
     });
 
     expect(result.completed).toBeDefined();
-    expect(result.completed?.result).toBe('42');
+    expect(unwrapResult(result.completed!.result)).toBe(42);
   });
 
   it('should suspend on first step and return pending operations', async () => {
@@ -96,7 +102,7 @@ describe('runSnapshotWorkflow', () => {
       },
     });
 
-    expect(r2.completed?.result).toBe('17');
+    expect(unwrapResult(r2.completed!.result)).toBe(17);
   });
 
   it('should handle multi-step workflows across multiple snapshots', async () => {
@@ -161,7 +167,7 @@ describe('runSnapshotWorkflow', () => {
         metadata: { lastEventId: 'evnt_001', createdAt: new Date() },
       },
     });
-    expect(r3.completed?.result).toBe('25');
+    expect(unwrapResult(r3.completed!.result)).toBe(25);
   });
 
   it('should handle sleep suspension and wake', async () => {
@@ -203,7 +209,7 @@ describe('runSnapshotWorkflow', () => {
         metadata: { lastEventId: null, createdAt: new Date() },
       },
     });
-    expect(r2.completed?.result).toBe('"woke up"');
+    expect(unwrapResult(r2.completed!.result)).toBe('woke up');
   });
 
   it('should handle step failure with try/catch in workflow', async () => {
@@ -243,7 +249,7 @@ describe('runSnapshotWorkflow', () => {
         metadata: { lastEventId: null, createdAt: new Date() },
       },
     });
-    expect(r2.completed?.result).toBe('"caught: boom"');
+    expect(unwrapResult(r2.completed!.result)).toBe('caught: boom');
   });
 });
 

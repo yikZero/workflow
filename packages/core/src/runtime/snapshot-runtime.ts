@@ -24,10 +24,8 @@ export interface PendingStep {
   type: 'step';
   correlationId: string;
   stepId: string;
-  /** JSON-serialized arguments */
-  args: string;
-  /** JSON-serialized closure variables, if any */
-  closureVars?: string;
+  /** Format-prefixed devalue-serialized step input (args + closureVars) */
+  input: Uint8Array;
   /** Whether a step_created event already exists for this step */
   hasCreatedEvent: boolean;
 }
@@ -44,8 +42,8 @@ export interface PendingWait {
 export type PendingOperation = PendingStep | PendingWait;
 
 export interface SnapshotRuntimeResult {
-  /** The workflow completed with this result (serialized) */
-  completed?: { result: string };
+  /** The workflow completed — result is format-prefixed devalue bytes */
+  completed?: { result: Uint8Array };
   /** The workflow suspended with pending operations */
   suspended?: {
     pendingOperations: PendingOperation[];
@@ -134,12 +132,17 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   return function() {
     var args = Array.prototype.slice.call(arguments);
     var correlationId = "step_" + (globalThis.__stepCounter++);
+    // Serialize step input using the host-provided devalue serializer.
+    // This produces a format-prefixed Uint8Array ("devl" + devalue.stringify).
+    var input = globalThis.__wdk_serialize({
+      args: args,
+      closureVars: closureVarsFn ? closureVarsFn() : undefined,
+    });
     globalThis.__pending.push({
       type: "step",
       correlationId: correlationId,
       stepId: stepId,
-      args: JSON.stringify(args),
-      closureVars: closureVarsFn ? JSON.stringify(closureVarsFn()) : undefined,
+      input: input,
       hasCreatedEvent: false,
     });
     return new Promise(function(resolve, reject) {
@@ -211,6 +214,9 @@ export async function runSnapshotWorkflow(
       interruptHandler: createInterruptHandler(),
     });
 
+    // Re-register host functions after restore
+    installSerdeHostFunctions(vm);
+
     // Process delta events
     processEvents(vm, events);
     vm.executePendingJobs();
@@ -230,6 +236,9 @@ export async function runSnapshotWorkflow(
       math.setProp('random', randomFn);
     }
 
+    // Install serialize/deserialize host functions
+    installSerdeHostFunctions(vm);
+
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
 
@@ -245,7 +254,7 @@ export async function runSnapshotWorkflow(
       var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
       if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
       __wfn().then(
-        function(result) { globalThis.__workflowResult = JSON.stringify(result); },
+        function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
         function(error) { globalThis.__workflowError = error.message || String(error); }
       );
     `);
@@ -271,7 +280,6 @@ function processEvents(vm: QuickJS, events: Event[]): void {
     if (!cid) continue;
 
     const escapedCid = cid.replace(/"/g, '\\"');
-
     const eventData =
       'eventData' in event
         ? (event.eventData as Record<string, unknown>)
@@ -280,27 +288,31 @@ function processEvents(vm: QuickJS, events: Event[]): void {
     switch (event.eventType) {
       case 'step_completed': {
         const rawOutput = eventData?.output;
-        // The output may be devalue-serialized (Uint8Array with format prefix)
-        // or a plain value (from the snapshot runtime's JSON path).
-        // Deserialize it on the host side, then pass as JSON to the VM.
-        let output: unknown;
-        try {
-          output =
-            rawOutput instanceof Uint8Array
-              ? workflowSerde.deserialize(rawOutput)
-              : rawOutput;
-        } catch {
-          output = rawOutput;
+        if (rawOutput instanceof Uint8Array) {
+          // Pass serialized bytes into the VM and deserialize there
+          const bytesHandle = vm.newUint8Array(rawOutput);
+          vm.setProp(vm.global, '__tmp_result', bytesHandle);
+          bytesHandle.dispose();
+          vm.unwrapResult(
+            vm.evalCode(
+              `if(globalThis.__resolvers["${escapedCid}"]){` +
+                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+                `delete globalThis.__resolvers["${escapedCid}"];` +
+                `delete globalThis.__tmp_result;}`
+            )
+          ).dispose();
+        } else {
+          // Legacy or plain value
+          const serialized =
+            rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
+          vm.unwrapResult(
+            vm.evalCode(
+              `if(globalThis.__resolvers["${escapedCid}"]){` +
+                `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
+                `delete globalThis.__resolvers["${escapedCid}"];}`
+            )
+          ).dispose();
         }
-        const serialized =
-          output !== undefined ? JSON.stringify(output) : 'undefined';
-        vm.unwrapResult(
-          vm.evalCode(
-            `if(globalThis.__resolvers["${escapedCid}"]){` +
-              `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
-              `delete globalThis.__resolvers["${escapedCid}"];}`
-          )
-        ).dispose();
         markCreated(vm, escapedCid);
         break;
       }
@@ -356,13 +368,13 @@ function checkWorkflowState(
   vm: QuickJS,
   lastEventId: string | null
 ): SnapshotRuntimeResult {
-  // Check completed
+  // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
     if (!h.isUndefined) {
-      const result = h.toString();
+      const resultBytes = h.toUint8Array();
       vm.dispose();
-      return { completed: { result } };
+      return { completed: { result: resultBytes } };
     }
   }
 
@@ -426,6 +438,39 @@ function extractError(
       name: error?.name,
     },
   };
+}
+
+/**
+ * Install __wdk_serialize and __wdk_deserialize as host functions on the VM.
+ *
+ * __wdk_serialize: takes a JS value, returns a Uint8Array (devl-prefixed devalue)
+ * __wdk_deserialize: takes a Uint8Array, returns a JS value
+ *
+ * These are host functions because the serializer needs devalue which is
+ * bundled on the host side. The data stays as opaque Uint8Array blobs in
+ * the VM — the actual serialize/deserialize happens on the host via
+ * quickjs-wasi's dump()/hostToHandle()/newUint8Array()/toUint8Array().
+ */
+function installSerdeHostFunctions(vm: QuickJS): void {
+  // These are set on globalThis so the VM bootstrap code can call them.
+  // On restore, they're re-installed with new callback IDs — the VM
+  // code accesses them via globalThis at call time, not at definition time.
+  {
+    using serializeFn = vm.newFunction('__wdk_serialize', (...args) => {
+      const value = vm.dump(args[0]);
+      const bytes = workflowSerde.serialize(value);
+      return vm.newUint8Array(bytes);
+    });
+    vm.setProp(vm.global, '__wdk_serialize', serializeFn);
+  }
+  {
+    using deserializeFn = vm.newFunction('__wdk_deserialize', (...args) => {
+      const bytes = args[0].toUint8Array();
+      const value = workflowSerde.deserialize(bytes);
+      return vm.hostToHandle(value);
+    });
+    vm.setProp(vm.global, '__wdk_deserialize', deserializeFn);
+  }
 }
 
 function createInterruptHandler(): () => boolean {
