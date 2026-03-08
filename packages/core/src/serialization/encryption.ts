@@ -57,9 +57,21 @@ export async function decrypt(
   data: Uint8Array | unknown,
   key: CryptoKey | undefined
 ): Promise<Uint8Array | unknown> {
-  if (!key || !(data instanceof Uint8Array)) return data;
-  if (peekFormatPrefix(data) !== SerializationFormat.ENCRYPTED) return data;
+  // Non-binary data is returned as-is.
+  if (!(data instanceof Uint8Array)) return data;
+
+  const format = peekFormatPrefix(data);
+
+  // If the data is encrypted but no key was provided, fail fast.
+  if (format === SerializationFormat.ENCRYPTED && !key) {
+    throw new Error(
+      'Encrypted payload encountered but no decryption key was provided.'
+    );
+  }
+
+  // If the data is not encrypted, return it unchanged.
+  if (format !== SerializationFormat.ENCRYPTED) return data;
 
   const { payload } = decodeFormatPrefix(data);
-  return aesGcmDecrypt(key, payload);
+  return aesGcmDecrypt(key!, payload);
 }

@@ -25,11 +25,11 @@ function getClientReducers(
   global: Record<string, any> = globalThis
 ): Partial<Reducers> {
   return {
-    ...getCommonReducers(global),
+    // Class/Instance reducers MUST come before common reducers because
+    // devalue uses first-match-wins. The common Error reducer would otherwise
+    // preempt Instance for custom Error subclasses with WORKFLOW_SERIALIZE.
     ...getClassReducers(),
-    // Note: Stream reducers for client mode need additional parameters
-    // (ops, runId, cryptoKey). These are composed at call sites that
-    // need stream support.
+    ...getCommonReducers(global),
   };
 }
 
