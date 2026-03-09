@@ -136,5 +136,38 @@ export function getCommonRevivers(): Partial<Revivers> {
       new Uint8ClampedArray(reviveArrayBuffer(value)),
     Uint16Array: (value: string) => new Uint16Array(reviveArrayBuffer(value)),
     Uint32Array: (value: string) => new Uint32Array(reviveArrayBuffer(value)),
+    // Web API types — revived as plain objects in the VM since the real
+    // constructors (Headers, Request, Response) are not available in QuickJS.
+    // The workflow code can access the properties but not call Web API methods.
+    Headers: (value) => {
+      // value is [string, string][] — create an object with entries
+      const obj: Record<string, string> = {};
+      if (Array.isArray(value)) {
+        for (const [k, v] of value) {
+          obj[k] = v;
+        }
+      }
+      return obj;
+    },
+    Request: (value) => ({
+      method: value.method,
+      url: value.url,
+      headers: value.headers,
+      body: value.body,
+      duplex: value.duplex,
+    }),
+    Response: (value) => ({
+      type: value.type,
+      url: value.url,
+      status: value.status,
+      statusText: value.statusText,
+      headers: value.headers,
+      body: value.body,
+      redirected: value.redirected,
+    }),
+    // ReadableStream/WritableStream — in the VM these are opaque references.
+    // The workflow code can pass them around but can't consume them directly.
+    ReadableStream: (value) => value,
+    WritableStream: (value) => value,
   };
 }

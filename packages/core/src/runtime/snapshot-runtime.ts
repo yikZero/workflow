@@ -272,7 +272,9 @@ export async function runSnapshotWorkflow(
         workflowStartedAt: workflowRun.startedAt
           ? new Date(+workflowRun.startedAt)
           : new Date(),
-        url: '', // TODO: populate from the workflowRun if available
+        url: process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
+          : `http://localhost:${process.env.PORT ?? 3000}`,
       };
       vm.unwrapResult(
         vm.evalCode(
