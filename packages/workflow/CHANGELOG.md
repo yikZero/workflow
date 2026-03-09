@@ -1,5 +1,40 @@
 # workflow
 
+## 4.2.0-beta.67
+
+### Patch Changes
+
+- [#1285](https://github.com/vercel/workflow/pull/1285) [`36a901d`](https://github.com/vercel/workflow/commit/36a901d2d2f2ba37ec024073a7dd39a094b9e9c0) Thanks [@TooTallNate](https://github.com/TooTallNate)! - Add `workflowName` to `getWorkflowMetadata()` and `stepName` to `getStepMetadata()`
+
+- Updated dependencies [[`c71befe`](https://github.com/vercel/workflow/commit/c71befe8ec73765e67b7f2e0627251643ab245d4), [`36a901d`](https://github.com/vercel/workflow/commit/36a901d2d2f2ba37ec024073a7dd39a094b9e9c0)]:
+  - @workflow/core@4.2.0-beta.67
+  - @workflow/cli@4.2.0-beta.67
+  - @workflow/next@4.0.1-beta.63
+  - @workflow/nitro@4.0.1-beta.62
+  - @workflow/typescript-plugin@4.0.1-beta.5
+  - @workflow/errors@4.1.0-beta.18
+  - @workflow/astro@4.0.0-beta.41
+  - @workflow/nest@0.0.0-beta.16
+  - @workflow/rollup@4.0.0-beta.24
+  - @workflow/sveltekit@4.0.0-beta.56
+  - @workflow/nuxt@4.0.1-beta.51
+
+## 4.2.0-beta.66
+
+### Patch Changes
+
+- Updated dependencies [[`8b5a388`](https://github.com/vercel/workflow/commit/8b5a388a9451d7c7460481f0889da5037bd90893), [`dff00c9`](https://github.com/vercel/workflow/commit/dff00c94008f60cbfb4a398f2b98101d80ee8377)]:
+  - @workflow/core@4.2.0-beta.66
+  - @workflow/cli@4.2.0-beta.66
+  - @workflow/next@4.0.1-beta.62
+  - @workflow/nitro@4.0.1-beta.61
+  - @workflow/typescript-plugin@4.0.1-beta.5
+  - @workflow/astro@4.0.0-beta.40
+  - @workflow/nest@0.0.0-beta.15
+  - @workflow/rollup@4.0.0-beta.23
+  - @workflow/sveltekit@4.0.0-beta.55
+  - @workflow/nuxt@4.0.1-beta.50
+
 ## 4.2.0-beta.65
 
 ### Patch Changes

@@ -1,5 +1,31 @@
 # @workflow/core
 
+## 4.2.0-beta.67
+
+### Patch Changes
+
+- [#1294](https://github.com/vercel/workflow/pull/1294) [`c71befe`](https://github.com/vercel/workflow/commit/c71befe8ec73765e67b7f2e0627251643ab245d4) Thanks [@pranaygp](https://github.com/pranaygp)! - Fix premature workflow suspension when hooks have buffered payloads and a concurrent sleep or incomplete step is pending
+
+- [#1285](https://github.com/vercel/workflow/pull/1285) [`36a901d`](https://github.com/vercel/workflow/commit/36a901d2d2f2ba37ec024073a7dd39a094b9e9c0) Thanks [@TooTallNate](https://github.com/TooTallNate)! - Add `workflowName` to `getWorkflowMetadata()` and `stepName` to `getStepMetadata()`
+
+- Updated dependencies [[`d8daa2a`](https://github.com/vercel/workflow/commit/d8daa2a9a95e2d01a4e6fee4e8dde51d82db762d)]:
+  - @workflow/world@4.1.0-beta.11
+  - @workflow/world-local@4.1.0-beta.40
+  - @workflow/world-vercel@4.1.0-beta.41
+  - @workflow/errors@4.1.0-beta.18
+
+## 4.2.0-beta.66
+
+### Patch Changes
+
+- [#1290](https://github.com/vercel/workflow/pull/1290) [`8b5a388`](https://github.com/vercel/workflow/commit/8b5a388a9451d7c7460481f0889da5037bd90893) Thanks [@pranaygp](https://github.com/pranaygp)! - Support `timeoutSeconds: 0` for immediate re-enqueue without arbitrary delay
+
+- [#1283](https://github.com/vercel/workflow/pull/1283) [`dff00c9`](https://github.com/vercel/workflow/commit/dff00c94008f60cbfb4a398f2b98101d80ee8377) Thanks [@VaguelySerious](https://github.com/VaguelySerious)! - Avoid port inference in Vercel environment
+
+- Updated dependencies [[`8b5a388`](https://github.com/vercel/workflow/commit/8b5a388a9451d7c7460481f0889da5037bd90893)]:
+  - @workflow/world-local@4.1.0-beta.39
+  - @workflow/world-vercel@4.1.0-beta.40
+
 ## 4.2.0-beta.65
 
 ### Patch Changes

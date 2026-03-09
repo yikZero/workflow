@@ -148,6 +148,7 @@ export async function runWorkflow(
       set promiseQueue(value: Promise<void>) {
         promiseQueueHolder.current = value;
       },
+      pendingDeliveries: 0,
     };
 
     // Subscribe to the events log to update the timestamp in the vm context
@@ -203,6 +204,7 @@ export async function runWorkflow(
 
     // For the workflow VM, we store the context in a symbol on the `globalThis` object
     const ctx: WorkflowMetadata = {
+      workflowName: workflowRun.workflowName,
       workflowRunId: workflowRun.runId,
       workflowStartedAt: new vmGlobalThis.Date(+startedAt),
       url,
