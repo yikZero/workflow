@@ -369,7 +369,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
         );
-        const rawOutput = eventData?.output;
+        const rawOutput = eventData?.result ?? eventData?.output;
         console.log(
           `[processEvents] step_completed ${escapedCid}: hasResolver=${hasResolver}, rawOutput type=${rawOutput instanceof Uint8Array ? 'Uint8Array(' + rawOutput.length + ')' : typeof rawOutput}`
         );
