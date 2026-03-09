@@ -238,9 +238,40 @@ if (typeof Response === "undefined") {
   Object.defineProperty(globalThis.Response.prototype, "bodyUsed", {
     get: function() { return false; }
   });
-  globalThis.Response.prototype.json = function() { return __resJson(this); };
-  globalThis.Response.prototype.text = function() { return __resText(this); };
-  globalThis.Response.prototype.arrayBuffer = function() { return __resArrayBuffer(this); };
+  // The builtin response methods create step invocations that serialize
+  // only the essential response data (not methods/prototype) to avoid
+  // deep serialization stack during __wdk_serialize.
+  function __serializeResponseForStep(resp) {
+    return globalThis.__wdk_serialize({
+      args: [{
+        status: resp.status,
+        statusText: resp.statusText,
+        url: resp.url,
+        type: resp.type,
+        redirected: resp.redirected,
+        headers: resp.headers,
+        body: resp.body,
+      }],
+    });
+  }
+  globalThis.Response.prototype.json = function() {
+    var cid = "step_" + (globalThis.__stepCounter++);
+    var input = __serializeResponseForStep(this);
+    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_json", input: input, hasCreatedEvent: false });
+    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
+  };
+  globalThis.Response.prototype.text = function() {
+    var cid = "step_" + (globalThis.__stepCounter++);
+    var input = __serializeResponseForStep(this);
+    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_text", input: input, hasCreatedEvent: false });
+    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
+  };
+  globalThis.Response.prototype.arrayBuffer = function() {
+    var cid = "step_" + (globalThis.__stepCounter++);
+    var input = __serializeResponseForStep(this);
+    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_array_buffer", input: input, hasCreatedEvent: false });
+    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
+  };
   globalThis.Response.prototype.bytes = function() {
     return __resArrayBuffer(this).then(function(buf) { return new Uint8Array(buf); });
   };
