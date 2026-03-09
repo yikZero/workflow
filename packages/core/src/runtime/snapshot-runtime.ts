@@ -506,9 +506,11 @@ export async function runSnapshotWorkflow(
 // ---- Event Processing ----
 
 function processEvents(vm: QuickJS, events: Event[]): void {
+  console.log(`[processEvents] ${events.length} events`);
   for (const event of events) {
     const cid = event.correlationId;
     if (!cid) continue;
+    console.log(`[processEvents] ${event.eventType} ${cid}`);
 
     const escapedCid = cid.replace(/"/g, '\\"');
     const eventData =
@@ -614,8 +616,14 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
         );
+        console.log(
+          `[hook_received] cid=${cid} hasResolver=${hasResolver} eventData keys=${eventData ? Object.keys(eventData) : 'none'}`
+        );
         if (hasResolver) {
           const rawPayload = eventData?.payload ?? eventData?.result;
+          console.log(
+            `[hook_received] rawPayload type=${rawPayload instanceof Uint8Array ? 'Uint8Array(' + rawPayload.length + ')' : typeof rawPayload}`
+          );
           if (rawPayload instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
@@ -712,20 +720,25 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowError'));
     if (!h.isUndefined) {
       const message = h.toString();
+      console.log(`[checkWorkflowState] FAILED: ${message}`);
       vm.dispose();
       return { failed: { message } };
     }
   }
 
-  // Check suspended
+  // Check suspended — the workflow is suspended if there are active resolvers
+  // OR pending operations that haven't been created yet (e.g. hooks created
+  // upfront but not yet awaited)
   {
     using h = vm.unwrapResult(
-      vm.evalCode('Object.keys(globalThis.__resolvers).length > 0')
+      vm.evalCode(
+        'Object.keys(globalThis.__resolvers).length > 0 || globalThis.__pending.some(function(p){return!p.hasCreatedEvent;})'
+      )
     );
     if (vm.dump(h)) {
       using pendingH = vm.unwrapResult(
         vm.evalCode(
-          `globalThis.__pending.filter(function(p){return!!globalThis.__resolvers[p.correlationId];})`
+          `globalThis.__pending.filter(function(p){return!!globalThis.__resolvers[p.correlationId] || !p.hasCreatedEvent;})`
         )
       );
       const pendingOps = vm.dump(pendingH) as PendingOperation[];

@@ -12,6 +12,7 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { runtimeLogger } from '../logger.js';
+import { workflow as workflowSerde } from '../serialization/index.js';
 import { queueMessage } from './helpers.js';
 import { getWorld } from './world.js';
 import {
@@ -242,8 +243,11 @@ export async function runWorkflowWithSnapshots(params: {
             correlationId: hook.correlationId,
             eventData: {
               token: hook.token,
-              metadata: hook.metadata,
-            },
+              metadata: hook.metadata
+                ? workflowSerde.serialize(hook.metadata)
+                : undefined,
+              ...(hook.isWebhook ? { isWebhook: true } : {}),
+            } as any,
           });
         } catch (err) {
           if (WorkflowAPIError.is(err) && err.status === 409) continue;
