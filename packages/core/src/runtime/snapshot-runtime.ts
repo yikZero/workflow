@@ -39,7 +39,26 @@ export interface PendingWait {
   hasCreatedEvent: boolean;
 }
 
-export type PendingOperation = PendingStep | PendingWait;
+export interface PendingHook {
+  type: 'hook';
+  correlationId: string;
+  token: string;
+  isWebhook: boolean;
+  metadata?: unknown;
+  hasCreatedEvent: boolean;
+}
+
+export interface PendingHookDispose {
+  type: 'hook_dispose';
+  correlationId: string;
+  hasCreatedEvent: boolean;
+}
+
+export type PendingOperation =
+  | PendingStep
+  | PendingWait
+  | PendingHook
+  | PendingHookDispose;
 
 export interface SnapshotRuntimeResult {
   /** The workflow completed — result is format-prefixed devalue bytes */
@@ -87,6 +106,14 @@ export interface SnapshotRuntimeOptions {
  * - globalThis[Symbol.for("WORKFLOW_SLEEP")] - sleep function
  */
 const VM_BOOTSTRAP = `
+// Symbol.dispose / Symbol.asyncDispose polyfills for QuickJS
+if (typeof Symbol.dispose === "undefined") {
+  Symbol.dispose = Symbol.for("Symbol.dispose");
+}
+if (typeof Symbol.asyncDispose === "undefined") {
+  Symbol.asyncDispose = Symbol.for("Symbol.asyncDispose");
+}
+
 globalThis.__private_workflows = new Map();
 globalThis.__resolvers = {};
 globalThis.__pending = [];
@@ -254,6 +281,84 @@ if (typeof Request === "undefined") {
   globalThis.Request.prototype.text = function() { return __resText(this); };
   globalThis.Request.prototype.arrayBuffer = function() { return __resArrayBuffer(this); };
 }
+
+// createHook — returns a Hook object that is both a Thenable and AsyncIterable.
+// Each await/yield creates a new promise keyed by the same correlationId.
+// The promise is resolved when a hook_received event arrives.
+globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
+  options = options || {};
+  var token = options.token || ("tok_" + (globalThis.__stepCounter++));
+  var correlationId = "hook_" + (globalThis.__stepCounter++);
+  var isDisposed = false;
+  var hasCreatedEvent = false;
+
+  // Register in pending operations
+  globalThis.__pending.push({
+    type: "hook",
+    correlationId: correlationId,
+    token: token,
+    isWebhook: !!options.isWebhook,
+    metadata: options.metadata,
+    hasCreatedEvent: false,
+  });
+
+  // Each await creates a new promise for the next payload.
+  // The correlationId stays the same — the resolver is replaced each time.
+  function createHookPromise() {
+    return new Promise(function(resolve, reject) {
+      globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
+    });
+  }
+
+  function disposeHook() {
+    if (isDisposed) return;
+    isDisposed = true;
+    // Signal to the entrypoint to create a hook_disposed event
+    globalThis.__pending.push({
+      type: "hook_dispose",
+      correlationId: correlationId,
+      hasCreatedEvent: false,
+    });
+    // If there's a pending resolver, resolve it with undefined to break the iterator
+    if (globalThis.__resolvers[correlationId]) {
+      globalThis.__resolvers[correlationId].resolve(undefined);
+      delete globalThis.__resolvers[correlationId];
+    }
+  }
+
+  var hook = {
+    token: token,
+    then: function(onFulfilled, onRejected) {
+      return createHookPromise().then(onFulfilled, onRejected);
+    },
+    dispose: disposeHook,
+  };
+
+  // Symbol.dispose for explicit resource management
+  hook[Symbol.dispose] = disposeHook;
+
+  // AsyncIterable — yields payloads until disposed
+  hook[Symbol.asyncIterator] = function() {
+    return {
+      next: function() {
+        if (isDisposed) {
+          return Promise.resolve({ done: true, value: undefined });
+        }
+        return createHookPromise().then(function(value) {
+          // If disposed while waiting, signal done
+          if (isDisposed) return { done: true, value: undefined };
+          return { done: false, value: value };
+        });
+      },
+      return: function() {
+        disposeHook();
+        return Promise.resolve({ done: true, value: undefined });
+      },
+    };
+  };
+
+  return hook;
+};
 `;
 
 // ---- Runtime ----
@@ -503,10 +608,76 @@ function processEvents(vm: QuickJS, events: Event[]): void {
         markCreated(vm, escapedCid);
         break;
       }
+      case 'hook_received': {
+        const hasResolver = vm.dump(
+          vm.unwrapResult(
+            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
+          )
+        );
+        if (hasResolver) {
+          const rawPayload = eventData?.payload ?? eventData?.result;
+          if (rawPayload instanceof Uint8Array) {
+            const bytesHandle = vm.newUint8Array(rawPayload);
+            vm.setProp(vm.global, '__tmp_result', bytesHandle);
+            bytesHandle.dispose();
+            vm.unwrapResult(
+              vm.evalCode(
+                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+                  `delete globalThis.__resolvers["${escapedCid}"];` +
+                  `delete globalThis.__tmp_result;`
+              )
+            ).dispose();
+          } else {
+            const serialized =
+              rawPayload !== undefined
+                ? JSON.stringify(rawPayload)
+                : 'undefined';
+            vm.unwrapResult(
+              vm.evalCode(
+                `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
+                  `delete globalThis.__resolvers["${escapedCid}"];`
+              )
+            ).dispose();
+          }
+          {
+            let b: number;
+            do {
+              b = vm.executePendingJobs();
+            } while (b > 0);
+          }
+        }
+        markCreated(vm, escapedCid);
+        break;
+      }
+      case 'hook_conflict': {
+        const hasResolver = vm.dump(
+          vm.unwrapResult(
+            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
+          )
+        );
+        if (hasResolver) {
+          vm.unwrapResult(
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].reject(new Error("Hook token conflict"));` +
+                `delete globalThis.__resolvers["${escapedCid}"];`
+            )
+          ).dispose();
+          {
+            let b: number;
+            do {
+              b = vm.executePendingJobs();
+            } while (b > 0);
+          }
+        }
+        markCreated(vm, escapedCid);
+        break;
+      }
       case 'step_created':
       case 'step_started':
       case 'step_retrying':
-      case 'wait_created': {
+      case 'wait_created':
+      case 'hook_created':
+      case 'hook_disposed': {
         markCreated(vm, escapedCid);
         break;
       }

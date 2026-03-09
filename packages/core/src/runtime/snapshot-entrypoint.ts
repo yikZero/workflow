@@ -18,6 +18,7 @@ import {
   runSnapshotWorkflow,
   type PendingStep,
   type PendingWait,
+  type PendingHook,
 } from './snapshot-runtime.js';
 
 /**
@@ -230,6 +231,36 @@ export async function runWorkflowWithSnapshots(params: {
             idempotencyKey: step.correlationId,
           }
         );
+      } else if (op.type === 'hook' && !op.hasCreatedEvent) {
+        const hook = op as PendingHook;
+
+        // Create hook_created event
+        try {
+          await world.events.create(runId, {
+            eventType: 'hook_created',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: hook.correlationId,
+            eventData: {
+              token: hook.token,
+              metadata: hook.metadata,
+            },
+          });
+        } catch (err) {
+          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          throw err;
+        }
+      } else if (op.type === 'hook_dispose' && !op.hasCreatedEvent) {
+        // Create hook_disposed event
+        try {
+          await world.events.create(runId, {
+            eventType: 'hook_disposed',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: op.correlationId,
+          });
+        } catch (err) {
+          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          throw err;
+        }
       } else if (op.type === 'wait' && !op.hasCreatedEvent) {
         const wait = op as PendingWait;
 
