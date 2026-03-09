@@ -206,8 +206,27 @@ export async function runSnapshotWorkflow(
 
     // Process delta events
     processEvents(vm, events);
-    const jobsRun = vm.executePendingJobs();
-    console.log(`[snapshot-runtime] executePendingJobs ran ${jobsRun} jobs`);
+    // Run pending jobs in a loop until no more are enqueued.
+    // Promise chains (especially async functions with multiple awaits)
+    // may enqueue new microtasks as previous ones complete.
+    let totalJobs = 0;
+    let batch: number;
+    let iterations = 0;
+    do {
+      batch = vm.executePendingJobs();
+      totalJobs += batch;
+      iterations++;
+    } while (batch > 0);
+    console.log(
+      `[snapshot-runtime] executePendingJobs ran ${totalJobs} jobs in ${iterations} iterations`
+    );
+    // Double check: is __workflowResult set?
+    {
+      using wr = vm.unwrapResult(
+        vm.evalCode('typeof globalThis.__workflowResult')
+      );
+      console.log('[snapshot-runtime] __workflowResult type:', vm.dump(wr));
+    }
     // Debug: check VM state after processing
     {
       using resolverKeys = vm.unwrapResult(
@@ -253,11 +272,30 @@ export async function runSnapshotWorkflow(
     }
     evalResult.dispose();
 
+    // Extract workflow arguments from the run_created event
+    const runCreatedEvent = events.find((e) => e.eventType === 'run_created');
+    const runInput =
+      runCreatedEvent && 'eventData' in runCreatedEvent
+        ? (runCreatedEvent.eventData as Record<string, unknown>)?.input
+        : undefined;
+
+    // Pass the serialized input into the VM for deserialization
+    if (runInput instanceof Uint8Array) {
+      const inputHandle = vm.newUint8Array(runInput);
+      vm.setProp(vm.global, '__wdk_input', inputHandle);
+      inputHandle.dispose();
+    }
+
     // Start the workflow function
     const startResult = vm.evalCode(`
       var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
       if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
-      __wfn().then(
+      var __args = globalThis.__wdk_input
+        ? globalThis.__wdk_deserialize(globalThis.__wdk_input)
+        : [];
+      delete globalThis.__wdk_input;
+      if (!Array.isArray(__args)) __args = [__args];
+      __wfn.apply(null, __args).then(
         function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
         function(error) { globalThis.__workflowError = error.message || String(error); }
       );
@@ -269,7 +307,12 @@ export async function runSnapshotWorkflow(
 
     // Process any existing events (replay for first run)
     processEvents(vm, events);
-    vm.executePendingJobs();
+    {
+      let batch: number;
+      do {
+        batch = vm.executePendingJobs();
+      } while (batch > 0);
+    }
   }
 
   // ---- Check result ----
@@ -321,6 +364,9 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           ).dispose();
         }
         markCreated(vm, escapedCid);
+        // Drain microtasks after each resolve — async function await
+        // resumptions are enqueued as separate microtasks
+        vm.executePendingJobs();
         break;
       }
       case 'step_failed': {
@@ -336,6 +382,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           )
         ).dispose();
         markCreated(vm, escapedCid);
+        vm.executePendingJobs();
         break;
       }
       case 'wait_completed': {
@@ -347,6 +394,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           )
         ).dispose();
         markCreated(vm, escapedCid);
+        vm.executePendingJobs();
         break;
       }
       case 'step_created':
@@ -377,6 +425,10 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
     if (!h.isUndefined) {
       const resultBytes = h.toUint8Array();
+      console.log(
+        '[snapshot-runtime] workflow result bytes:',
+        new TextDecoder().decode(resultBytes)
+      );
       vm.dispose();
       return { completed: { result: resultBytes } };
     }
