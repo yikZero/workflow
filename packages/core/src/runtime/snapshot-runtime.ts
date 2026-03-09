@@ -16,6 +16,7 @@
 import seedrandom from 'seedrandom';
 import { QuickJS } from 'quickjs-wasi';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
+import { runtimeLogger } from '../logger.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
 // ---- Types ----
@@ -156,14 +157,17 @@ globalThis.module = { exports: globalThis.exports };
 // which is evaluated before this bootstrap code.
 
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
-  return function() {
+  var fn = function() {
     var args = Array.prototype.slice.call(arguments);
     var correlationId = "step_" + (globalThis.__stepCounter++);
+    // Capture 'this' for method invocations (e.g., MyClass.method())
+    var thisVal = (this !== undefined && this !== null && this !== globalThis) ? this : undefined;
     // Serialize step input using the host-provided devalue serializer.
     // This produces a format-prefixed Uint8Array ("devl" + devalue.stringify).
     var input = globalThis.__wdk_serialize({
       args: args,
       closureVars: closureVarsFn ? closureVarsFn() : undefined,
+      thisVal: thisVal,
     });
     globalThis.__pending.push({
       type: "step",
@@ -176,6 +180,11 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
       globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
     });
   };
+  // Set stepId on the proxy so the StepFunction reducer can detect and
+  // serialize step function references (e.g. when passed as arguments).
+  fn.stepId = stepId;
+  if (closureVarsFn) fn.__closureVarsFn = closureVarsFn;
+  return fn;
 };
 
 globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
@@ -449,19 +458,13 @@ export async function runSnapshotWorkflow(
     // Evaluate the VM serde bundle
     vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
 
-    // DEBUG: Write workflowCode to temp file for inspection
-    try {
-      require('fs').writeFileSync(
-        '/tmp/workflow-bundle-debug.js',
-        workflowCode
-      );
-    } catch {}
-
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
 
-    // Execute the workflow bundle
-    const evalResult = vm.evalCode(workflowCode, 'workflow.js');
+    // Execute the workflow bundle — use the workflowId as the eval filename
+    // so QuickJS stack traces reference the workflow name, enabling source map
+    // remapping by remapErrorStack (which matches frames by filename).
+    const evalResult = vm.evalCode(workflowCode, workflowId || 'workflow.js');
     if (evalResult.isException) {
       return extractError(vm, evalResult, 'Workflow evaluation failed');
     }
@@ -512,7 +515,13 @@ export async function runSnapshotWorkflow(
       if (!Array.isArray(__args)) __args = [__args];
       __wfn.apply(null, __args).then(
         function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
-        function(error) { globalThis.__workflowError = error.message || String(error); }
+        function(error) {
+          globalThis.__workflowError = {
+            message: error.message || String(error),
+            stack: error.stack || "",
+            name: error.name || "Error"
+          };
+        }
       );
     `);
     if (startResult.isException) {
@@ -543,11 +552,9 @@ export async function runSnapshotWorkflow(
 
 function processEvents(vm: QuickJS, events: Event[]): boolean {
   let resolved = false;
-  console.log(`[processEvents] ${events.length} events`);
   for (const event of events) {
     const cid = event.correlationId;
     if (!cid) continue;
-    console.log(`[processEvents] ${event.eventType} ${cid}`);
 
     const escapedCid = cid.replace(/"/g, '\\"');
     const eventData =
@@ -613,10 +620,14 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
                 ? (((errorData as Record<string, unknown>).message as string) ??
                   'Step failed')
                 : 'Step failed';
+          // Create a FatalError (matching event-replay behavior where all
+          // step_failed events produce FatalError instances, enabling
+          // FatalError.is() detection in workflow catch blocks).
           vm.unwrapResult(
             vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(msg)}));` +
-                `delete globalThis.__resolvers["${escapedCid}"];`
+              `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;` +
+                `globalThis.__resolvers["${escapedCid}"].reject(e);` +
+                `delete globalThis.__resolvers["${escapedCid}"];})()`
             )
           ).dispose();
           {
@@ -660,14 +671,8 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
             vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
         );
-        console.log(
-          `[hook_received] cid=${cid} hasResolver=${hasResolver} eventData keys=${eventData ? Object.keys(eventData) : 'none'}`
-        );
         if (hasResolver) {
           const rawPayload = eventData?.payload ?? eventData?.result;
-          console.log(
-            `[hook_received] rawPayload type=${rawPayload instanceof Uint8Array ? 'Uint8Array(' + rawPayload.length + ')' : typeof rawPayload}`
-          );
           if (rawPayload instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
@@ -766,10 +771,23 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
   {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowError'));
     if (!h.isUndefined) {
-      const message = h.toString();
-      console.log(`[checkWorkflowState] FAILED: ${message}`);
+      const errorObj = vm.dump(h) as
+        | { message: string; stack?: string; name?: string }
+        | string;
+      const failed =
+        typeof errorObj === 'string'
+          ? { message: errorObj }
+          : {
+              message: errorObj.message,
+              stack: errorObj.stack || undefined,
+              name: errorObj.name || undefined,
+            };
+      runtimeLogger.error('Snapshot runtime: workflow failed in VM', {
+        errorMessage: failed.message,
+        errorName: failed.name,
+      });
       vm.dispose();
-      return { failed: { message } };
+      return { failed };
     }
   }
 

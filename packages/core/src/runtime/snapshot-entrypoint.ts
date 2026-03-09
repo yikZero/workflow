@@ -12,6 +12,8 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { runtimeLogger } from '../logger.js';
+import { parseWorkflowName } from '@workflow/utils/parse-name';
+import { remapErrorStack } from '../source-map.js';
 import { queueMessage } from './helpers.js';
 import { getWorld } from './world.js';
 import {
@@ -297,7 +299,14 @@ export async function runWorkflowWithSnapshots(params: {
       return { timeoutSeconds: minTimeoutSeconds };
     }
   } else if (result.failed) {
-    // Workflow failed
+    // Workflow failed — remap stack trace using inline source maps
+    let errorStack = result.failed.stack;
+    if (errorStack) {
+      const parsedName = parseWorkflowName(workflowName);
+      const filename = parsedName?.moduleSpecifier || workflowName;
+      errorStack = remapErrorStack(errorStack, filename, workflowCode);
+    }
+
     runtimeLogger.error('Snapshot runtime: workflow failed', {
       workflowRunId: runId,
       errorName: result.failed.name,
@@ -315,7 +324,7 @@ export async function runWorkflowWithSnapshots(params: {
         eventData: {
           error: {
             message: result.failed.message,
-            stack: result.failed.stack,
+            stack: errorStack,
           },
         },
       });
