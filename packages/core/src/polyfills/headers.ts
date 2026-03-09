@@ -26,25 +26,30 @@ function normalizeValue(v: unknown) {
 const getValues = (v: string[]) => v.join(', ');
 
 export class Headers {
-  #map = new Map<string, string[]>();
+  private _map = new Map<string, string[]>();
 
   constructor(init?: HeadersInit) {
+    // Build the map directly to minimize call stack depth
+    // (important for QuickJS WASM where stack space is limited)
+    const map = this._map;
     if (init instanceof Headers) {
-      for (const [name, value] of init) {
-        this.append(name, value);
+      for (const [k, v] of init._map) {
+        map.set(k, [...v]);
       }
     } else if (Array.isArray(init)) {
-      for (const header of init) {
-        if (header.length !== 2) {
-          throw new TypeError(
-            `Headers constructor: expected name/value pair to be length 2, found: ${header.length}`
-          );
-        }
-        this.append(header[0], header[1]);
+      for (let i = 0; i < init.length; i++) {
+        const h = init[i];
+        const n = normalizeName(h[0]);
+        const v = normalizeValue(h[1]);
+        const a = map.get(n);
+        if (a) a.push(v);
+        else map.set(n, [v]);
       }
     } else if (init) {
-      for (const name of Object.getOwnPropertyNames(init)) {
-        this.append(name, (init as Record<string, string>)[name]);
+      for (const k of Object.getOwnPropertyNames(init)) {
+        map.set(normalizeName(k), [
+          normalizeValue((init as Record<string, string>)[k]),
+        ]);
       }
     }
   }
@@ -52,7 +57,7 @@ export class Headers {
   append(name: string, value: string): void {
     name = normalizeName(name);
     value = normalizeValue(value);
-    const map = this.#map;
+    const map = this._map;
     let values = map.get(name);
     if (!values) {
       values = [];
@@ -62,24 +67,24 @@ export class Headers {
   }
 
   delete(name: string): void {
-    this.#map.delete(normalizeName(name));
+    this._map.delete(normalizeName(name));
   }
 
   get(name: string): string | null {
-    const values = this.#map.get(normalizeName(name));
+    const values = this._map.get(normalizeName(name));
     return values ? getValues(values) : null;
   }
 
   getSetCookie(): string[] {
-    return [...(this.#map.get('set-cookie') || [])];
+    return [...(this._map.get('set-cookie') || [])];
   }
 
   has(name: string): boolean {
-    return this.#map.has(normalizeName(name));
+    return this._map.has(normalizeName(name));
   }
 
   set(name: string, value: string): void {
-    this.#map.set(normalizeName(name), [normalizeValue(value)]);
+    this._map.set(normalizeName(name), [normalizeValue(value)]);
   }
 
   forEach(
@@ -92,7 +97,7 @@ export class Headers {
   }
 
   *entries(): HeadersIterator<[string, string]> {
-    const sorted = [...this.#map.entries()].sort((a, b) =>
+    const sorted = [...this._map.entries()].sort((a, b) =>
       a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0
     );
     for (const [name, values] of sorted) {
