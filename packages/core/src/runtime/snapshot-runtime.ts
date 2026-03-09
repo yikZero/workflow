@@ -195,7 +195,7 @@ export async function runSnapshotWorkflow(
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
     vm = await QuickJS.restore(snapshot, {
       wasm: options.wasm,
-      wasi: { now: () => BigInt(startedAt) * 1_000_000n },
+      // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 64 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
@@ -245,7 +245,7 @@ export async function runSnapshotWorkflow(
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
       wasm: options.wasm,
-      wasi: { now: () => BigInt(startedAt) * 1_000_000n },
+      // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 64 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
