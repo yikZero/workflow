@@ -120,6 +120,14 @@ export function getCommonReducers(): Partial<Reducers> {
       if (bodyInit !== undefined) {
         return { bodyInit };
       }
+      // Preserve stream name if present (opaque pointer for passing to steps)
+      const name = value[Symbol.for('STREAM_NAME')];
+      if (name) {
+        const s: any = { name };
+        const type = value[Symbol.for('STREAM_TYPE')];
+        if (type) s.type = type;
+        return s;
+      }
       return { name: '__empty' };
     }) as any,
     WritableStream: ((value: any) => {
@@ -129,7 +137,8 @@ export function getCommonReducers(): Partial<Reducers> {
         !(value instanceof WS || Object.getPrototypeOf(value) === WS.prototype)
       )
         return false;
-      return { name: '__empty' };
+      const name = value[Symbol.for('STREAM_NAME')];
+      return { name: name || '__empty' };
     }) as any,
     Set: (value) => value instanceof Set && Array.from(value),
     URL: (value) => {
@@ -228,21 +237,27 @@ export function getCommonRevivers(): Partial<Revivers> {
       return value;
     },
     ReadableStream: (value) => {
-      // If this is a bodyInit (from Response/Request constructor),
-      // create a ReadableStream-like object that stores the body data
-      // so Response.json()/text() can read it.
+      const RS = (globalThis as any).ReadableStream;
+      const stream = Object.create(RS ? RS.prototype : {});
       if (value && 'bodyInit' in value) {
-        const stream = Object.create(
-          (globalThis as any).ReadableStream.prototype
-        );
-        stream.__bodyData = value.bodyInit;
-        return stream;
+        // Body from Response/Request constructor — store the raw data
+        stream[Symbol.for('BODY_INIT')] = value.bodyInit;
+      } else if (value && 'name' in value) {
+        // Named stream reference — preserve the name/type for re-serialization.
+        // Streams are opaque pointers in the VM — they can be passed to steps
+        // but not consumed directly.
+        stream[Symbol.for('STREAM_NAME')] = value.name;
+        if (value.type) stream[Symbol.for('STREAM_TYPE')] = value.type;
       }
-      // Regular stream — return as opaque reference
-      return Object.create((globalThis as any).ReadableStream.prototype);
+      return stream;
     },
-    WritableStream: (_value) => {
-      return Object.create((globalThis as any).WritableStream.prototype);
+    WritableStream: (value) => {
+      const WS = (globalThis as any).WritableStream;
+      const stream = Object.create(WS ? WS.prototype : {});
+      if (value && 'name' in value) {
+        stream[Symbol.for('STREAM_NAME')] = value.name;
+      }
+      return stream;
     },
   };
 }
