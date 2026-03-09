@@ -238,20 +238,13 @@ if (typeof Response === "undefined") {
   Object.defineProperty(globalThis.Response.prototype, "bodyUsed", {
     get: function() { return false; }
   });
-  // The builtin response methods create step invocations that serialize
-  // only the essential response data (not methods/prototype) to avoid
-  // deep serialization stack during __wdk_serialize.
+  // The builtin response methods serialize the Response object directly
+  // so that devalue's Response reducer fires and produces the correct
+  // type tag for the step handler's Response reviver (which creates a
+  // real native Response with .json()/.text() methods).
   function __serializeResponseForStep(resp) {
     return globalThis.__wdk_serialize({
-      args: [{
-        status: resp.status,
-        statusText: resp.statusText,
-        url: resp.url,
-        type: resp.type,
-        redirected: resp.redirected,
-        headers: resp.headers,
-        body: resp.body,
-      }],
+      args: [resp],
     });
   }
   globalThis.Response.prototype.json = function() {
@@ -427,11 +420,10 @@ export async function runSnapshotWorkflow(
     // that unblock workflow code, which then creates NEW resolvers for
     // subsequent events. Re-processing events matches these new resolvers
     // against events that were already delivered.
-    let maxIterations = 100; // safety limit
+    let maxIterations = 100;
     let madeProgress: boolean;
     do {
-      madeProgress = false;
-      processEvents(vm, events);
+      madeProgress = processEvents(vm, events);
       let batch: number;
       do {
         batch = vm.executePendingJobs();
@@ -533,8 +525,7 @@ export async function runSnapshotWorkflow(
       let maxIterations = 100;
       let madeProgress: boolean;
       do {
-        madeProgress = false;
-        processEvents(vm, events);
+        madeProgress = processEvents(vm, events);
         let batch: number;
         do {
           batch = vm.executePendingJobs();
@@ -550,7 +541,8 @@ export async function runSnapshotWorkflow(
 
 // ---- Event Processing ----
 
-function processEvents(vm: QuickJS, events: Event[]): void {
+function processEvents(vm: QuickJS, events: Event[]): boolean {
+  let resolved = false;
   console.log(`[processEvents] ${events.length} events`);
   for (const event of events) {
     const cid = event.correlationId;
@@ -596,6 +588,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           }
           // Drain ALL microtasks after resolve
           {
+            resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
@@ -612,10 +605,14 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           )
         );
         if (hasResolver) {
-          const errorData = eventData?.error as
-            | Record<string, unknown>
-            | undefined;
-          const msg = (errorData?.message as string) ?? 'Step failed';
+          const errorData = eventData?.error;
+          const msg =
+            typeof errorData === 'string'
+              ? errorData
+              : typeof errorData === 'object' && errorData !== null
+                ? (((errorData as Record<string, unknown>).message as string) ??
+                  'Step failed')
+                : 'Step failed';
           vm.unwrapResult(
             vm.evalCode(
               `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(msg)}));` +
@@ -623,6 +620,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             )
           ).dispose();
           {
+            resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
@@ -646,6 +644,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             )
           ).dispose();
           {
+            resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
@@ -693,6 +692,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             ).dispose();
           }
           {
+            resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
@@ -716,6 +716,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             )
           ).dispose();
           {
+            resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
@@ -736,6 +737,7 @@ function processEvents(vm: QuickJS, events: Event[]): void {
       }
     }
   }
+  return resolved;
 }
 
 function markCreated(vm: QuickJS, escapedCid: string): void {

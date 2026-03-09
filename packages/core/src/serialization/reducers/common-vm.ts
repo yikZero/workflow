@@ -87,13 +87,19 @@ export function getCommonReducers(): Partial<Reducers> {
       if (!(value instanceof R) && typeof value?.json !== 'function')
         return false;
       if (typeof value?.method !== 'string') return false;
-      return {
+      const data: any = {
         method: value.method,
         url: value.url,
         headers: value.headers,
         body: value.body,
         duplex: value.duplex,
       };
+      // Include the webhook response writable stream if present
+      const responseWritable = value[Symbol.for('WEBHOOK_RESPONSE_WRITABLE')];
+      if (responseWritable) {
+        data.responseWritable = responseWritable;
+      }
+      return data;
     },
     Response: (value) => {
       const R = (globalThis as any).Response;
@@ -218,6 +224,10 @@ export function getCommonRevivers(): Partial<Revivers> {
         value.json = Req.prototype.json;
         value.text = Req.prototype.text;
         value.arrayBuffer = Req.prototype.arrayBuffer;
+      }
+      // Carry over the webhook response writable stream to the symbol property
+      if (value.responseWritable) {
+        value[Symbol.for('WEBHOOK_RESPONSE_WRITABLE')] = value.responseWritable;
       }
       return value;
     },
