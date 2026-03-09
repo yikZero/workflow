@@ -301,9 +301,22 @@ export async function runSnapshotWorkflow(
         : [];
       delete globalThis.__wdk_input;
       if (!Array.isArray(__args)) __args = [__args];
-      __wfn.apply(null, __args).then(
-        function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
-        function(error) { globalThis.__workflowError = error.message || String(error); }
+      var __p = __wfn.apply(null, __args);
+      globalThis.__debugPromise = __p;
+      globalThis.__debugPromiseType = typeof __p;
+      globalThis.__debugThenCalled = false;
+      __p.then(
+        function(result) {
+          globalThis.__debugThenCalled = true;
+          globalThis.__debugThenResult = result;
+          globalThis.__debugThenResultType = typeof result;
+          globalThis.__workflowResult = globalThis.__wdk_serialize(result);
+        },
+        function(error) {
+          globalThis.__debugThenCalled = true;
+          globalThis.__debugThenError = error;
+          globalThis.__workflowError = error.message || String(error);
+        }
       );
     `);
     if (startResult.isException) {
@@ -351,25 +364,41 @@ function processEvents(vm: QuickJS, events: Event[]): void {
 
     switch (event.eventType) {
       case 'step_completed': {
-        // Only resolve if the resolver still exists (skip already-resolved steps from snapshot)
         const hasResolver = vm.dump(
           vm.unwrapResult(
             vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
         );
+        const rawOutput = eventData?.output;
+        console.log(
+          `[processEvents] step_completed ${escapedCid}: hasResolver=${hasResolver}, rawOutput type=${rawOutput instanceof Uint8Array ? 'Uint8Array(' + rawOutput.length + ')' : typeof rawOutput}`
+        );
         if (hasResolver) {
-          const rawOutput = eventData?.output;
           if (rawOutput instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawOutput);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.unwrapResult(
               vm.evalCode(
-                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+                `var __deserialized = globalThis.__wdk_deserialize(globalThis.__tmp_result);` +
+                  `globalThis.__debugDeserialized = __deserialized;` +
+                  `globalThis.__debugDeserializedType = typeof __deserialized;` +
+                  `globalThis.__resolvers["${escapedCid}"].resolve(__deserialized);` +
                   `delete globalThis.__resolvers["${escapedCid}"];` +
                   `delete globalThis.__tmp_result;`
               )
             ).dispose();
+            console.log(
+              `[processEvents] deserialized ${escapedCid}:`,
+              vm.dump(
+                vm.unwrapResult(vm.evalCode('globalThis.__debugDeserialized'))
+              ),
+              vm.dump(
+                vm.unwrapResult(
+                  vm.evalCode('globalThis.__debugDeserializedType')
+                )
+              )
+            );
           } else {
             const serialized =
               rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
@@ -464,6 +493,20 @@ function markCreated(vm: QuickJS, escapedCid: string): void {
 // ---- State Checking ----
 
 function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
+  // Debug: check the .then handler state
+  console.log(
+    '[checkState] thenCalled:',
+    vm.dump(vm.unwrapResult(vm.evalCode('globalThis.__debugThenCalled')))
+  );
+  console.log(
+    '[checkState] thenResultType:',
+    vm.dump(vm.unwrapResult(vm.evalCode('typeof globalThis.__debugThenResult')))
+  );
+  console.log(
+    '[checkState] thenResult:',
+    vm.dump(vm.unwrapResult(vm.evalCode('globalThis.__debugThenResult')))
+  );
+
   // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
