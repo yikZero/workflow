@@ -81,8 +81,12 @@ export function getCommonReducers(): Partial<Reducers> {
     Request: (value) => {
       const R = (globalThis as any).Request;
       if (!R) return false;
-      if (!(value instanceof R) && typeof value?.method !== 'string')
+      // Use instanceof OR check for the Request-specific .json method
+      // (duck-typing on method/url alone would match plain objects and
+      // cause infinite recursion since the reducer output also has those)
+      if (!(value instanceof R) && typeof value?.json !== 'function')
         return false;
+      if (typeof value?.method !== 'string') return false;
       return {
         method: value.method,
         url: value.url,
@@ -94,11 +98,10 @@ export function getCommonReducers(): Partial<Reducers> {
     Response: (value) => {
       const R = (globalThis as any).Response;
       if (!R) return false;
-      // Check both instanceof and duck-typing (for objects with methods attached)
-      if (!(value instanceof R) && typeof value?.status !== 'number')
+      // Use instanceof OR check for Response-specific .clone method
+      if (!(value instanceof R) && typeof value?.clone !== 'function')
         return false;
-      // Only serialize if it has Response methods (json/text/etc)
-      if (typeof value?.json !== 'function') return false;
+      if (typeof value?.status !== 'number') return false;
       return {
         type: value.type,
         url: value.url,

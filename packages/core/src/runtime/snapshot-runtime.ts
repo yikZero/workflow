@@ -423,15 +423,21 @@ export async function runSnapshotWorkflow(
     // (set by the serde bundle), so they survive snapshot/restore as part
     // of the QuickJS heap. No re-registration needed.
 
-    // Process delta events
-    processEvents(vm, events);
-    // Run pending jobs in a loop until no more are enqueued.
-    // Promise chains (especially async functions with multiple awaits)
-    // may enqueue new microtasks as previous ones complete.
-    let batch: number;
+    // Process events and drain jobs in a loop. Events may resolve promises
+    // that unblock workflow code, which then creates NEW resolvers for
+    // subsequent events. Re-processing events matches these new resolvers
+    // against events that were already delivered.
+    let maxIterations = 100; // safety limit
+    let madeProgress: boolean;
     do {
-      batch = vm.executePendingJobs();
-    } while (batch > 0);
+      madeProgress = false;
+      processEvents(vm, events);
+      let batch: number;
+      do {
+        batch = vm.executePendingJobs();
+        if (batch > 0) madeProgress = true;
+      } while (batch > 0);
+    } while (madeProgress && --maxIterations > 0);
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
@@ -522,13 +528,19 @@ export async function runSnapshotWorkflow(
     }
     startResult.dispose();
 
-    // Process any existing events (replay for first run)
-    processEvents(vm, events);
+    // Process events and drain jobs in a loop (same as restore path)
     {
-      let batch: number;
+      let maxIterations = 100;
+      let madeProgress: boolean;
       do {
-        batch = vm.executePendingJobs();
-      } while (batch > 0);
+        madeProgress = false;
+        processEvents(vm, events);
+        let batch: number;
+        do {
+          batch = vm.executePendingJobs();
+          if (batch > 0) madeProgress = true;
+        } while (batch > 0);
+      } while (madeProgress && --maxIterations > 0);
     }
   }
 
