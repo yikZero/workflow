@@ -12,7 +12,7 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { runtimeLogger } from '../logger.js';
-import { getAllWorkflowRunEvents, queueMessage } from './helpers.js';
+import { queueMessage } from './helpers.js';
 import { getWorld } from './world.js';
 import {
   runSnapshotWorkflow,
@@ -47,11 +47,14 @@ export async function runWorkflowWithSnapshots(params: {
   // Check for existing snapshot
   const existingSnapshot = await world.snapshots.load(runId);
 
+  // Fetch events — either all (first run) or since last snapshot (restore)
   let events: Event[];
-  if (existingSnapshot) {
-    // Fetch only events since the last snapshot
+  let lastEventsCursor: string | null =
+    existingSnapshot?.metadata.eventsCursor ?? null;
+
+  {
     const allEvents: Event[] = [];
-    let cursor: string | null = existingSnapshot.metadata.lastEventId;
+    let cursor: string | null = lastEventsCursor;
     let hasMore = true;
 
     while (hasMore) {
@@ -69,19 +72,16 @@ export async function runWorkflowWithSnapshots(params: {
     }
 
     events = allEvents;
-    runtimeLogger.info('Snapshot runtime: restoring from snapshot', {
-      workflowRunId: runId,
-      deltaEvents: events.length,
-      lastEventId: existingSnapshot.metadata.lastEventId,
-    });
-  } else {
-    // First run: load all events
-    events = await getAllWorkflowRunEvents(runId);
-    runtimeLogger.info('Snapshot runtime: first run', {
-      workflowRunId: runId,
-      totalEvents: events.length,
-    });
+    // Capture the final cursor position (after all fetched events)
+    if (cursor) lastEventsCursor = cursor;
   }
+
+  runtimeLogger.info('Snapshot runtime: fetched events', {
+    workflowRunId: runId,
+    eventCount: events.length,
+    isRestore: !!existingSnapshot,
+    eventsCursor: lastEventsCursor,
+  });
 
   // Check for elapsed waits
   const now = Date.now();
@@ -160,17 +160,29 @@ export async function runWorkflowWithSnapshots(params: {
     }
   } else if (result.suspended) {
     // Workflow suspended
-    const { pendingOperations, snapshot, lastEventId } = result.suspended;
+    const { pendingOperations, snapshot } = result.suspended;
 
     runtimeLogger.info('Snapshot runtime: workflow suspended', {
       workflowRunId: runId,
       pendingSteps: pendingOperations.filter((p) => p.type === 'step').length,
       pendingWaits: pendingOperations.filter((p) => p.type === 'wait').length,
+      pendingOps: pendingOperations.map((p) => ({
+        type: p.type,
+        correlationId: p.correlationId,
+        hasCreatedEvent: p.hasCreatedEvent,
+        ...(p.type === 'step'
+          ? {
+              stepId: (p as PendingStep).stepId,
+              inputType: typeof (p as PendingStep).input,
+              inputIsUint8Array: (p as PendingStep).input instanceof Uint8Array,
+            }
+          : {}),
+      })),
     });
 
     // Save the snapshot
     await world.snapshots.save(runId, snapshot, {
-      lastEventId,
+      eventsCursor: lastEventsCursor,
       createdAt: new Date(),
     });
 
@@ -178,8 +190,23 @@ export async function runWorkflowWithSnapshots(params: {
     let minTimeoutSeconds: number | undefined;
 
     for (const op of pendingOperations) {
+      console.log(
+        '[snapshot-entrypoint] pending op:',
+        op.type,
+        op.correlationId,
+        'hasCreatedEvent:',
+        op.hasCreatedEvent
+      );
       if (op.type === 'step' && !op.hasCreatedEvent) {
         const step = op as PendingStep;
+        console.log(
+          '[snapshot-entrypoint] Creating step_created for',
+          step.correlationId,
+          'stepId:',
+          step.stepId,
+          'input instanceof Uint8Array:',
+          step.input instanceof Uint8Array
+        );
 
         // Create step_created event
         try {

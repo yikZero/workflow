@@ -48,7 +48,6 @@ export interface SnapshotRuntimeResult {
   suspended?: {
     pendingOperations: PendingOperation[];
     snapshot: Uint8Array;
-    lastEventId: string | null;
   };
   /** The workflow failed */
   failed?: {
@@ -189,12 +188,6 @@ export async function runSnapshotWorkflow(
   const seed = `${workflowRun.runId}:${workflowRun.workflowName}:${startedAt}`;
   const rng = seedrandom(seed);
 
-  let lastEventId: string | null =
-    existingSnapshot?.metadata.lastEventId ?? null;
-  for (const event of events) {
-    lastEventId = event.eventId;
-  }
-
   let vm: QuickJS;
 
   if (existingSnapshot) {
@@ -213,7 +206,22 @@ export async function runSnapshotWorkflow(
 
     // Process delta events
     processEvents(vm, events);
-    vm.executePendingJobs();
+    const jobsRun = vm.executePendingJobs();
+    console.log(`[snapshot-runtime] executePendingJobs ran ${jobsRun} jobs`);
+    // Debug: check VM state after processing
+    {
+      using resolverKeys = vm.unwrapResult(
+        vm.evalCode('Object.keys(globalThis.__resolvers)')
+      );
+      console.log(
+        '[snapshot-runtime] active resolvers:',
+        vm.dump(resolverKeys)
+      );
+      using pendingLen = vm.unwrapResult(
+        vm.evalCode('globalThis.__pending.length')
+      );
+      console.log('[snapshot-runtime] pending length:', vm.dump(pendingLen));
+    }
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
@@ -265,12 +273,13 @@ export async function runSnapshotWorkflow(
   }
 
   // ---- Check result ----
-  return checkWorkflowState(vm, lastEventId);
+  return checkWorkflowState(vm);
 }
 
 // ---- Event Processing ----
 
 function processEvents(vm: QuickJS, events: Event[]): void {
+  console.log(`[processEvents] Processing ${events.length} events`);
   for (const event of events) {
     const cid = event.correlationId;
     if (!cid) continue;
@@ -280,6 +289,8 @@ function processEvents(vm: QuickJS, events: Event[]): void {
       'eventData' in event
         ? (event.eventData as Record<string, unknown>)
         : undefined;
+
+    console.log(`[processEvents] ${event.eventType} ${cid}`);
 
     switch (event.eventType) {
       case 'step_completed': {
@@ -360,10 +371,7 @@ function markCreated(vm: QuickJS, escapedCid: string): void {
 
 // ---- State Checking ----
 
-function checkWorkflowState(
-  vm: QuickJS,
-  lastEventId: string | null
-): SnapshotRuntimeResult {
+function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
   // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
@@ -405,7 +413,6 @@ function checkWorkflowState(
         suspended: {
           pendingOperations: pendingOps,
           snapshot: serialized,
-          lastEventId,
         },
       };
     }

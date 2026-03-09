@@ -98,7 +98,7 @@ describe('runSnapshotWorkflow', () => {
       ],
       existingSnapshot: {
         data: r1.suspended!.snapshot,
-        metadata: { lastEventId: null, createdAt: new Date() },
+        metadata: { eventsCursor: null, createdAt: new Date() },
       },
     });
 
@@ -143,7 +143,7 @@ describe('runSnapshotWorkflow', () => {
       ],
       existingSnapshot: {
         data: r1.suspended!.snapshot,
-        metadata: { lastEventId: null, createdAt: new Date() },
+        metadata: { eventsCursor: null, createdAt: new Date() },
       },
     });
     expect(r2.suspended?.pendingOperations[0]?.correlationId).toBe('step_1');
@@ -164,7 +164,7 @@ describe('runSnapshotWorkflow', () => {
       ],
       existingSnapshot: {
         data: r2.suspended!.snapshot,
-        metadata: { lastEventId: 'evnt_001', createdAt: new Date() },
+        metadata: { eventsCursor: 'evnt_001', createdAt: new Date() },
       },
     });
     expect(unwrapResult(r3.completed!.result)).toBe(25);
@@ -206,7 +206,7 @@ describe('runSnapshotWorkflow', () => {
       ],
       existingSnapshot: {
         data: r1.suspended!.snapshot,
-        metadata: { lastEventId: null, createdAt: new Date() },
+        metadata: { eventsCursor: null, createdAt: new Date() },
       },
     });
     expect(unwrapResult(r2.completed!.result)).toBe('woke up');
@@ -246,7 +246,7 @@ describe('runSnapshotWorkflow', () => {
       ],
       existingSnapshot: {
         data: r1.suspended!.snapshot,
-        metadata: { lastEventId: null, createdAt: new Date() },
+        metadata: { eventsCursor: null, createdAt: new Date() },
       },
     });
     expect(unwrapResult(r2.completed!.result)).toBe('caught: boom');

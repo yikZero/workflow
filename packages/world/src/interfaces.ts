@@ -182,7 +182,7 @@ export interface Storage {
    * allowing workflow execution to resume from the exact point of suspension
    * instead of replaying the full event log.
    *
-   * The metadata (including lastEventId) is stored alongside the snapshot data
+   * The metadata (including eventsCursor) is stored alongside the snapshot data
    * so that on restore, only events created after the snapshot need to be fetched.
    */
   snapshots: {
