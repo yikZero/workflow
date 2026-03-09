@@ -72,7 +72,65 @@ export function getCommonReducers(): Partial<Reducers> {
         source: value.source,
         flags: value.flags,
       },
-    // Request/Response are not available in the VM — omitted
+    // Request/Response/Headers — serialize using the polyfill constructors
+    Headers: (value) => {
+      const H = (globalThis as any).Headers;
+      if (!H || !(value instanceof H)) return false;
+      return Array.from(value as Iterable<[string, string]>);
+    },
+    Request: (value) => {
+      const R = (globalThis as any).Request;
+      if (!R) return false;
+      if (!(value instanceof R) && typeof value?.method !== 'string')
+        return false;
+      return {
+        method: value.method,
+        url: value.url,
+        headers: value.headers,
+        body: value.body,
+        duplex: value.duplex,
+      };
+    },
+    Response: (value) => {
+      const R = (globalThis as any).Response;
+      if (!R) return false;
+      // Check both instanceof and duck-typing (for objects with methods attached)
+      if (!(value instanceof R) && typeof value?.status !== 'number')
+        return false;
+      // Only serialize if it has Response methods (json/text/etc)
+      if (typeof value?.json !== 'function') return false;
+      return {
+        type: value.type,
+        url: value.url,
+        status: value.status,
+        statusText: value.statusText,
+        headers: value.headers,
+        body: value.body,
+        redirected: value.redirected,
+      };
+    },
+    ReadableStream: ((value: any) => {
+      const RS = (globalThis as any).ReadableStream;
+      if (
+        !RS ||
+        !(value instanceof RS || Object.getPrototypeOf(value) === RS.prototype)
+      )
+        return false;
+      const bodyInit = value[Symbol.for('BODY_INIT')];
+      if (bodyInit !== undefined) {
+        return { bodyInit };
+      }
+      return { name: '__empty' };
+    }) as any,
+    WritableStream: ((value: any) => {
+      const WS = (globalThis as any).WritableStream;
+      if (
+        !WS ||
+        !(value instanceof WS || Object.getPrototypeOf(value) === WS.prototype)
+      )
+        return false;
+      return { name: '__empty' };
+    }) as any,
     Set: (value) => value instanceof Set && Array.from(value),
     URL: (value) => {
       // URL may not be available in QuickJS — check typeof
@@ -142,12 +200,28 @@ export function getCommonRevivers(): Partial<Revivers> {
     Headers: (value) => {
       return new (globalThis as any).Headers(value);
     },
-    Request: (value) => {
-      Object.setPrototypeOf(value, (globalThis as any).Request.prototype);
+    Request: (value: any) => {
+      const Req = (globalThis as any).Request;
+      if (Req) {
+        value.json = Req.prototype.json;
+        value.text = Req.prototype.text;
+        value.arrayBuffer = Req.prototype.arrayBuffer;
+      }
       return value;
     },
     Response: (value: any) => {
-      Object.setPrototypeOf(value, (globalThis as any).Response.prototype);
+      // Don't use Object.setPrototypeOf — devalue continues to set properties
+      // on the object after the reviver runs, and getter-only properties
+      // (like 'ok') on the prototype would cause "no setter" errors.
+      // Instead, copy methods directly onto the object.
+      const Resp = (globalThis as any).Response;
+      if (Resp) {
+        value.json = Resp.prototype.json;
+        value.text = Resp.prototype.text;
+        value.arrayBuffer = Resp.prototype.arrayBuffer;
+        if (Resp.prototype.bytes) value.bytes = Resp.prototype.bytes;
+        if (Resp.prototype.clone) value.clone = Resp.prototype.clone;
+      }
       value._body = value.body;
       value.ok = value.status >= 200 && value.status < 300;
       value.bodyUsed = false;
