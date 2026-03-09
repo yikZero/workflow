@@ -257,10 +257,16 @@ export async function runSnapshotWorkflow(
       math.setProp('random', randomFn);
     }
 
-    // Evaluate the VM serde bundle — provides TextEncoder/TextDecoder polyfills
-    // and sets __wdk_serialize/__wdk_deserialize on globalThis.
-    // This runs devalue + all workflow reducers/revivers inside the VM.
+    // Evaluate the VM serde bundle
     vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
+
+    // DEBUG: Write workflowCode to temp file for inspection
+    try {
+      require('fs').writeFileSync(
+        '/tmp/workflow-bundle-debug.js',
+        workflowCode
+      );
+    } catch {}
 
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
@@ -333,68 +339,106 @@ function processEvents(vm: QuickJS, events: Event[]): void {
         ? (event.eventData as Record<string, unknown>)
         : undefined;
 
-    console.log(`[processEvents] ${event.eventType} ${cid}`);
+    // Log the event and whether the resolver exists
+    {
+      using resolverCheck = vm.unwrapResult(
+        vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
+      );
+      console.log(
+        `[processEvents] ${event.eventType} ${cid} (resolver: ${vm.dump(resolverCheck)})`
+      );
+    }
 
     switch (event.eventType) {
       case 'step_completed': {
-        const rawOutput = eventData?.output;
-        if (rawOutput instanceof Uint8Array) {
-          // Pass serialized bytes into the VM and deserialize there
-          const bytesHandle = vm.newUint8Array(rawOutput);
-          vm.setProp(vm.global, '__tmp_result', bytesHandle);
-          bytesHandle.dispose();
+        // Only resolve if the resolver still exists (skip already-resolved steps from snapshot)
+        const hasResolver = vm.dump(
           vm.unwrapResult(
-            vm.evalCode(
-              `if(globalThis.__resolvers["${escapedCid}"]){` +
+            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
+          )
+        );
+        if (hasResolver) {
+          const rawOutput = eventData?.output;
+          if (rawOutput instanceof Uint8Array) {
+            const bytesHandle = vm.newUint8Array(rawOutput);
+            vm.setProp(vm.global, '__tmp_result', bytesHandle);
+            bytesHandle.dispose();
+            vm.unwrapResult(
+              vm.evalCode(
                 `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
-                `delete globalThis.__resolvers["${escapedCid}"];` +
-                `delete globalThis.__tmp_result;}`
-            )
-          ).dispose();
-        } else {
-          // Legacy or plain value
-          const serialized =
-            rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
-          vm.unwrapResult(
-            vm.evalCode(
-              `if(globalThis.__resolvers["${escapedCid}"]){` +
+                  `delete globalThis.__resolvers["${escapedCid}"];` +
+                  `delete globalThis.__tmp_result;`
+              )
+            ).dispose();
+          } else {
+            const serialized =
+              rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
+            vm.unwrapResult(
+              vm.evalCode(
                 `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
-                `delete globalThis.__resolvers["${escapedCid}"];}`
-            )
-          ).dispose();
+                  `delete globalThis.__resolvers["${escapedCid}"];`
+              )
+            ).dispose();
+          }
+          // Drain ALL microtasks after resolve
+          {
+            let b: number;
+            do {
+              b = vm.executePendingJobs();
+            } while (b > 0);
+          }
         }
         markCreated(vm, escapedCid);
-        // Drain microtasks after each resolve — async function await
-        // resumptions are enqueued as separate microtasks
-        vm.executePendingJobs();
         break;
       }
       case 'step_failed': {
-        const errorData = eventData?.error as
-          | Record<string, unknown>
-          | undefined;
-        const msg = (errorData?.message as string) ?? 'Step failed';
-        vm.unwrapResult(
-          vm.evalCode(
-            `if(globalThis.__resolvers["${escapedCid}"]){` +
-              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(msg)}));` +
-              `delete globalThis.__resolvers["${escapedCid}"];}`
+        const hasResolver = vm.dump(
+          vm.unwrapResult(
+            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
-        ).dispose();
+        );
+        if (hasResolver) {
+          const errorData = eventData?.error as
+            | Record<string, unknown>
+            | undefined;
+          const msg = (errorData?.message as string) ?? 'Step failed';
+          vm.unwrapResult(
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(msg)}));` +
+                `delete globalThis.__resolvers["${escapedCid}"];`
+            )
+          ).dispose();
+          {
+            let b: number;
+            do {
+              b = vm.executePendingJobs();
+            } while (b > 0);
+          }
+        }
         markCreated(vm, escapedCid);
-        vm.executePendingJobs();
         break;
       }
       case 'wait_completed': {
-        vm.unwrapResult(
-          vm.evalCode(
-            `if(globalThis.__resolvers["${escapedCid}"]){` +
-              `globalThis.__resolvers["${escapedCid}"].resolve();` +
-              `delete globalThis.__resolvers["${escapedCid}"];}`
+        const hasResolver = vm.dump(
+          vm.unwrapResult(
+            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
-        ).dispose();
+        );
+        if (hasResolver) {
+          vm.unwrapResult(
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].resolve();` +
+                `delete globalThis.__resolvers["${escapedCid}"];`
+            )
+          ).dispose();
+          {
+            let b: number;
+            do {
+              b = vm.executePendingJobs();
+            } while (b > 0);
+          }
+        }
         markCreated(vm, escapedCid);
-        vm.executePendingJobs();
         break;
       }
       case 'step_created':
