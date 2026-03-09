@@ -292,13 +292,15 @@ globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
   var isDisposed = false;
   var hasCreatedEvent = false;
 
-  // Register in pending operations
+  // Register in pending operations.
+  // Serialize metadata inside the VM so Response/Request objects are
+  // properly handled by the devalue reducers before crossing the boundary.
   globalThis.__pending.push({
     type: "hook",
     correlationId: correlationId,
     token: token,
     isWebhook: !!options.isWebhook,
-    metadata: options.metadata,
+    metadata: options.metadata ? globalThis.__wdk_serialize(options.metadata) : undefined,
     hasCreatedEvent: false,
   });
 
@@ -382,7 +384,7 @@ export async function runSnapshotWorkflow(
     vm = await QuickJS.restore(snapshot, {
       wasm: options.wasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
-      memoryLimit: 64 * 1024 * 1024,
+      memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
 
@@ -404,7 +406,7 @@ export async function runSnapshotWorkflow(
     vm = await QuickJS.create({
       wasm: options.wasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
-      memoryLimit: 64 * 1024 * 1024,
+      memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
 
