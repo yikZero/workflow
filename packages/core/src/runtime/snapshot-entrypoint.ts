@@ -190,23 +190,8 @@ export async function runWorkflowWithSnapshots(params: {
     let minTimeoutSeconds: number | undefined;
 
     for (const op of pendingOperations) {
-      console.log(
-        '[snapshot-entrypoint] pending op:',
-        op.type,
-        op.correlationId,
-        'hasCreatedEvent:',
-        op.hasCreatedEvent
-      );
       if (op.type === 'step' && !op.hasCreatedEvent) {
         const step = op as PendingStep;
-        console.log(
-          '[snapshot-entrypoint] Creating step_created for',
-          step.correlationId,
-          'stepId:',
-          step.stepId,
-          'input instanceof Uint8Array:',
-          step.input instanceof Uint8Array
-        );
 
         // Create step_created event
         try {

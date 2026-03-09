@@ -209,38 +209,10 @@ export async function runSnapshotWorkflow(
     // Run pending jobs in a loop until no more are enqueued.
     // Promise chains (especially async functions with multiple awaits)
     // may enqueue new microtasks as previous ones complete.
-    let totalJobs = 0;
     let batch: number;
-    let iterations = 0;
     do {
       batch = vm.executePendingJobs();
-      totalJobs += batch;
-      iterations++;
     } while (batch > 0);
-    console.log(
-      `[snapshot-runtime] executePendingJobs ran ${totalJobs} jobs in ${iterations} iterations`
-    );
-    // Double check: is __workflowResult set?
-    {
-      using wr = vm.unwrapResult(
-        vm.evalCode('typeof globalThis.__workflowResult')
-      );
-      console.log('[snapshot-runtime] __workflowResult type:', vm.dump(wr));
-    }
-    // Debug: check VM state after processing
-    {
-      using resolverKeys = vm.unwrapResult(
-        vm.evalCode('Object.keys(globalThis.__resolvers)')
-      );
-      console.log(
-        '[snapshot-runtime] active resolvers:',
-        vm.dump(resolverKeys)
-      );
-      using pendingLen = vm.unwrapResult(
-        vm.evalCode('globalThis.__pending.length')
-      );
-      console.log('[snapshot-runtime] pending length:', vm.dump(pendingLen));
-    }
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
@@ -292,6 +264,24 @@ export async function runSnapshotWorkflow(
       inputHandle.dispose();
     }
 
+    // Set workflow context metadata (for getWorkflowMetadata())
+    {
+      const metadata = {
+        workflowName: workflowRun.workflowName,
+        workflowRunId: workflowRun.runId,
+        workflowStartedAt: workflowRun.startedAt
+          ? new Date(+workflowRun.startedAt)
+          : new Date(),
+        url: '', // TODO: populate from the workflowRun if available
+      };
+      vm.unwrapResult(
+        vm.evalCode(
+          `globalThis[Symbol.for("WORKFLOW_CONTEXT")] = ${JSON.stringify(metadata)};` +
+            `globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowStartedAt = new Date(${JSON.stringify(metadata.workflowStartedAt.toISOString())});`
+        )
+      ).dispose();
+    }
+
     // Start the workflow function
     const startResult = vm.evalCode(`
       var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
@@ -301,22 +291,9 @@ export async function runSnapshotWorkflow(
         : [];
       delete globalThis.__wdk_input;
       if (!Array.isArray(__args)) __args = [__args];
-      var __p = __wfn.apply(null, __args);
-      globalThis.__debugPromise = __p;
-      globalThis.__debugPromiseType = typeof __p;
-      globalThis.__debugThenCalled = false;
-      __p.then(
-        function(result) {
-          globalThis.__debugThenCalled = true;
-          globalThis.__debugThenResult = result;
-          globalThis.__debugThenResultType = typeof result;
-          globalThis.__workflowResult = globalThis.__wdk_serialize(result);
-        },
-        function(error) {
-          globalThis.__debugThenCalled = true;
-          globalThis.__debugThenError = error;
-          globalThis.__workflowError = error.message || String(error);
-        }
+      __wfn.apply(null, __args).then(
+        function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
+        function(error) { globalThis.__workflowError = error.message || String(error); }
       );
     `);
     if (startResult.isException) {
@@ -341,7 +318,6 @@ export async function runSnapshotWorkflow(
 // ---- Event Processing ----
 
 function processEvents(vm: QuickJS, events: Event[]): void {
-  console.log(`[processEvents] Processing ${events.length} events`);
   for (const event of events) {
     const cid = event.correlationId;
     if (!cid) continue;
@@ -353,15 +329,6 @@ function processEvents(vm: QuickJS, events: Event[]): void {
         : undefined;
 
     // Log the event and whether the resolver exists
-    {
-      using resolverCheck = vm.unwrapResult(
-        vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-      );
-      console.log(
-        `[processEvents] ${event.eventType} ${cid} (resolver: ${vm.dump(resolverCheck)})`
-      );
-    }
-
     switch (event.eventType) {
       case 'step_completed': {
         const hasResolver = vm.dump(
@@ -370,9 +337,6 @@ function processEvents(vm: QuickJS, events: Event[]): void {
           )
         );
         const rawOutput = eventData?.result ?? eventData?.output;
-        console.log(
-          `[processEvents] step_completed ${escapedCid}: hasResolver=${hasResolver}, rawOutput type=${rawOutput instanceof Uint8Array ? 'Uint8Array(' + rawOutput.length + ')' : typeof rawOutput}`
-        );
         if (hasResolver) {
           if (rawOutput instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawOutput);
@@ -380,25 +344,11 @@ function processEvents(vm: QuickJS, events: Event[]): void {
             bytesHandle.dispose();
             vm.unwrapResult(
               vm.evalCode(
-                `var __deserialized = globalThis.__wdk_deserialize(globalThis.__tmp_result);` +
-                  `globalThis.__debugDeserialized = __deserialized;` +
-                  `globalThis.__debugDeserializedType = typeof __deserialized;` +
-                  `globalThis.__resolvers["${escapedCid}"].resolve(__deserialized);` +
+                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
                   `delete globalThis.__resolvers["${escapedCid}"];` +
                   `delete globalThis.__tmp_result;`
               )
             ).dispose();
-            console.log(
-              `[processEvents] deserialized ${escapedCid}:`,
-              vm.dump(
-                vm.unwrapResult(vm.evalCode('globalThis.__debugDeserialized'))
-              ),
-              vm.dump(
-                vm.unwrapResult(
-                  vm.evalCode('globalThis.__debugDeserializedType')
-                )
-              )
-            );
           } else {
             const serialized =
               rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
@@ -493,29 +443,11 @@ function markCreated(vm: QuickJS, escapedCid: string): void {
 // ---- State Checking ----
 
 function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
-  // Debug: check the .then handler state
-  console.log(
-    '[checkState] thenCalled:',
-    vm.dump(vm.unwrapResult(vm.evalCode('globalThis.__debugThenCalled')))
-  );
-  console.log(
-    '[checkState] thenResultType:',
-    vm.dump(vm.unwrapResult(vm.evalCode('typeof globalThis.__debugThenResult')))
-  );
-  console.log(
-    '[checkState] thenResult:',
-    vm.dump(vm.unwrapResult(vm.evalCode('globalThis.__debugThenResult')))
-  );
-
   // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
     using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
     if (!h.isUndefined) {
       const resultBytes = h.toUint8Array();
-      console.log(
-        '[snapshot-runtime] workflow result bytes:',
-        new TextDecoder().decode(resultBytes)
-      );
       vm.dispose();
       return { completed: { result: resultBytes } };
     }
