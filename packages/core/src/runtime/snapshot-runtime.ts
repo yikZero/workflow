@@ -13,9 +13,9 @@
  * resolve/reject promises.
  */
 
-import seedrandom from 'seedrandom';
-import { QuickJS } from 'quickjs-wasi';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
+import { QuickJS } from 'quickjs-wasi';
+import seedrandom from 'seedrandom';
 import { runtimeLogger } from '../logger.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
@@ -121,6 +121,9 @@ globalThis.__pending = [];
 globalThis.__stepCounter = 0;
 globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
+// __runIdPrefix is set before bootstrap to make correlationIds globally unique
+// across runs. Falls back to empty string for backward compatibility.
+var __cidPrefix = globalThis.__runIdPrefix || "";
 
 // Stubs for Web APIs that the workflow bundle may reference but are not
 // available in QuickJS. These are lightweight polyfills, not full
@@ -159,7 +162,7 @@ globalThis.module = { exports: globalThis.exports };
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   var fn = function() {
     var args = Array.prototype.slice.call(arguments);
-    var correlationId = "step_" + (globalThis.__stepCounter++);
+    var correlationId = __cidPrefix + "step_" + (globalThis.__stepCounter++);
     // Capture 'this' for method invocations (e.g., MyClass.method())
     var thisVal = (this !== undefined && this !== null && this !== globalThis) ? this : undefined;
     // Serialize step input using the host-provided devalue serializer.
@@ -188,7 +191,7 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
 };
 
 globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
-  var correlationId = "wait_" + (globalThis.__stepCounter++);
+  var correlationId = __cidPrefix + "wait_" + (globalThis.__stepCounter++);
   var resumeAt;
   if (typeof param === "number") {
     resumeAt = new Date(Date.now() + param).toISOString();
@@ -257,19 +260,19 @@ if (typeof Response === "undefined") {
     });
   }
   globalThis.Response.prototype.json = function() {
-    var cid = "step_" + (globalThis.__stepCounter++);
+    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_json", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
   };
   globalThis.Response.prototype.text = function() {
-    var cid = "step_" + (globalThis.__stepCounter++);
+    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_text", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
   };
   globalThis.Response.prototype.arrayBuffer = function() {
-    var cid = "step_" + (globalThis.__stepCounter++);
+    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_array_buffer", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
@@ -320,8 +323,8 @@ if (typeof Request === "undefined") {
 // The promise is resolved when a hook_received event arrives.
 globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
   options = options || {};
-  var token = options.token || ("tok_" + (globalThis.__stepCounter++));
-  var correlationId = "hook_" + (globalThis.__stepCounter++);
+  var token = options.token || (__cidPrefix + "tok_" + (globalThis.__stepCounter++));
+  var correlationId = __cidPrefix + "hook_" + (globalThis.__stepCounter++);
   var isDisposed = false;
   var hasCreatedEvent = false;
 
@@ -457,6 +460,15 @@ export async function runSnapshotWorkflow(
 
     // Evaluate the VM serde bundle
     vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
+
+    // Set the runId prefix for globally unique correlationIds.
+    // Must be set before VM_BOOTSTRAP runs so that step/hook/wait
+    // correlationIds include the runId prefix and don't collide across runs.
+    vm.unwrapResult(
+      vm.evalCode(
+        `globalThis.__runIdPrefix = ${JSON.stringify(workflowRun.runId + '_')};`
+      )
+    ).dispose();
 
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
@@ -613,19 +625,28 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
         );
         if (hasResolver) {
           const errorData = eventData?.error;
-          const msg =
-            typeof errorData === 'string'
+          const isErrorObject =
+            typeof errorData === 'object' && errorData !== null;
+          const msg = isErrorObject
+            ? (((errorData as Record<string, unknown>).message as string) ??
+              'Step failed')
+            : typeof errorData === 'string'
               ? errorData
-              : typeof errorData === 'object' && errorData !== null
-                ? (((errorData as Record<string, unknown>).message as string) ??
-                  'Step failed')
-                : 'Step failed';
+              : 'Step failed';
+          // Extract the error stack from the event (set by the step handler)
+          const errorStack =
+            (isErrorObject
+              ? (errorData as Record<string, unknown>).stack
+              : undefined) ?? (eventData?.stack as string | undefined);
           // Create a FatalError (matching event-replay behavior where all
           // step_failed events produce FatalError instances, enabling
           // FatalError.is() detection in workflow catch blocks).
+          const stackAssignment = errorStack
+            ? `e.stack=${JSON.stringify(errorStack)};`
+            : '';
           vm.unwrapResult(
             vm.evalCode(
-              `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;` +
+              `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;${stackAssignment}` +
                 `globalThis.__resolvers["${escapedCid}"].reject(e);` +
                 `delete globalThis.__resolvers["${escapedCid}"];})()`
             )
@@ -714,9 +735,10 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
           )
         );
         if (hasResolver) {
+          const conflictToken = (eventData?.token as string) ?? 'unknown';
           vm.unwrapResult(
             vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].reject(new Error("Hook token conflict"));` +
+              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(`Hook token "${conflictToken}" is already in use by another workflow`)}));` +
                 `delete globalThis.__resolvers["${escapedCid}"];`
             )
           ).dispose();

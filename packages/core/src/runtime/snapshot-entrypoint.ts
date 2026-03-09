@@ -6,22 +6,22 @@
  */
 
 import { WorkflowAPIError } from '@workflow/errors';
+import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
-  SPEC_VERSION_CURRENT,
   type Event,
+  SPEC_VERSION_CURRENT,
   type WorkflowRun,
 } from '@workflow/world';
 import { runtimeLogger } from '../logger.js';
-import { parseWorkflowName } from '@workflow/utils/parse-name';
 import { remapErrorStack } from '../source-map.js';
 import { queueMessage } from './helpers.js';
-import { getWorld } from './world.js';
 import {
-  runSnapshotWorkflow,
+  type PendingHook,
   type PendingStep,
   type PendingWait,
-  type PendingHook,
+  runSnapshotWorkflow,
 } from './snapshot-runtime.js';
+import { getWorld } from './world.js';
 
 /**
  * Run a workflow using the snapshot runtime.
@@ -70,8 +70,13 @@ export async function runWorkflowWithSnapshots(params: {
         },
       });
       allEvents.push(...response.data);
-      cursor = response.cursor ?? null;
-      hasMore = response.cursor !== null && response.cursor !== undefined;
+      // Update the cursor to the last successfully fetched page's cursor.
+      // Only update when we got results — the final empty-page response
+      // returns cursor=null which we must NOT use (it would reset the cursor).
+      if (response.cursor) {
+        cursor = response.cursor;
+      }
+      hasMore = response.data.length > 0 && response.cursor != null;
     }
 
     events = allEvents;
@@ -238,7 +243,7 @@ export async function runWorkflowWithSnapshots(params: {
 
         // Create hook_created event
         try {
-          await world.events.create(runId, {
+          const result = await world.events.create(runId, {
             eventType: 'hook_created',
             specVersion: SPEC_VERSION_CURRENT,
             correlationId: hook.correlationId,
@@ -249,6 +254,20 @@ export async function runWorkflowWithSnapshots(params: {
               ...(hook.isWebhook ? { isWebhook: true } : {}),
             } as any,
           });
+
+          // If the storage detected a token conflict, it creates a hook_conflict
+          // event instead of hook_created. Re-queue the workflow so the snapshot
+          // runtime can process the conflict event and fail the workflow gracefully.
+          if (result.event?.eventType === 'hook_conflict') {
+            await queueMessage(
+              world,
+              `__wkf_workflow_${workflowRun.workflowName}`,
+              {
+                runId,
+              },
+              { idempotencyKey: `hook_conflict_${hook.correlationId}` }
+            );
+          }
         } catch (err) {
           if (WorkflowAPIError.is(err) && err.status === 409) continue;
           throw err;
