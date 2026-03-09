@@ -140,34 +140,35 @@ export function getCommonRevivers(): Partial<Revivers> {
     // constructors (Headers, Request, Response) are not available in QuickJS.
     // The workflow code can access the properties but not call Web API methods.
     Headers: (value) => {
-      // value is [string, string][] — create an object with entries
-      const obj: Record<string, string> = {};
-      if (Array.isArray(value)) {
-        for (const [k, v] of value) {
-          obj[k] = v;
-        }
-      }
-      return obj;
+      return new (globalThis as any).Headers(value);
     },
-    Request: (value) => ({
-      method: value.method,
-      url: value.url,
-      headers: value.headers,
-      body: value.body,
-      duplex: value.duplex,
-    }),
-    Response: (value) => ({
-      type: value.type,
-      url: value.url,
-      status: value.status,
-      statusText: value.statusText,
-      headers: value.headers,
-      body: value.body,
-      redirected: value.redirected,
-    }),
-    // ReadableStream/WritableStream — in the VM these are opaque references.
-    // The workflow code can pass them around but can't consume them directly.
-    ReadableStream: (value) => value,
-    WritableStream: (value) => value,
+    Request: (value) => {
+      Object.setPrototypeOf(value, (globalThis as any).Request.prototype);
+      return value;
+    },
+    Response: (value: any) => {
+      Object.setPrototypeOf(value, (globalThis as any).Response.prototype);
+      value._body = value.body;
+      value.ok = value.status >= 200 && value.status < 300;
+      value.bodyUsed = false;
+      return value;
+    },
+    ReadableStream: (value) => {
+      // If this is a bodyInit (from Response/Request constructor),
+      // create a ReadableStream-like object that stores the body data
+      // so Response.json()/text() can read it.
+      if (value && 'bodyInit' in value) {
+        const stream = Object.create(
+          (globalThis as any).ReadableStream.prototype
+        );
+        stream.__bodyData = value.bodyInit;
+        return stream;
+      }
+      // Regular stream — return as opaque reference
+      return Object.create((globalThis as any).ReadableStream.prototype);
+    },
+    WritableStream: (_value) => {
+      return Object.create((globalThis as any).WritableStream.prototype);
+    },
   };
 }

@@ -95,22 +95,30 @@ globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
 
 // Stubs for Web APIs that the workflow bundle may reference but are not
-// available in QuickJS.
-if (typeof TransformStream === "undefined") {
-  globalThis.TransformStream = function() { throw new Error("TransformStream not supported in snapshot runtime"); };
-}
+// available in QuickJS. These are lightweight polyfills, not full
+// Web API implementations.
+
+// NOTE: Headers polyfill is provided by the VM serde bundle (via esbuild inject),
+// which is evaluated before this bootstrap code.
+
 if (typeof ReadableStream === "undefined") {
-  globalThis.ReadableStream = function() { throw new Error("ReadableStream not supported in snapshot runtime"); };
+  // Minimal ReadableStream that stores body data for Response.json()/text()
+  globalThis.ReadableStream = function() {};
+  globalThis.ReadableStream.prototype.__bodyData = null;
 }
+
 if (typeof WritableStream === "undefined") {
-  globalThis.WritableStream = function() { throw new Error("WritableStream not supported in snapshot runtime"); };
+  globalThis.WritableStream = function() {};
 }
-if (typeof Headers === "undefined") {
-  globalThis.Headers = function() {};
+
+if (typeof TransformStream === "undefined") {
+  globalThis.TransformStream = function() {};
 }
+
 if (typeof URL === "undefined") {
   globalThis.URL = function(u) { this.href = u; this.toString = function() { return u; }; };
 }
+
 if (typeof console === "undefined") {
   globalThis.console = { log: function(){}, error: function(){}, warn: function(){}, info: function(){} };
 }
@@ -173,6 +181,79 @@ globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
     globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
   });
 };
+
+// Response/Request polyfills — .json()/.text()/.arrayBuffer() are useStep
+// proxies that execute on the host side (same pattern as workflow.ts).
+if (typeof Response === "undefined") {
+  var __resJson = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_json");
+  var __resText = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_text");
+  var __resArrayBuffer = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_array_buffer");
+  var __BODY_INIT = Symbol.for("BODY_INIT");
+
+  globalThis.Response = function(body, init) {
+    init = init || {};
+    this.status = init.status || 200;
+    this.statusText = init.statusText || "";
+    this.headers = new globalThis.Headers(init.headers || []);
+    this.type = "default";
+    this.url = "";
+    this.redirected = false;
+    if (body !== null && body !== undefined) {
+      this.body = Object.create(globalThis.ReadableStream.prototype);
+      this.body[__BODY_INIT] = body;
+    } else {
+      this.body = null;
+    }
+  };
+  Object.defineProperty(globalThis.Response.prototype, "ok", {
+    get: function() { return this.status >= 200 && this.status < 300; }
+  });
+  Object.defineProperty(globalThis.Response.prototype, "bodyUsed", {
+    get: function() { return false; }
+  });
+  globalThis.Response.prototype.json = function() { return __resJson(this); };
+  globalThis.Response.prototype.text = function() { return __resText(this); };
+  globalThis.Response.prototype.arrayBuffer = function() { return __resArrayBuffer(this); };
+  globalThis.Response.prototype.bytes = function() {
+    return __resArrayBuffer(this).then(function(buf) { return new Uint8Array(buf); });
+  };
+  globalThis.Response.prototype.clone = function() {
+    var r = Object.create(globalThis.Response.prototype);
+    r.status = this.status; r.statusText = this.statusText;
+    r.headers = this.headers; r.type = this.type;
+    r.url = this.url; r.redirected = this.redirected; r.body = this.body;
+    return r;
+  };
+  globalThis.Response.json = function(data, init) {
+    var body = JSON.stringify(data);
+    var headers = new globalThis.Headers(init ? init.headers : []);
+    if (!headers.has("content-type")) { headers.set("content-type", "application/json"); }
+    return new globalThis.Response(body, { status: (init && init.status) || 200, statusText: (init && init.statusText) || "", headers: headers });
+  };
+}
+if (typeof Request === "undefined") {
+  globalThis.Request = function(input, init) {
+    init = init || {};
+    if (typeof input === "string") { this.url = input; }
+    else if (input && typeof input === "object") {
+      this.url = input.url || ""; this.method = input.method;
+      this.headers = input.headers; this.body = input.body;
+    }
+    if (init.method) this.method = init.method.toUpperCase();
+    if (!this.method) this.method = "GET";
+    if (init.headers) this.headers = new globalThis.Headers(init.headers);
+    if (!this.headers) this.headers = new globalThis.Headers();
+    if (init.body !== undefined) this.body = init.body;
+    if (!this.body) this.body = null;
+    this.duplex = init.duplex || "half";
+  };
+  Object.defineProperty(globalThis.Request.prototype, "bodyUsed", {
+    get: function() { return false; }
+  });
+  globalThis.Request.prototype.json = function() { return __resJson(this); };
+  globalThis.Request.prototype.text = function() { return __resText(this); };
+  globalThis.Request.prototype.arrayBuffer = function() { return __resArrayBuffer(this); };
+}
 `;
 
 // ---- Runtime ----

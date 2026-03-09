@@ -1,15 +1,19 @@
 /**
- * Installs TextEncoder/TextDecoder polyfills on globalThis if not present.
+ * Installs polyfills on globalThis if not present.
  * This file is injected via esbuild's `inject` option to ensure the
  * polyfills are available before any other code runs.
  */
 
 import { TextEncoder } from './text-encoder.js';
 import { TextDecoder } from './text-decoder.js';
+import { Headers } from './headers.js';
 
 if (typeof globalThis.TextEncoder === 'undefined') {
   (globalThis as any).TextEncoder = TextEncoder;
 }
 if (typeof globalThis.TextDecoder === 'undefined') {
   (globalThis as any).TextDecoder = TextDecoder;
+}
+if (typeof globalThis.Headers === 'undefined') {
+  (globalThis as any).Headers = Headers;
 }
