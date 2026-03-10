@@ -119,6 +119,7 @@ export function getCommonReducers(): Partial<Reducers> {
       };
     },
     ReadableStream: ((value: any) => {
+      if (value == null) return false;
       const RS = (globalThis as any).ReadableStream;
       if (
         !RS ||
@@ -140,6 +141,7 @@ export function getCommonReducers(): Partial<Reducers> {
       return { name: '__empty' };
     }) as any,
     WritableStream: ((value: any) => {
+      if (value == null) return false;
       const WS = (globalThis as any).WritableStream;
       if (
         !WS ||
