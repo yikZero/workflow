@@ -118,16 +118,12 @@ if (typeof Symbol.asyncDispose === "undefined") {
 globalThis.__private_workflows = new Map();
 globalThis.__resolvers = {};
 globalThis.__pending = [];
-globalThis.__stepCounter = 0;
 globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
 // Buffer for hook_received payloads that arrive before the hook is awaited.
 // Keyed by correlationId → array of payloads (preserves delivery order).
 // This mirrors the event-replay runtime's payloadsQueue in hook.ts.
 globalThis.__hookPayloadBuffer = {};
-// __runIdPrefix is set before bootstrap to make correlationIds globally unique
-// across runs. Falls back to empty string for backward compatibility.
-var __cidPrefix = globalThis.__runIdPrefix || "";
 
 // Stubs for Web APIs that the workflow bundle may reference but are not
 // available in QuickJS. These are lightweight polyfills, not full
@@ -166,7 +162,7 @@ globalThis.module = { exports: globalThis.exports };
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   var fn = function() {
     var args = Array.prototype.slice.call(arguments);
-    var correlationId = __cidPrefix + "step_" + (globalThis.__stepCounter++);
+    var correlationId = "step_" + globalThis.__generateUlid();
     // Capture 'this' for method invocations (e.g., MyClass.method())
     var thisVal = (this !== undefined && this !== null && this !== globalThis) ? this : undefined;
     // Serialize step input using the host-provided devalue serializer.
@@ -195,7 +191,7 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
 };
 
 globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
-  var correlationId = __cidPrefix + "wait_" + (globalThis.__stepCounter++);
+  var correlationId = "wait_" + globalThis.__generateUlid();
   var resumeAt;
   if (typeof param === "number") {
     resumeAt = new Date(Date.now() + param).toISOString();
@@ -264,19 +260,19 @@ if (typeof Response === "undefined") {
     });
   }
   globalThis.Response.prototype.json = function() {
-    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
+    var cid = "step_" + globalThis.__generateUlid();
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_json", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
   };
   globalThis.Response.prototype.text = function() {
-    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
+    var cid = "step_" + globalThis.__generateUlid();
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_text", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
   };
   globalThis.Response.prototype.arrayBuffer = function() {
-    var cid = __cidPrefix + "step_" + (globalThis.__stepCounter++);
+    var cid = "step_" + globalThis.__generateUlid();
     var input = __serializeResponseForStep(this);
     globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_array_buffer", input: input, hasCreatedEvent: false });
     return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
@@ -327,8 +323,8 @@ if (typeof Request === "undefined") {
 // The promise is resolved when a hook_received event arrives.
 globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
   options = options || {};
-  var token = options.token || (__cidPrefix + "tok_" + (globalThis.__stepCounter++));
-  var correlationId = __cidPrefix + "hook_" + (globalThis.__stepCounter++);
+  var token = options.token || ("tok_" + globalThis.__generateUlid());
+  var correlationId = "hook_" + globalThis.__generateUlid();
   var isDisposed = false;
   var hasCreatedEvent = false;
 
@@ -471,15 +467,6 @@ export async function runSnapshotWorkflow(
 
     // Evaluate the VM serde bundle
     vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
-
-    // Set the runId prefix for globally unique correlationIds.
-    // Must be set before VM_BOOTSTRAP runs so that step/hook/wait
-    // correlationIds include the runId prefix and don't collide across runs.
-    vm.unwrapResult(
-      vm.evalCode(
-        `globalThis.__runIdPrefix = ${JSON.stringify(workflowRun.runId + '_')};`
-      )
-    ).dispose();
 
     // Bootstrap workflow primitives
     vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();

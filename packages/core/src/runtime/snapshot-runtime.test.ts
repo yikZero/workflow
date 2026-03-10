@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import { QuickJS } from 'quickjs-wasi';
-import { runSnapshotWorkflow } from './snapshot-runtime.js';
+import { describe, expect, it } from 'vitest';
 import { deserialize } from '../serialization/workflow-vm.js';
+import { runSnapshotWorkflow } from './snapshot-runtime.js';
 
 /** Helper to deserialize the format-prefixed result bytes */
 function unwrapResult(result: Uint8Array): unknown {
@@ -11,8 +11,13 @@ function unwrapResult(result: Uint8Array): unknown {
 function makeRun(overrides: Record<string, unknown> = {}) {
   return {
     runId: 'wrun_test123',
+    deploymentId: 'dpl_test',
     workflowName: 'test-workflow',
+    input: undefined,
     status: 'running' as const,
+    output: undefined,
+    error: undefined,
+    completedAt: undefined,
     startedAt: new Date('2025-01-01T00:00:00Z'),
     createdAt: new Date('2025-01-01T00:00:00Z'),
     updatedAt: new Date('2025-01-01T00:00:00Z'),
@@ -62,8 +67,10 @@ describe('runSnapshotWorkflow', () => {
     expect(result.suspended?.pendingOperations[0]).toMatchObject({
       type: 'step',
       stepId: 'step//test//add',
-      correlationId: 'step_0',
     });
+    expect(result.suspended?.pendingOperations[0].correlationId).toMatch(
+      /^step_[0-9A-Z]{26}$/
+    );
     expect(result.suspended?.snapshot).toBeInstanceOf(Uint8Array);
   });
 
@@ -81,6 +88,7 @@ describe('runSnapshotWorkflow', () => {
       existingSnapshot: null,
     });
     expect(r1.suspended).toBeDefined();
+    const stepCid = r1.suspended!.pendingOperations[0].correlationId;
 
     const r2 = await runSnapshotWorkflow({
       workflowCode: '',
@@ -91,8 +99,8 @@ describe('runSnapshotWorkflow', () => {
           eventId: 'evnt_001',
           runId: 'wrun_test123',
           eventType: 'step_completed',
-          correlationId: 'step_0',
-          eventData: { output: 17 },
+          correlationId: stepCid,
+          eventData: { result: 17 },
           createdAt: new Date(),
         },
       ],
@@ -125,7 +133,8 @@ describe('runSnapshotWorkflow', () => {
       events: [],
       existingSnapshot: null,
     });
-    expect(r1.suspended?.pendingOperations[0]?.correlationId).toBe('step_0');
+    const step1Cid = r1.suspended?.pendingOperations[0]?.correlationId;
+    expect(step1Cid).toMatch(/^step_[0-9A-Z]{26}$/);
 
     const r2 = await runSnapshotWorkflow({
       workflowCode: '',
@@ -136,8 +145,8 @@ describe('runSnapshotWorkflow', () => {
           eventId: 'evnt_001',
           runId: run.runId,
           eventType: 'step_completed',
-          correlationId: 'step_0',
-          eventData: { output: 17 },
+          correlationId: step1Cid!,
+          eventData: { result: 17 },
           createdAt: new Date(),
         },
       ],
@@ -146,7 +155,9 @@ describe('runSnapshotWorkflow', () => {
         metadata: { eventsCursor: null, createdAt: new Date() },
       },
     });
-    expect(r2.suspended?.pendingOperations[0]?.correlationId).toBe('step_1');
+    const step2Cid = r2.suspended?.pendingOperations[0]?.correlationId;
+    expect(step2Cid).toMatch(/^step_[0-9A-Z]{26}$/);
+    expect(step2Cid).not.toBe(step1Cid);
 
     const r3 = await runSnapshotWorkflow({
       workflowCode: '',
@@ -157,8 +168,8 @@ describe('runSnapshotWorkflow', () => {
           eventId: 'evnt_002',
           runId: run.runId,
           eventType: 'step_completed',
-          correlationId: 'step_1',
-          eventData: { output: 25 },
+          correlationId: step2Cid!,
+          eventData: { result: 25 },
           createdAt: new Date(),
         },
       ],
@@ -188,8 +199,9 @@ describe('runSnapshotWorkflow', () => {
     expect(r1.suspended).toBeDefined();
     expect(r1.suspended?.pendingOperations[0]).toMatchObject({
       type: 'wait',
-      correlationId: 'wait_0',
     });
+    const waitCid = r1.suspended!.pendingOperations[0].correlationId;
+    expect(waitCid).toMatch(/^wait_[0-9A-Z]{26}$/);
 
     const r2 = await runSnapshotWorkflow({
       workflowCode: '',
@@ -200,7 +212,7 @@ describe('runSnapshotWorkflow', () => {
           eventId: 'evnt_001',
           runId: 'wrun_test123',
           eventType: 'wait_completed',
-          correlationId: 'wait_0',
+          correlationId: waitCid,
           createdAt: new Date(),
         },
       ],
@@ -230,6 +242,8 @@ describe('runSnapshotWorkflow', () => {
     });
     expect(r1.suspended).toBeDefined();
 
+    const failStepCid = r1.suspended!.pendingOperations[0].correlationId;
+
     const r2 = await runSnapshotWorkflow({
       workflowCode: '',
       workflowId: 'workflow//test//workflow',
@@ -239,7 +253,7 @@ describe('runSnapshotWorkflow', () => {
           eventId: 'evnt_001',
           runId: 'wrun_test123',
           eventType: 'step_failed',
-          correlationId: 'step_0',
+          correlationId: failStepCid,
           eventData: { error: { message: 'boom' } },
           createdAt: new Date(),
         },
