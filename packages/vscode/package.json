@@ -1,0 +1,48 @@
+{
+  "name": "workflow-vscode",
+  "displayName": "Workflow DevKit",
+  "description": "TypeScript language support for Workflow DevKit — diagnostics, completions, hover info, and code fixes for workflow and step functions.",
+  "version": "4.2.0-beta.67",
+  "publisher": "vercel",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vercel/workflow.git",
+    "directory": "packages/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "workflow",
+    "vercel",
+    "typescript",
+    "durable functions"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "typescriptServerPlugins": [
+      {
+        "name": "workflow",
+        "enableForWorkspaceTypeScriptVersions": true
+      }
+    ]
+  },
+  "extensionDependencies": [],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "tsc --build --clean && rm -r dist ||:",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@workflow/tsconfig": "workspace:*"
+  }
+}
