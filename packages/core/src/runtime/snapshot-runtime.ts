@@ -121,6 +121,10 @@ globalThis.__pending = [];
 globalThis.__stepCounter = 0;
 globalThis.__workflowResult = undefined;
 globalThis.__workflowError = undefined;
+// Buffer for hook_received payloads that arrive before the hook is awaited.
+// Keyed by correlationId → array of payloads (preserves delivery order).
+// This mirrors the event-replay runtime's payloadsQueue in hook.ts.
+globalThis.__hookPayloadBuffer = {};
 // __runIdPrefix is set before bootstrap to make correlationIds globally unique
 // across runs. Falls back to empty string for backward compatibility.
 var __cidPrefix = globalThis.__runIdPrefix || "";
@@ -343,6 +347,13 @@ globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
   // Each await creates a new promise for the next payload.
   // The correlationId stays the same — the resolver is replaced each time.
   function createHookPromise() {
+    // Check the payload buffer first — if a hook_received event arrived
+    // before this hook was awaited, the payload was buffered in the VM
+    // heap. Drain it immediately (matching event-replay payloadsQueue).
+    var buf = globalThis.__hookPayloadBuffer[correlationId];
+    if (buf && buf.length > 0) {
+      return Promise.resolve(buf.shift());
+    }
     return new Promise(function(resolve, reject) {
       globalThis.__resolvers[correlationId] = { resolve: resolve, reject: reject };
     });
@@ -687,13 +698,30 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
         break;
       }
       case 'hook_received': {
+        // Check if this event was already processed (delivered or buffered)
+        // in this invocation or a prior one (tracked in the VM heap so it
+        // survives snapshot/restore). Prevents double-delivery when the
+        // outer loop re-scans events.
+        const alreadyProcessed = event.eventId
+          ? vm.dump(
+              vm.unwrapResult(
+                vm.evalCode(
+                  `!!(globalThis.__hookPayloadBuffer.__processedEventIds && globalThis.__hookPayloadBuffer.__processedEventIds[${JSON.stringify(event.eventId)}])`
+                )
+              )
+            )
+          : false;
+        if (alreadyProcessed) {
+          markCreated(vm, escapedCid);
+          break;
+        }
         const hasResolver = vm.dump(
           vm.unwrapResult(
             vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
           )
         );
+        const rawPayload = eventData?.payload ?? eventData?.result;
         if (hasResolver) {
-          const rawPayload = eventData?.payload ?? eventData?.result;
           if (rawPayload instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
@@ -717,12 +745,56 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
               )
             ).dispose();
           }
+          // Mark this event as processed in the VM heap to prevent
+          // double-delivery on re-scan or snapshot restore.
+          if (event.eventId) {
+            vm.unwrapResult(
+              vm.evalCode(
+                `(globalThis.__hookPayloadBuffer.__processedEventIds = globalThis.__hookPayloadBuffer.__processedEventIds || {})[${JSON.stringify(event.eventId)}] = true;`
+              )
+            ).dispose();
+          }
           {
             resolved = true;
             let b: number;
             do {
               b = vm.executePendingJobs();
             } while (b > 0);
+          }
+        } else {
+          // No resolver yet — buffer the payload in the VM heap so it
+          // survives snapshot/restore. When createHookPromise() is called
+          // later, it will drain this buffer first (matching the event-
+          // replay runtime's payloadsQueue behavior).
+          const eventIdJs = event.eventId
+            ? JSON.stringify(event.eventId)
+            : 'null';
+          const bufferAndTrack =
+            `(globalThis.__hookPayloadBuffer["${escapedCid}"] = globalThis.__hookPayloadBuffer["${escapedCid}"] || [])` +
+            `.push(%PAYLOAD%);` +
+            (event.eventId
+              ? `(globalThis.__hookPayloadBuffer.__processedEventIds = globalThis.__hookPayloadBuffer.__processedEventIds || {})[${eventIdJs}] = true;`
+              : '');
+          if (rawPayload instanceof Uint8Array) {
+            const bytesHandle = vm.newUint8Array(rawPayload);
+            vm.setProp(vm.global, '__tmp_result', bytesHandle);
+            bytesHandle.dispose();
+            vm.unwrapResult(
+              vm.evalCode(
+                bufferAndTrack.replace(
+                  '%PAYLOAD%',
+                  'globalThis.__wdk_deserialize(globalThis.__tmp_result)'
+                ) + 'delete globalThis.__tmp_result;'
+              )
+            ).dispose();
+          } else {
+            const serialized =
+              rawPayload !== undefined
+                ? JSON.stringify(rawPayload)
+                : 'undefined';
+            vm.unwrapResult(
+              vm.evalCode(bufferAndTrack.replace('%PAYLOAD%', serialized))
+            ).dispose();
           }
         }
         markCreated(vm, escapedCid);

@@ -255,18 +255,33 @@ export async function runWorkflowWithSnapshots(params: {
             } as any,
           });
 
-          // If the storage detected a token conflict, it creates a hook_conflict
-          // event instead of hook_created. Re-queue the workflow so the snapshot
-          // runtime can process the conflict event and fail the workflow gracefully.
+          // If the storage detected a token conflict, check whether it's a
+          // self-conflict (our own hook re-created from a stale snapshot) or a
+          // real conflict with another workflow. Self-conflicts are harmless:
+          // the hook entity already exists with our correlationId.
           if (result.event?.eventType === 'hook_conflict') {
-            await queueMessage(
-              world,
-              `__wkf_workflow_${workflowRun.workflowName}`,
-              {
+            // Check if our hook entity already exists (self-conflict)
+            let isSelfConflict = false;
+            try {
+              const { data: existingHooks } = await world.hooks.list({
                 runId,
-              },
-              { idempotencyKey: `hook_conflict_${hook.correlationId}` }
-            );
+              });
+              isSelfConflict = existingHooks.some(
+                (h) => h.hookId === hook.correlationId
+              );
+            } catch {
+              // If hooks.list fails, assume it's a real conflict
+            }
+            if (!isSelfConflict) {
+              await queueMessage(
+                world,
+                `__wkf_workflow_${workflowRun.workflowName}`,
+                {
+                  runId,
+                },
+                { idempotencyKey: `hook_conflict_${hook.correlationId}` }
+              );
+            }
           }
         } catch (err) {
           if (WorkflowAPIError.is(err) && err.status === 409) continue;
