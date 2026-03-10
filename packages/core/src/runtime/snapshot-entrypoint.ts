@@ -241,7 +241,19 @@ export async function runWorkflowWithSnapshots(params: {
       } else if (op.type === 'hook' && !op.hasCreatedEvent) {
         const hook = op as PendingHook;
 
-        // Create hook_created event
+        // Create hook_created event.
+        // First check if our hook entity already exists (stale-snapshot race
+        // where a concurrent invocation already created it). Skip entirely
+        // to avoid creating spurious hook_conflict events.
+        try {
+          const { data: existingHooks } = await world.hooks.list({ runId });
+          if (existingHooks.some((h) => h.hookId === hook.correlationId)) {
+            continue;
+          }
+        } catch {
+          // If hooks.list fails, proceed with creation attempt
+        }
+
         try {
           const result = await world.events.create(runId, {
             eventType: 'hook_created',
@@ -255,33 +267,18 @@ export async function runWorkflowWithSnapshots(params: {
             } as any,
           });
 
-          // If the storage detected a token conflict, check whether it's a
-          // self-conflict (our own hook re-created from a stale snapshot) or a
-          // real conflict with another workflow. Self-conflicts are harmless:
-          // the hook entity already exists with our correlationId.
+          // If the storage detected a real token conflict with another
+          // workflow's hook, re-queue so the snapshot runtime can process
+          // the conflict event and fail the workflow gracefully.
           if (result.event?.eventType === 'hook_conflict') {
-            // Check if our hook entity already exists (self-conflict)
-            let isSelfConflict = false;
-            try {
-              const { data: existingHooks } = await world.hooks.list({
+            await queueMessage(
+              world,
+              `__wkf_workflow_${workflowRun.workflowName}`,
+              {
                 runId,
-              });
-              isSelfConflict = existingHooks.some(
-                (h) => h.hookId === hook.correlationId
-              );
-            } catch {
-              // If hooks.list fails, assume it's a real conflict
-            }
-            if (!isSelfConflict) {
-              await queueMessage(
-                world,
-                `__wkf_workflow_${workflowRun.workflowName}`,
-                {
-                  runId,
-                },
-                { idempotencyKey: `hook_conflict_${hook.correlationId}` }
-              );
-            }
+              },
+              { idempotencyKey: `hook_conflict_${hook.correlationId}` }
+            );
           }
         } catch (err) {
           if (WorkflowAPIError.is(err) && err.status === 409) continue;
