@@ -27,6 +27,8 @@ export const WorkflowInvokePayloadSchema = z.object({
   requestedAt: z.coerce.date().optional(),
   /** Number of times this message has been re-enqueued due to server errors (5xx) */
   serverErrorRetryCount: z.number().int().optional(),
+  /** Chaos testing mode (e.g., "random-500", "random-429"). Propagated through the execution chain. */
+  chaos: z.string().optional(),
 });
 
 export const StepInvokePayloadSchema = z.object({
@@ -36,6 +38,8 @@ export const StepInvokePayloadSchema = z.object({
   stepId: z.string(),
   traceCarrier: TraceCarrierSchema.optional(),
   requestedAt: z.coerce.date().optional(),
+  /** Chaos testing mode (e.g., "random-500", "random-429"). Propagated through the execution chain. */
+  chaos: z.string().optional(),
 });
 
 export type WorkflowInvokePayload = z.infer<typeof WorkflowInvokePayloadSchema>;
