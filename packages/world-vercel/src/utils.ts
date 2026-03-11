@@ -40,7 +40,7 @@ const WORKFLOW_SERVER_URL_OVERRIDE = '';
  * When chaos testing is active (via request context), requests are routed
  * to this dedicated deployment instead of the production server.
  */
-const CHAOS_WORKFLOW_SERVER_URL = 'https://chaos.workflow-server.com';
+const CHAOS_WORKFLOW_SERVER_URL = 'https://chaos.vercel-workflow.com';
 
 export interface APIConfig {
   token?: string;
