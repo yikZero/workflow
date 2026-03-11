@@ -149,6 +149,10 @@ jobs:
     name: Chaos E2E (${{ matrix.chaos-mode }} / ${{ matrix.app.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Skip when workflow-server-test label is present (cross-repo testing).
+    # In that scenario, normal E2E tests run against a workflow-server preview
+    # deployment. Running chaos tests against the same deployment could cause
+    # collateral failures (especially with future chaos modes like process crash).
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'workflow-server-test') }}
     strategy:
       fail-fast: false
