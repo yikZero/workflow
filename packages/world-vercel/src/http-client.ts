@@ -22,7 +22,7 @@ export function getDispatcher(): RetryAgent {
         connections: 8,
         keepAliveTimeout: 10_000,
         pipelining: 1,
-        allowH2: false,
+        allowH2: true,
       }),
       {
         // Observe Retry-After header if received
