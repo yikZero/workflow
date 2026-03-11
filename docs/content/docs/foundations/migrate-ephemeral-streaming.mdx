@@ -57,38 +57,41 @@ export async function POST(req: Request) {
 }
 ```
 
-Add the `"use workflow"` directive and wrap the streaming call inside a step function using `DurableAgent`. The step becomes a durable unit of execution that Workflow can retry and observe.
+Add the `"use workflow"` directive and move the generation into a workflow function using `DurableAgent`. `DurableAgent` internally executes each LLM call as a durable step, so you do not need to wrap it in a separate step function.
 
-```typescript title="app/api/chat/route.ts" lineNumbers
-import { createUIMessageStreamResponse } from "ai";
+```typescript title="workflows/chat/workflow.ts" lineNumbers
 import { DurableAgent } from "@workflow/ai/agent"; // [!code highlight]
 import { getWritable } from "workflow"; // [!code highlight]
-import { start } from "workflow/api"; // [!code highlight]
-import type { UIMessageChunk } from "ai";
+import type { ModelMessage, UIMessageChunk } from "ai";
 
-async function generateResponse(messages: Array<{ role: string; content: string }>) { // [!code highlight]
-  "use step"; // [!code highlight]
+export async function chatWorkflow(messages: ModelMessage[]) { // [!code highlight]
+  "use workflow"; // [!code highlight]
+
+  const writable = getWritable<UIMessageChunk>(); // [!code highlight]
 
   const agent = new DurableAgent({
     model: "anthropic/claude-haiku-4.5",
     system: "You are a helpful assistant.",
   });
 
-  await agent.stream({
+  await agent.stream({ // [!code highlight]
     messages,
-    writable: getWritable<UIMessageChunk>(),
-  });
-} // [!code highlight]
+    writable,
+  }); // [!code highlight]
+}
+```
 
-async function chatWorkflow(messages: Array<{ role: string; content: string }>) { // [!code highlight]
-  "use workflow"; // [!code highlight]
-  await generateResponse(messages); // [!code highlight]
-} // [!code highlight]
+```typescript title="app/api/chat/route.ts" lineNumbers
+import type { UIMessage } from "ai";
+import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
+import { start } from "workflow/api"; // [!code highlight]
+import { chatWorkflow } from "@/workflows/chat/workflow";
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages }: { messages: UIMessage[] } = await req.json();
+  const modelMessages = convertToModelMessages(messages); // [!code highlight]
 
-  const run = await start(chatWorkflow, [messages]); // [!code highlight]
+  const run = await start(chatWorkflow, [modelMessages]); // [!code highlight]
 
   return createUIMessageStreamResponse({ // [!code highlight]
     stream: run.readable, // [!code highlight]
@@ -96,7 +99,7 @@ export async function POST(req: Request) {
 }
 ```
 
-The generation now runs inside a durable step. If the step fails, Workflow retries it. If the server restarts, the step resumes.
+The generation now runs inside a durable workflow. `DurableAgent` executes each LLM call as a step, so you get automatic retries and observability for every call.
 
 Verify by running the app locally and opening the [Workflow Web UI](/docs/observability):
 
@@ -121,9 +124,10 @@ Return the `runId` in a response header so the client can store it:
 // ... existing imports and workflow ...
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages }: { messages: UIMessage[] } = await req.json();
+  const modelMessages = convertToModelMessages(messages);
 
-  const run = await start(chatWorkflow, [messages]);
+  const run = await start(chatWorkflow, [modelMessages]);
 
   return createUIMessageStreamResponse({
     stream: run.readable,
