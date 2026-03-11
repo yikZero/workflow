@@ -42,7 +42,6 @@ We will start with wrapping the generation in a workflow step, then expose the `
 The existing app streams directly from a route handler. The response lives and dies with the HTTP connection.
 
 ```typescript title="app/api/chat/route.ts" lineNumbers
-import { createUIMessageStreamResponse } from "ai";
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
@@ -58,7 +57,7 @@ export async function POST(req: Request) {
 }
 ```
 
-Add the `"use workflow"` directive and wrap the streaming call inside a step function. The step becomes a durable unit of execution that Workflow can retry and observe.
+Add the `"use workflow"` directive and wrap the streaming call inside a step function using `DurableAgent`. The step becomes a durable unit of execution that Workflow can retry and observe.
 
 ```typescript title="app/api/chat/route.ts" lineNumbers
 import { createUIMessageStreamResponse } from "ai";
@@ -71,7 +70,7 @@ async function generateResponse(messages: Array<{ role: string; content: string 
   "use step"; // [!code highlight]
 
   const agent = new DurableAgent({
-    model: "openai/gpt-4o",
+    model: "anthropic/claude-haiku-4.5",
     system: "You are a helpful assistant.",
   });
 

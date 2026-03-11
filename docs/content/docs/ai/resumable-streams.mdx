@@ -207,7 +207,7 @@ new WorkflowChatTransport({
     ...config,
     body: JSON.stringify({
       ...JSON.parse(config.body as string),
-      model: "gpt-4o",
+      model: "anthropic/claude-haiku-4.5",
       temperature: 0.7,
     }),
   }),
