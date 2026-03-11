@@ -146,7 +146,7 @@ jobs:
         run: pnpm test --filter='!./docs' --filter='!./workbench/vitest'
 
   chaos-e2e-vercel:
-    name: Chaos E2E (${{ matrix.chaos-mode }} / ${{ matrix.app.name }})
+    name: Chaos E2E (${{ matrix.chaos_mode }} / ${{ matrix.app.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Skip when workflow-server-test label is present (cross-repo testing).
@@ -157,7 +157,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chaos-mode: [random-500, random-429]
+        chaos_mode: [random-500, random-429]
         app:
           - name: "nextjs-turbopack"
             project-id: "prj_yjkM7UdHliv8bfxZ1sMJQf1pMpdi"
@@ -169,7 +169,7 @@ jobs:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
       WORKFLOW_PUBLIC_MANIFEST: '1'
-      WORKFLOW_CHAOS: ${{ matrix.chaos-mode }}
+      WORKFLOW_CHAOS: ${{ matrix.chaos_mode }}
       WORKFLOW_CHAOS_SEED: ${{ github.sha }}
     steps:
       - name: Checkout Repo

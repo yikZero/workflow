@@ -29,6 +29,8 @@ export const WorkflowInvokePayloadSchema = z.object({
   serverErrorRetryCount: z.number().int().optional(),
   /** Chaos testing mode (e.g., "random-500", "random-429"). Propagated through the execution chain. */
   chaos: z.string().optional(),
+  /** Deterministic seed for reproducible chaos. Propagated through the execution chain. */
+  chaosSeed: z.string().optional(),
 });
 
 export const StepInvokePayloadSchema = z.object({
@@ -40,6 +42,8 @@ export const StepInvokePayloadSchema = z.object({
   requestedAt: z.coerce.date().optional(),
   /** Chaos testing mode (e.g., "random-500", "random-429"). Propagated through the execution chain. */
   chaos: z.string().optional(),
+  /** Deterministic seed for reproducible chaos. Propagated through the execution chain. */
+  chaosSeed: z.string().optional(),
 });
 
 export type WorkflowInvokePayload = z.infer<typeof WorkflowInvokePayloadSchema>;

@@ -86,9 +86,8 @@ export async function start<TArgs extends unknown[], TResult>(
   // Read chaos config from environment (set by CI / test runner)
   const chaos = process.env.WORKFLOW_CHAOS || undefined;
   const chaosSeed = process.env.WORKFLOW_CHAOS_SEED || undefined;
-  const chaosCtx = chaos || chaosSeed ? { chaos, chaosSeed } : {};
 
-  return await requestContext.run(chaosCtx, () =>
+  const doStart = () =>
     waitedUntil(() => {
       // @ts-expect-error this field is added by our client transform
       const workflowName = workflow?.workflowId;
@@ -181,6 +180,7 @@ export async function start<TArgs extends unknown[], TResult>(
                 traceCarrier,
                 workflowCoreVersion,
                 ...(chaos ? { chaos } : {}),
+                ...(chaosSeed ? { chaosSeed } : {}),
               },
             },
           },
@@ -222,6 +222,7 @@ export async function start<TArgs extends unknown[], TResult>(
             runId,
             traceCarrier,
             ...(chaos ? { chaos } : {}),
+            ...(chaosSeed ? { chaosSeed } : {}),
           } satisfies WorkflowInvokePayload,
           {
             deploymentId,
@@ -230,6 +231,12 @@ export async function start<TArgs extends unknown[], TResult>(
 
         return new Run<TResult>(runId);
       });
-    })
-  );
+    });
+
+  // Only enter the request context ALS when chaos config is present.
+  // This ensures getRequestContext() returns undefined in non-chaos cases.
+  if (chaos || chaosSeed) {
+    return await requestContext.run({ chaos, chaosSeed }, doStart);
+  }
+  return await doStart();
 }

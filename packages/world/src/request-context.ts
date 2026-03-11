@@ -43,8 +43,9 @@ export const requestContext = new AsyncLocalStorage<RequestContext>();
 /**
  * Read the current request context, if any.
  *
- * Returns `undefined` when called outside of a `requestContext.run()` block
- * or when the context is empty.
+ * Returns `undefined` when called outside of a `requestContext.run()` block.
+ * The runtime only enters `requestContext.run()` when chaos config is present,
+ * so a non-undefined return value indicates chaos testing is active.
  */
 export function getRequestContext(): RequestContext | undefined {
   return requestContext.getStore();
