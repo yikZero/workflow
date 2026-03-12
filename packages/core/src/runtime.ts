@@ -11,6 +11,8 @@ import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
   getAllWorkflowRunEvents,
+  getAllWorkflowRunEventsWithCursor,
+  getNewWorkflowRunEvents,
   getQueueOverhead,
   getWorkflowQueueName,
   handleHealthCheckMessage,
@@ -517,6 +519,12 @@ export function combinedEntrypoint(
                   const invocationStartTime = Date.now();
                   let loopIteration = 0;
 
+                  // Event cache: keep loaded events in memory across loop iterations.
+                  // On the first iteration we do a full load; on subsequent iterations
+                  // we fetch only events created after the last known cursor.
+                  let cachedEvents: Event[] | null = null;
+                  let eventsCursor: string | null = null;
+
                   // If incoming message has a stepId, this is a background step
                   // execution. Execute the step, then queue a workflow continuation
                   // (without stepId) so the workflow can replay and process the
@@ -630,8 +638,32 @@ export function combinedEntrypoint(
                         return;
                       }
 
-                      // Load events
-                      const events = await getAllWorkflowRunEvents(runId);
+                      // Load events — use cached events with incremental fetch on subsequent iterations
+                      let events: Event[];
+                      if (cachedEvents === null) {
+                        // First iteration: full load
+                        const loaded =
+                          await getAllWorkflowRunEventsWithCursor(runId);
+                        events = loaded.events;
+                        eventsCursor = loaded.cursor;
+                      } else {
+                        // Subsequent iteration: fetch only new events since last cursor
+                        if (eventsCursor) {
+                          const loaded = await getNewWorkflowRunEvents(
+                            runId,
+                            eventsCursor
+                          );
+                          cachedEvents.push(...loaded.events);
+                          eventsCursor = loaded.cursor ?? eventsCursor;
+                        } else {
+                          // No cursor (all events fit in one page) — do a full reload
+                          const loaded =
+                            await getAllWorkflowRunEventsWithCursor(runId);
+                          cachedEvents = loaded.events;
+                          eventsCursor = loaded.cursor;
+                        }
+                        events = cachedEvents;
+                      }
 
                       // Complete elapsed waits
                       const now = Date.now();
@@ -668,6 +700,9 @@ export function combinedEntrypoint(
                           throw err;
                         }
                       }
+
+                      // Update cache reference (may have been set for first time)
+                      cachedEvents = events;
 
                       // Replay workflow
                       const rawKey =

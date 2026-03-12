@@ -315,6 +315,96 @@ export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
 }
 
 /**
+ * Loads workflow run events starting after the given cursor.
+ * Used by the V2 combined handler to incrementally load new events
+ * without re-fetching the entire event log on each loop iteration.
+ *
+ * @param runId - The workflow run ID
+ * @param afterCursor - Pagination cursor from a previous load. Only events after this cursor are returned.
+ * @returns The new events and the updated cursor for the next incremental load.
+ */
+export async function getNewWorkflowRunEvents(
+  runId: string,
+  afterCursor: string
+): Promise<{ events: Event[]; cursor: string | null }> {
+  return trace('workflow.loadNewEvents', async (span) => {
+    span?.setAttributes({
+      ...Attribute.WorkflowRunId(runId),
+    });
+
+    const newEvents: Event[] = [];
+    let cursor: string | null = afterCursor;
+    let hasMore = true;
+    let pagesLoaded = 0;
+
+    const world = getWorld();
+    while (hasMore) {
+      const response = await world.events.list({
+        runId,
+        pagination: {
+          sortOrder: 'asc',
+          cursor: cursor ?? undefined,
+        },
+      });
+
+      newEvents.push(...response.data);
+      hasMore = response.hasMore;
+      cursor = response.cursor;
+      pagesLoaded++;
+    }
+
+    span?.setAttributes({
+      ...Attribute.WorkflowEventsCount(newEvents.length),
+      ...Attribute.WorkflowEventsPagesLoaded(pagesLoaded),
+    });
+
+    return { events: newEvents, cursor };
+  });
+}
+
+/**
+ * Loads all workflow run events, returning both the events and the final pagination cursor.
+ * The cursor can be used with getNewWorkflowRunEvents for incremental loading.
+ */
+export async function getAllWorkflowRunEventsWithCursor(
+  runId: string
+): Promise<{ events: Event[]; cursor: string | null }> {
+  return trace('workflow.loadEvents', async (span) => {
+    span?.setAttributes({
+      ...Attribute.WorkflowRunId(runId),
+    });
+
+    const allEvents: Event[] = [];
+    let cursor: string | null = null;
+    let hasMore = true;
+    let pagesLoaded = 0;
+
+    const world = getWorld();
+    while (hasMore) {
+      const response = await world.events.list({
+        runId,
+        pagination: {
+          sortOrder: 'asc',
+          cursor: cursor ?? undefined,
+        },
+      });
+
+      allEvents.push(...response.data);
+      hasMore = response.hasMore;
+      cursor = response.cursor;
+      pagesLoaded++;
+    }
+
+    span?.setAttributes({
+      ...Attribute.WorkflowEventsCount(allEvents.length),
+      ...Attribute.WorkflowEventsPagesLoaded(pagesLoaded),
+    });
+
+    return { events: allEvents, cursor };
+  });
+}
+
+/**
  * CORS headers for health check responses.
  * Allows the observability UI to check endpoint health from a different origin.
  */
