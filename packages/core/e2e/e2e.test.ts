@@ -1066,13 +1066,6 @@ describe('e2e', () => {
         expect(result.failed).toBe(true);
         expect(result.attempt).toBe(1);
       });
-
-      // Removed: 'workflow completes despite transient 5xx on step_completed'
-      // This test validated withServerErrorRetry's in-process retry behavior,
-      // which was removed in favor of structural error separation (infra errors
-      // propagate to the queue for retry). Queue-level retry with process-scoped
-      // fault injection is unreliable (different serverless instances) and too
-      // slow for a bounded e2e timeout.
     });
 
     describe('catchability', () => {
