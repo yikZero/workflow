@@ -252,7 +252,9 @@ async function startWorkflowViaHttp(
   return run;
 }
 
-describe.concurrent('e2e', () => {
+// NOTE: Temporarily disabling concurrent tests to avoid flakiness.
+// TODO: Re-enable concurrent tests after conf when we have more time to investigate.
+describe('e2e', () => {
   // Configure the World for the test runner process so that start() and
   // run.returnValue can communicate with the same backend as the workbench app.
   beforeAll(async () => {
