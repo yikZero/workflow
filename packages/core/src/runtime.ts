@@ -638,30 +638,24 @@ export function combinedEntrypoint(
                         return;
                       }
 
-                      // Load events — use cached events with incremental fetch on subsequent iterations
+                      // Load events — use cached events with incremental fetch on subsequent iterations.
+                      // The server always returns a cursor when there are events (even on the
+                      // final page), so we can reliably use it for incremental loading.
                       let events: Event[];
-                      if (cachedEvents === null) {
-                        // First iteration: full load
+                      if (cachedEvents === null || !eventsCursor) {
+                        // First iteration (or no cursor): full load
                         const loaded =
                           await getAllWorkflowRunEventsWithCursor(runId);
                         events = loaded.events;
                         eventsCursor = loaded.cursor;
                       } else {
                         // Subsequent iteration: fetch only new events since last cursor
-                        if (eventsCursor) {
-                          const loaded = await getNewWorkflowRunEvents(
-                            runId,
-                            eventsCursor
-                          );
-                          cachedEvents.push(...loaded.events);
-                          eventsCursor = loaded.cursor ?? eventsCursor;
-                        } else {
-                          // No cursor (all events fit in one page) — do a full reload
-                          const loaded =
-                            await getAllWorkflowRunEventsWithCursor(runId);
-                          cachedEvents = loaded.events;
-                          eventsCursor = loaded.cursor;
-                        }
+                        const loaded = await getNewWorkflowRunEvents(
+                          runId,
+                          eventsCursor
+                        );
+                        cachedEvents.push(...loaded.events);
+                        eventsCursor = loaded.cursor ?? eventsCursor;
                         events = cachedEvents;
                       }
 
