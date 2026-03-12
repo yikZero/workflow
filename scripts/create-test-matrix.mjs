@@ -1,13 +1,15 @@
 // Framework-specific dev test configurations
 const DEV_TEST_CONFIGS = {
   'nextjs-turbopack': {
-    generatedStepPath: 'app/.well-known/workflow/v1/step/route.js',
+    generatedStepPath:
+      'app/.well-known/workflow/v1/flow/__step_registrations.js',
     generatedWorkflowPath: 'app/.well-known/workflow/v1/flow/route.js',
     apiFilePath: 'app/api/chat/route.ts',
     apiFileImportPath: '../../..',
   },
   'nextjs-webpack': {
-    generatedStepPath: 'app/.well-known/workflow/v1/step/route.js',
+    generatedStepPath:
+      'app/.well-known/workflow/v1/flow/__step_registrations.js',
     generatedWorkflowPath: 'app/.well-known/workflow/v1/flow/route.js',
     apiFilePath: 'app/api/chat/route.ts',
     apiFileImportPath: '../../..',
