@@ -1,0 +1,215 @@
+---
+title: Eager Processing of Steps & Incremental Event Replay
+description: Combine workflow event replay and step bundles to do work inline where possible, only deferring to queue for parallelism
+type: overview
+---
+
+# Eager Processing of Steps & Incremental Event Replay
+
+**Date**: March 2026
+
+This is a major internal architecture change to how Workflow DevKit executes workflows and steps on the Vercel platform. It reduces function invocations and queue overhead by executing steps _inline_ within the same function invocation as the workflow replay, rather than dispatching every step to a separate function via the queue.
+
+## Previous Architecture
+
+The previous architecture used two separate routes, each backed by its own queue trigger:
+
+```
+Queue: __wkf_workflow_*  -->  /.well-known/workflow/v1/flow   (workflow replay in VM)
+                                |
+                          suspension (step needed)
+                                |
+                          queue step to __wkf_step_*
+                                |
+Queue: __wkf_step_*      -->  /.well-known/workflow/v1/step   (step execution in Node.js)
+                                |
+                          step completes
+                                |
+                          queue continuation to __wkf_workflow_*
+                                v
+                          (cycle repeats for each step)
+```
+
+Each step required **2 queue messages** (step invoke + workflow continuation) and **2 function invocations**, plus cold start overhead for each. A serial workflow with 10 steps needed ~21 function invocations.
+
+## New Architecture
+
+The two routes are merged into a single combined handler at `/.well-known/workflow/v1/flow` using `combinedEntrypoint()`. The step route is no longer generated.
+
+The combined handler runs an inline execution loop:
+
+```
+receive queue message
+  |
+  +-- if message has stepId: execute that step, queue workflow continuation, exit
+  |
+  v
+replay workflow in VM
+  |
+  +-- workflow completed --> create run_completed event, exit
+  +-- workflow failed   --> create run_failed event, exit
+  |
+  v
+suspension with pending operations
+  |
+  +-- process hooks and waits (unchanged)
+  |
+  +-- 0 pending steps  --> return (waits/hooks only)
+  +-- 1 pending step   --> execute inline, loop back to replay
+  +-- N pending steps  --> queue N-1 to self (with stepId),
+  |                        execute 1 inline, loop back to replay
+  |
+  +-- timeout check: if wall-clock time >= threshold,
+  |   re-schedule self via queue and exit
+  |
+  v
+(loop continues until completion, timeout, or non-step suspension)
+```
+
+A serial workflow with 10 steps now completes in **1 function invocation**.
+
+## Inline Step Execution
+
+After the workflow suspends with pending steps, the combined handler executes one step inline:
+
+1. Create `step_started` event
+2. Hydrate step input from the event log
+3. Look up the step function via `getStepFunction(stepName)`
+4. Execute the step function
+5. Create `step_completed` or `step_failed` event
+6. Loop back to workflow replay
+
+This logic is extracted into a shared `executeStep()` function in `packages/core/src/runtime/step-executor.ts`, used by both the combined handler and the legacy step handler.
+
+## Background Steps (Parallel Execution)
+
+When a workflow suspends with multiple pending steps (e.g., from `Promise.all`), the handler:
+
+1. Creates `step_created` events for all pending steps
+2. Queues N-1 steps back to `__wkf_workflow_*` with a `stepId` in the message payload
+3. Executes 1 step inline
+4. Loops back to replay
+
+Each background step message is handled by a separate function invocation of the same combined handler. When a message arrives with `stepId`, the handler executes that specific step, queues a plain workflow continuation (without `stepId`), and exits. It does **not** replay the workflow inline — the step events (step_started/step_completed) need to be consumed by the workflow's event subscriptions during a fresh replay.
+
+### Convergence After Parallel Steps
+
+After N parallel steps complete, up to N concurrent replay attempts may occur (each background step queues a continuation). The event-sourced architecture ensures safe convergence:
+
+- **`step_created` idempotency** --- duplicate creates return 409
+- **`step_started` idempotency** --- only one invocation wins the race to execute a step
+- **Queue idempotency keys** --- background step messages use `correlationId` as idempotency key
+- **Deterministic replay** --- all invocations produce the same result given the same event log
+
+The "losing" invocations find that the next step has already been started by a "winning" invocation, skip it (409 from `step_started`), and exit. Eventually only one invocation continues past the parallel section.
+
+## Incremental Event Loading
+
+The combined handler caches the event log in memory across loop iterations. Instead of re-fetching the entire event log on each replay:
+
+1. **First iteration**: full load via `getAllWorkflowRunEventsWithCursor()`, which returns both the events and the final pagination cursor
+2. **Subsequent iterations**: `getNewWorkflowRunEvents(runId, cursor)` fetches only events created after the saved cursor and appends them to the cached array
+
+For a 10-step serial workflow completing in one invocation, the 10th replay loads ~2 new events instead of re-fetching all ~30.
+
+### Server-Side Cursor Fix
+
+The incremental loading depends on the server returning a cursor even on the final page of results (`hasMore: false`). Previously, `workflow-server` returned `cursor: null` when there were no more pages. This was fixed in the `peter/fix-end-cursor` branch to always return an `eid:<eventId>` cursor when there are events, aligning with `world-local` and `world-postgres` behavior.
+
+If a World implementation does not return a cursor after the initial load, the combined handler logs an error and falls back to a full reload.
+
+## Timeout Handling
+
+The inline execution loop checks wall-clock time before each replay iteration. If the elapsed time exceeds a configurable threshold (default: 110 seconds, for a 120-second function limit), the handler re-schedules itself via the queue and returns.
+
+The threshold is configurable via the `WORKFLOW_V2_TIMEOUT_MS` environment variable.
+
+If a single step takes longer than the timeout threshold, the step runs to completion (or SIGKILL) — there is no interruption mechanism for in-progress step execution. This is the same behavior as the previous architecture.
+
+## Queue Message Changes
+
+The `WorkflowInvokePayload` schema has a new optional field:
+
+```typescript
+stepId: z.string().optional()
+```
+
+When present, the combined handler executes that specific step before (or instead of) replaying the workflow. Background steps are queued with this field set.
+
+The queue trigger configuration uses a single `COMBINED_QUEUE_TRIGGER` on the `__wkf_workflow_*` topic. The `__wkf_step_*` topic and its trigger are no longer generated.
+
+## Builder Changes
+
+### Base Builder
+
+New method `createCombinedBundle()` in `packages/builders/src/base-builder.ts`:
+
+1. Builds the step registrations bundle (same esbuild + SWC step mode as before)
+2. Builds the workflow VM code string (same esbuild + SWC workflow mode as before)
+3. Generates a combined route file that imports the step registrations and uses `combinedEntrypoint(workflowCode)`
+
+No changes to the SWC plugin were needed. The two-pass build approach (separate step and workflow SWC modes) still applies.
+
+### Next.js Builders
+
+Both the eager builder (`builder-eager.ts`) and the deferred/lazyDiscovery builder (`builder-deferred.ts`) were updated:
+
+- Replace separate `buildStepsFunction()` + `buildWorkflowsFunction()` with `createCombinedBundle()`
+- Remove step route stub generation (deferred builder)
+- Remove step route file copy operations
+- Update functions config to use single `COMBINED_QUEUE_TRIGGER`
+
+### Generated File Layout
+
+```
+.well-known/workflow/v1/
+  flow/
+    route.js                  # Combined handler (combinedEntrypoint)
+    __step_registrations.js   # Step function registrations (side effects)
+  webhook/
+    [token]/
+      route.js                # Webhook handler (unchanged)
+  manifest.json               # Workflow/step/class manifest (unchanged)
+  config.json                 # Functions config (single trigger)
+```
+
+The `step/` directory is no longer generated.
+
+## Suspension Handler
+
+A new `handleSuspensionV2()` function was added to `packages/core/src/runtime/suspension-handler.ts`. It performs the same event creation as the original `handleSuspension()` (hooks, step events, wait events) but does **not** queue step messages. It returns the pending step items so the combined handler can decide which to execute inline vs. queue to background.
+
+The original `handleSuspension()` remains unchanged for backward compatibility with the V1 step handler.
+
+## Concerns and Edge Cases
+
+### VM Sandboxing
+
+Workflow code still runs in a Node.js VM for determinism and sandboxing. Step code runs in the Node.js host context. The only change is that both happen within the same function invocation.
+
+### Bundle Size and Cold Start
+
+The combined bundle is larger (contains both step code and workflow VM code). Cold start time increases slightly. The reduction in total function invocations more than compensates.
+
+### Step Retries
+
+When an inline step fails with retries remaining:
+- `RetryableError` with explicit `retryAfter` delay: re-queue to self with `stepId` and delay
+- Transient errors with immediate retry: re-queue to self with `stepId` (delay = 1s)
+- `FatalError`: fail immediately
+
+### Mixed Suspensions
+
+A suspension may contain steps, hooks, and waits simultaneously. The handler creates events for all, executes any pending step inline, and returns with the wait timeout if applicable. The workflow will re-suspend on next replay for the still-pending hooks/waits.
+
+### Hook Conflicts
+
+If a hook conflict is detected during suspension handling, the handler breaks the loop and returns `{ timeoutSeconds: 0 }` for immediate re-invocation, same as the previous behavior.
+
+### Encryption Key Resolution
+
+Encryption keys are resolved per-run during event loading and step execution, same as before.
+
+## Framework Support
+
+Currently updated for Next.js (both eager and deferred/lazyDiscovery builders). Other framework integrations (NestJS, SvelteKit, CLI standalone, Astro, Nitro, Nuxt) still use the V1 two-route architecture and will be updated separately.
