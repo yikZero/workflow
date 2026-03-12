@@ -458,6 +458,13 @@ export function workflowEntrypoint(
 export function runStep() {}
 
 /**
+ * Intended to be <=50% of the function timeout (5m by default), ensuring that
+ * steps get at least >=50% of the function time to complete on the first try.
+ * A retry of the step will lead to a full function time allotment for the next try.
+ */
+export const WORKFLOW_NO_INLINE_REPLAY_AFTER_MS = 120_000;
+
+/**
  * V2 combined entrypoint: handles both workflow orchestration and step execution
  * in a single route. After workflow replay, executes steps inline when possible
  * to reduce function invocations and queue overhead.
@@ -471,8 +478,9 @@ export function runStep() {}
 export function combinedEntrypoint(
   workflowCode: string
 ): (req: Request) => Promise<Response> {
-  // Configurable timeout: use env var or default to 110s (for 120s function limit)
-  const TIMEOUT_MS = Number(process.env.WORKFLOW_V2_TIMEOUT_MS) || 110_000;
+  const NO_INLINE_REPLAY_AFTER_MS =
+    Number(process.env.WORKFLOW_NO_INLINE_REPLAY_AFTER_MS) ||
+    WORKFLOW_NO_INLINE_REPLAY_AFTER_MS;
 
   const handler = getWorldHandlers().createQueueHandler(
     '__wkf_workflow_',
@@ -584,7 +592,10 @@ export function combinedEntrypoint(
                     loopIteration++;
 
                     // Check timeout before replay
-                    if (Date.now() - invocationStartTime >= TIMEOUT_MS) {
+                    if (
+                      Date.now() - invocationStartTime >=
+                      NO_INLINE_REPLAY_AFTER_MS
+                    ) {
                       runtimeLogger.info(
                         'V2 timeout reached, re-scheduling workflow',
                         {

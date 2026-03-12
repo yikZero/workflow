@@ -275,7 +275,9 @@ export async function healthCheck(
  * This ensures that *all* events are loaded into memory before running the workflow.
  * Events must be in chronological order (ascending) for proper workflow replay.
  */
-export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
+export async function getAllWorkflowRunEvents(
+  runId: string
+): Promise<{ events: Event[]; cursor: string | null }> {
   return trace('workflow.loadEvents', async (span) => {
     span?.setAttributes({
       ...Attribute.WorkflowRunId(runId),
@@ -310,7 +312,7 @@ export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
       ...Attribute.WorkflowEventsPagesLoaded(pagesLoaded),
     });
 
-    return allEvents;
+    return { events: allEvents, cursor };
   });
 }
 
