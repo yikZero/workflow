@@ -15,5 +15,6 @@ const nextConfig: NextConfig = {
 };
 
 // export default nextConfig;
-// TODO: re-enable lazyDiscovery after deferred builder supports V2 combined bundle
-export default withWorkflow(nextConfig);
+export default withWorkflow(nextConfig, {
+  workflows: { lazyDiscovery: true },
+});

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants, existsSync, realpathSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import {
   access,
   mkdir,
@@ -10,35 +10,14 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
-import {
-  basename,
-  dirname,
-  extname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import {
   createSocketServer,
   type SocketIO,
   type SocketServerConfig,
 } from './socket-server.js';
-import {
-  createDeferredStepCopyInlineSourceMapComment,
-  createDeferredStepSourceMetadataComment,
-  DEFERRED_STEP_COPY_DIR_NAME,
-} from './step-copy-utils.js';
 
 const ROUTE_STUB_FILE_MARKER = 'WORKFLOW_ROUTE_STUB_FILE';
-
-type WorkflowManifest = import('@workflow/builders').WorkflowManifest;
-
-interface DeferredDiscoveredEntries {
-  discoveredSteps: string[];
-  discoveredWorkflows: string[];
-  discoveredSerdeFiles: string[];
-}
 
 let CachedNextBuilderDeferred: any;
 
@@ -52,13 +31,9 @@ export async function getNextBuilderDeferred() {
 
   const {
     BaseBuilder: BaseBuilderClass,
-    STEP_QUEUE_TRIGGER,
-    WORKFLOW_QUEUE_TRIGGER,
-    applySwcTransform,
+    COMBINED_QUEUE_TRIGGER,
     detectWorkflowPatterns,
-    getImportPath,
     isWorkflowSdkFile,
-    resolveWorkflowAliasRelativePath,
     // biome-ignore lint/security/noGlobalEval: Need to use eval here to avoid TypeScript from transpiling the import statement into `require()`
   } = (await eval(
     'import("@workflow/builders")'
@@ -416,11 +391,6 @@ export async function getNextBuilderDeferred() {
         entryFiles: [...discoveredStepFiles, ...discoveredWorkflowFiles],
         serdeFiles: discoveredSerdeFileCandidates,
       });
-      const discoveredEntries = {
-        discoveredSteps: discoveredStepFiles,
-        discoveredWorkflows: discoveredWorkflowFiles,
-        discoveredSerdeFiles,
-      };
       const buildInputFiles = Array.from(
         new Set([
           ...inputFiles,
@@ -440,17 +410,21 @@ export async function getNextBuilderDeferred() {
 
       const tsconfigPath = await this.findTsConfigPath();
 
-      const options = {
+      // V2: Build combined route (replaces separate step + flow routes)
+      const flowRouteDir = join(workflowGeneratedDir, 'flow');
+      await mkdir(flowRouteDir, { recursive: true });
+      const combinedResult = await this.createCombinedBundle({
+        format: 'esm',
         inputFiles: buildInputFiles,
-        workflowGeneratedDir,
+        stepsOutfile: join(
+          flowRouteDir,
+          `__step_registrations.${tempRouteFileName}`
+        ),
+        flowOutfile: join(flowRouteDir, tempRouteFileName),
+        bundleFinalOutput: false,
+        externalizeNonSteps: true,
         tsconfigPath,
-        routeFileName: tempRouteFileName,
-        discoveredEntries,
-      };
-
-      const { manifest: stepsManifest } =
-        await this.buildStepsFunction(options);
-      const workflowsBundle = await this.buildWorkflowsFunction(options);
+      });
       await this.buildWebhookRoute({
         workflowGeneratedDir,
         routeFileName: tempRouteFileName,
@@ -460,17 +434,10 @@ export async function getNextBuilderDeferred() {
         tempRouteFileName
       );
 
-      // Merge manifests from both bundles
       const manifest = {
-        steps: { ...stepsManifest.steps, ...workflowsBundle?.manifest?.steps },
-        workflows: {
-          ...stepsManifest.workflows,
-          ...workflowsBundle?.manifest?.workflows,
-        },
-        classes: {
-          ...stepsManifest.classes,
-          ...workflowsBundle?.manifest?.classes,
-        },
+        steps: { ...combinedResult?.manifest?.steps },
+        workflows: { ...combinedResult?.manifest?.workflows },
+        classes: { ...combinedResult?.manifest?.classes },
       };
 
       const manifestFilePath = join(workflowGeneratedDir, 'manifest.json');
@@ -494,13 +461,17 @@ export async function getNextBuilderDeferred() {
 
       await this.writeFunctionsConfig(outputDir);
 
+      // V2: Combined route (flow) + step registrations side-effect file
       await this.copyFileIfChanged(
         join(workflowGeneratedDir, `flow/${tempRouteFileName}`),
         join(workflowGeneratedDir, 'flow/route.js')
       );
       await this.copyFileIfChanged(
-        join(workflowGeneratedDir, `step/${tempRouteFileName}`),
-        join(workflowGeneratedDir, 'step/route.js')
+        join(
+          workflowGeneratedDir,
+          `flow/__step_registrations.${tempRouteFileName}`
+        ),
+        join(workflowGeneratedDir, 'flow/__step_registrations.js')
       );
       await this.copyFileIfChanged(
         join(workflowGeneratedDir, `webhook/[token]/${tempRouteFileName}`),
@@ -537,10 +508,10 @@ export async function getNextBuilderDeferred() {
         join(flowRouteDir, 'route.js.temp'),
         join(flowRouteDir, 'route.js.temp.debug.json'),
         join(flowRouteDir, 'route.js.debug.json'),
-        join(stepRouteDir, 'route.js.temp'),
-        join(stepRouteDir, 'route.js.temp.debug.json'),
-        join(stepRouteDir, 'route.js.debug.json'),
-        join(stepRouteDir, DEFERRED_STEP_COPY_DIR_NAME),
+        join(flowRouteDir, '__step_registrations.route.js.temp'),
+        join(flowRouteDir, '__step_registrations.route.js.temp.debug.json'),
+        // V2: clean up stale V1 step route directory
+        stepRouteDir,
         join(webhookRouteDir, 'route.js.temp'),
         join(workflowGeneratedDir, 'manifest.json'),
       ];
@@ -553,7 +524,6 @@ export async function getNextBuilderDeferred() {
 
       await Promise.all([
         this.removeStaleDeferredTempFiles(flowRouteDir),
-        this.removeStaleDeferredTempFiles(stepRouteDir),
         this.removeStaleDeferredTempFiles(webhookRouteDir),
       ]);
     }
@@ -974,7 +944,6 @@ export async function getNextBuilderDeferred() {
       const workflowGeneratedDir = join(outputDir, '.well-known/workflow/v1');
 
       await mkdir(join(workflowGeneratedDir, 'flow'), { recursive: true });
-      await mkdir(join(workflowGeneratedDir, 'step'), { recursive: true });
       await mkdir(join(workflowGeneratedDir, 'webhook/[token]'), {
         recursive: true,
       });
@@ -984,14 +953,10 @@ export async function getNextBuilderDeferred() {
         '*'
       );
 
-      // route.js stubs are replaced by generated route.js output once discovery
-      // finishes and a deferred build completes.
+      // V2: Only flow + webhook stubs needed (no separate step route).
+      // Stubs are replaced by generated output once discovery finishes.
       await this.writeFileIfChanged(
         join(workflowGeneratedDir, 'flow/route.js'),
-        routeStubContent
-      );
-      await this.writeFileIfChanged(
-        join(workflowGeneratedDir, 'step/route.js'),
         routeStubContent
       );
       await this.writeFileIfChanged(
@@ -1025,18 +990,14 @@ export async function getNextBuilderDeferred() {
       if (process.env.NODE_ENV === 'development') {
         return;
       }
+      // V2: Single combined trigger handles both workflow and step execution
       const generatedConfig = {
         version: '0',
-        steps: {
-          experimentalTriggers: [STEP_QUEUE_TRIGGER],
-        },
         workflows: {
-          experimentalTriggers: [WORKFLOW_QUEUE_TRIGGER],
+          experimentalTriggers: [COMBINED_QUEUE_TRIGGER],
         },
       };
 
-      // We write this file to the generated directory for
-      // the Next.js builder to consume
       await this.writeFileIfChanged(
         join(outputDir, '.well-known/workflow/v1/config.json'),
         JSON.stringify(generatedConfig, null, 2)
@@ -1102,128 +1063,6 @@ export async function getNextBuilderDeferred() {
       }
     }
 
-    private mergeWorkflowManifest(
-      target: WorkflowManifest,
-      source: WorkflowManifest
-    ): void {
-      if (source.steps) {
-        target.steps = Object.assign(target.steps || {}, source.steps);
-      }
-      if (source.workflows) {
-        target.workflows = Object.assign(
-          target.workflows || {},
-          source.workflows
-        );
-      }
-      if (source.classes) {
-        target.classes = Object.assign(target.classes || {}, source.classes);
-      }
-    }
-
-    private async getRelativeFilenameForSwc(filePath: string): Promise<string> {
-      const workingDir = this.config.workingDir;
-      const normalizedWorkingDir = workingDir
-        .replace(/\\/g, '/')
-        .replace(/\/$/, '');
-      const normalizedFilepath = filePath.replace(/\\/g, '/');
-
-      // Windows fix: Use case-insensitive comparison to work around drive letter casing issues.
-      const lowerWd = normalizedWorkingDir.toLowerCase();
-      const lowerPath = normalizedFilepath.toLowerCase();
-
-      let relativeFilename: string;
-      if (lowerPath.startsWith(`${lowerWd}/`)) {
-        relativeFilename = normalizedFilepath.substring(
-          normalizedWorkingDir.length + 1
-        );
-      } else if (lowerPath === lowerWd) {
-        relativeFilename = '.';
-      } else {
-        relativeFilename = relative(workingDir, filePath).replace(/\\/g, '/');
-        if (relativeFilename.startsWith('../')) {
-          const aliasedRelativePath = await resolveWorkflowAliasRelativePath(
-            filePath,
-            workingDir
-          );
-          if (aliasedRelativePath) {
-            relativeFilename = aliasedRelativePath;
-          } else {
-            relativeFilename = relativeFilename
-              .split('/')
-              .filter((part) => part !== '..')
-              .join('/');
-          }
-        }
-      }
-
-      if (relativeFilename.includes(':') || relativeFilename.startsWith('/')) {
-        relativeFilename = basename(normalizedFilepath);
-      }
-
-      return relativeFilename;
-    }
-
-    private getRelativeImportSpecifier(
-      fromFilePath: string,
-      toFilePath: string
-    ): string {
-      let relativePath = relative(dirname(fromFilePath), toFilePath).replace(
-        /\\/g,
-        '/'
-      );
-      if (!relativePath.startsWith('.')) {
-        relativePath = `./${relativePath}`;
-      }
-      return relativePath;
-    }
-
-    private getStepCopyFileName(filePath: string): string {
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      const hash = createHash('sha256').update(normalizedPath).digest('hex');
-      const extension = extname(normalizedPath);
-      return `${hash.slice(0, 16)}${extension || '.js'}`;
-    }
-
-    private rewriteCopiedStepImportSpecifier(
-      specifier: string,
-      sourceFilePath: string,
-      copiedFilePath: string,
-      copiedStepFileBySourcePath: Map<string, string>
-    ): string {
-      if (!specifier.startsWith('.')) {
-        return specifier;
-      }
-
-      const specifierMatch = specifier.match(/^([^?#]+)(.*)$/);
-      const importPath = specifierMatch?.[1] ?? specifier;
-      const suffix = specifierMatch?.[2] ?? '';
-      const absoluteTargetPath = resolve(dirname(sourceFilePath), importPath);
-      const resolvedTargetPath =
-        this.resolveCopiedStepImportTargetPath(absoluteTargetPath);
-      const normalizedTargetPath = resolvedTargetPath.replace(/\\/g, '/');
-      const copiedTargetPath =
-        copiedStepFileBySourcePath.get(normalizedTargetPath) ||
-        (() => {
-          try {
-            const realTargetPath = realpathSync(resolvedTargetPath).replace(
-              /\\/g,
-              '/'
-            );
-            return copiedStepFileBySourcePath.get(realTargetPath);
-          } catch {
-            return undefined;
-          }
-        })();
-      let rewrittenPath = relative(
-        dirname(copiedFilePath),
-        copiedTargetPath || resolvedTargetPath
-      ).replace(/\\/g, '/');
-      if (!rewrittenPath.startsWith('.')) {
-        rewrittenPath = `./${rewrittenPath}`;
-      }
-      return `${rewrittenPath}${suffix}`;
-    }
-
     private resolveCopiedStepImportTargetPath(targetPath: string): string {
       if (existsSync(targetPath)) {
         return targetPath;
@@ -1259,46 +1098,6 @@ export async function getNextBuilderDeferred() {
       }
 
       return targetPath;
-    }
-
-    private rewriteRelativeImportsForCopiedStep(
-      source: string,
-      sourceFilePath: string,
-      copiedFilePath: string,
-      copiedStepFileBySourcePath: Map<string, string>
-    ): string {
-      const rewriteSpecifier = (specifier: string) =>
-        this.rewriteCopiedStepImportSpecifier(
-          specifier,
-          sourceFilePath,
-          copiedFilePath,
-          copiedStepFileBySourcePath
-        );
-      const rewritePattern = (currentSource: string, pattern: RegExp): string =>
-        currentSource.replace(
-          pattern,
-          (_match, prefix: string, specifier: string, suffix: string) =>
-            `${prefix}${rewriteSpecifier(specifier)}${suffix}`
-        );
-
-      let rewrittenSource = source;
-      rewrittenSource = rewritePattern(
-        rewrittenSource,
-        /(from\s+['"])([^'"]+)(['"])/g
-      );
-      rewrittenSource = rewritePattern(
-        rewrittenSource,
-        /(import\s+['"])([^'"]+)(['"])/g
-      );
-      rewrittenSource = rewritePattern(
-        rewrittenSource,
-        /(import\(\s*['"])([^'"]+)(['"]\s*\))/g
-      );
-      rewrittenSource = rewritePattern(
-        rewrittenSource,
-        /(require\(\s*['"])([^'"]+)(['"]\s*\))/g
-      );
-      return rewrittenSource;
     }
 
     private extractRelativeImportSpecifiers(source: string): string[] {
@@ -1384,105 +1183,6 @@ export async function getNextBuilderDeferred() {
       }
 
       return null;
-    }
-
-    private async collectTransitiveStepFiles({
-      stepFiles,
-      seedFiles = [],
-    }: {
-      stepFiles: string[];
-      seedFiles?: string[];
-    }): Promise<string[]> {
-      const normalizedSeedFiles = Array.from(
-        new Set(
-          [...stepFiles, ...seedFiles].map((stepFile) =>
-            this.normalizeDiscoveredFilePath(stepFile)
-          )
-        )
-      ).sort();
-      // Intentionally re-validate step seeds against current file contents
-      // instead of blindly trusting callers. This prevents stale/manual seed
-      // paths from persisting when files no longer contain "use step".
-      const discoveredStepFiles = new Set<string>();
-      const queuedFiles = [...normalizedSeedFiles];
-      const visitedFiles = new Set<string>();
-      const sourceCache = new Map<string, string | null>();
-      const patternCache = new Map<
-        string,
-        ReturnType<typeof detectWorkflowPatterns> | null
-      >();
-
-      const getSource = async (filePath: string): Promise<string | null> => {
-        if (sourceCache.has(filePath)) {
-          return sourceCache.get(filePath) ?? null;
-        }
-        try {
-          const source = await readFile(filePath, 'utf-8');
-          sourceCache.set(filePath, source);
-          return source;
-        } catch {
-          sourceCache.set(filePath, null);
-          return null;
-        }
-      };
-
-      const getPatterns = async (
-        filePath: string
-      ): Promise<ReturnType<typeof detectWorkflowPatterns> | null> => {
-        if (patternCache.has(filePath)) {
-          return patternCache.get(filePath) ?? null;
-        }
-        const source = await getSource(filePath);
-        if (source === null) {
-          patternCache.set(filePath, null);
-          return null;
-        }
-        const patterns = detectWorkflowPatterns(source);
-        patternCache.set(filePath, patterns);
-        return patterns;
-      };
-
-      while (queuedFiles.length > 0) {
-        const currentFile = queuedFiles.pop();
-        if (!currentFile || visitedFiles.has(currentFile)) {
-          continue;
-        }
-        visitedFiles.add(currentFile);
-
-        const currentSource = await getSource(currentFile);
-        if (currentSource === null) {
-          continue;
-        }
-
-        const currentPatterns = await getPatterns(currentFile);
-        if (currentPatterns?.hasUseStep) {
-          discoveredStepFiles.add(currentFile);
-        }
-
-        const relativeImportSpecifiers =
-          this.extractRelativeImportSpecifiers(currentSource);
-        for (const specifier of relativeImportSpecifiers) {
-          const resolvedImportPath =
-            await this.resolveTransitiveStepImportTargetPath(
-              currentFile,
-              specifier
-            );
-          if (!resolvedImportPath) {
-            continue;
-          }
-
-          if (!visitedFiles.has(resolvedImportPath)) {
-            queuedFiles.push(resolvedImportPath);
-          }
-
-          const importPatterns = await getPatterns(resolvedImportPath);
-          if (importPatterns?.hasUseStep) {
-            discoveredStepFiles.add(resolvedImportPath);
-          }
-        }
-      }
-
-      return Array.from(discoveredStepFiles).sort();
     }
 
     private async collectTransitiveSerdeFiles({
@@ -1596,281 +1296,6 @@ export async function getNextBuilderDeferred() {
       }
 
       return Array.from(discoveredSerdeFiles).sort();
-    }
-
-    private resolveBuiltInStepFilePath(): string | null {
-      try {
-        return this.normalizeDiscoveredFilePath(
-          require.resolve('workflow/internal/builtins', {
-            paths: [this.config.workingDir],
-          })
-        );
-      } catch {
-        return null;
-      }
-    }
-
-    private async copyDiscoveredStepFiles({
-      stepFiles,
-      stepsRouteDir,
-    }: {
-      stepFiles: string[];
-      stepsRouteDir: string;
-    }): Promise<string[]> {
-      const copiedStepsDir = join(stepsRouteDir, DEFERRED_STEP_COPY_DIR_NAME);
-      await mkdir(copiedStepsDir, { recursive: true });
-
-      const normalizedStepFiles = Array.from(
-        new Set(
-          stepFiles.map((stepFile) =>
-            this.normalizeDiscoveredFilePath(stepFile)
-          )
-        )
-      ).sort();
-      const copiedStepFileBySourcePath = new Map<string, string>();
-      const expectedFileNames = new Set<string>();
-      const copiedStepFiles: string[] = [];
-
-      for (const normalizedStepFile of normalizedStepFiles) {
-        const copiedFileName = this.getStepCopyFileName(normalizedStepFile);
-        const copiedFilePath = join(copiedStepsDir, copiedFileName);
-        const normalizedPathKey = normalizedStepFile.replace(/\\/g, '/');
-        copiedStepFileBySourcePath.set(normalizedPathKey, copiedFilePath);
-        try {
-          const realPathKey = realpathSync(normalizedStepFile).replace(
-            /\\/g,
-            '/'
-          );
-          copiedStepFileBySourcePath.set(realPathKey, copiedFilePath);
-        } catch {
-          // Keep best-effort mapping when source cannot be realpath-resolved.
-        }
-        expectedFileNames.add(copiedFileName);
-        copiedStepFiles.push(copiedFilePath);
-      }
-
-      for (const normalizedStepFile of normalizedStepFiles) {
-        const source = await readFile(normalizedStepFile, 'utf-8');
-        const copiedFilePath = copiedStepFileBySourcePath.get(
-          normalizedStepFile.replace(/\\/g, '/')
-        );
-        if (!copiedFilePath) {
-          continue;
-        }
-        const rewrittenSource = this.rewriteRelativeImportsForCopiedStep(
-          source,
-          normalizedStepFile,
-          copiedFilePath,
-          copiedStepFileBySourcePath
-        );
-        const metadataComment = createDeferredStepSourceMetadataComment({
-          relativeFilename:
-            await this.getRelativeFilenameForSwc(normalizedStepFile),
-          absolutePath: normalizedStepFile.replace(/\\/g, '/'),
-        });
-        const sourceMapComment = createDeferredStepCopyInlineSourceMapComment({
-          sourcePath: normalizedStepFile,
-          sourceContent: source,
-          generatedContent: rewrittenSource,
-        });
-        const copiedSource = `${metadataComment}\n${rewrittenSource}\n${sourceMapComment}`;
-
-        await this.writeFileIfChanged(copiedFilePath, copiedSource);
-      }
-
-      const existingEntries = await readdir(copiedStepsDir, {
-        withFileTypes: true,
-      }).catch(() => []);
-      await Promise.all(
-        existingEntries
-          .filter((entry) => !expectedFileNames.has(entry.name))
-          .map((entry) =>
-            rm(join(copiedStepsDir, entry.name), {
-              recursive: true,
-              force: true,
-            })
-          )
-      );
-
-      return copiedStepFiles;
-    }
-
-    private async createDeferredStepsManifest({
-      stepFiles,
-      workflowFiles,
-      serdeOnlyFiles,
-    }: {
-      stepFiles: string[];
-      workflowFiles: string[];
-      serdeOnlyFiles: string[];
-    }): Promise<WorkflowManifest> {
-      const workflowManifest: WorkflowManifest = {};
-      const filesForStepTransform = Array.from(
-        new Set([...stepFiles, ...serdeOnlyFiles])
-      ).sort();
-
-      await Promise.all(
-        filesForStepTransform.map(async (stepFile) => {
-          const source = await readFile(stepFile, 'utf-8');
-          const relativeFilename =
-            await this.getRelativeFilenameForSwc(stepFile);
-          const { workflowManifest: fileManifest } = await applySwcTransform(
-            relativeFilename,
-            source,
-            'step',
-            stepFile
-          );
-          this.mergeWorkflowManifest(workflowManifest, fileManifest);
-        })
-      );
-
-      const stepFileSet = new Set(stepFiles);
-      const workflowOnlyFiles = workflowFiles
-        .filter((workflowFile) => !stepFileSet.has(workflowFile))
-        .sort();
-      await Promise.all(
-        workflowOnlyFiles.map(async (workflowFile) => {
-          try {
-            const source = await readFile(workflowFile, 'utf-8');
-            const relativeFilename =
-              await this.getRelativeFilenameForSwc(workflowFile);
-            const { workflowManifest: fileManifest } = await applySwcTransform(
-              relativeFilename,
-              source,
-              'workflow',
-              workflowFile
-            );
-            this.mergeWorkflowManifest(workflowManifest, {
-              workflows: fileManifest.workflows,
-              classes: fileManifest.classes,
-            });
-          } catch (error) {
-            console.log(
-              `Warning: Failed to extract workflow metadata from ${workflowFile}:`,
-              error instanceof Error ? error.message : String(error)
-            );
-          }
-        })
-      );
-
-      return workflowManifest;
-    }
-
-    private async buildStepsFunction({
-      workflowGeneratedDir,
-      routeFileName = 'route.js',
-      discoveredEntries,
-    }: {
-      workflowGeneratedDir: string;
-      routeFileName?: string;
-      discoveredEntries: DeferredDiscoveredEntries;
-    }) {
-      const stepsRouteDir = join(workflowGeneratedDir, 'step');
-      await mkdir(stepsRouteDir, { recursive: true });
-      const discovered = discoveredEntries;
-      const workflowFiles = [...discovered.discoveredWorkflows].sort();
-      const stepFiles = await this.collectTransitiveStepFiles({
-        stepFiles: [...discovered.discoveredSteps].sort(),
-        // Workflow transforms can inline step IDs and remove runtime imports,
-        // so seed transitive traversal with workflow files too.
-        seedFiles: workflowFiles,
-      });
-      const serdeFiles = [...discovered.discoveredSerdeFiles].sort();
-      const stepFileSet = new Set(stepFiles);
-      const serdeOnlyFiles = serdeFiles.filter(
-        (file) => !stepFileSet.has(file)
-      );
-      const builtInStepFilePath = this.resolveBuiltInStepFilePath();
-      const copiedStepSourceFiles = builtInStepFilePath
-        ? [
-            builtInStepFilePath,
-            ...stepFiles.filter((stepFile) => stepFile !== builtInStepFilePath),
-          ]
-        : stepFiles;
-      const copiedStepFiles = await this.copyDiscoveredStepFiles({
-        stepFiles: copiedStepSourceFiles,
-        stepsRouteDir,
-      });
-
-      const stepRouteFile = join(stepsRouteDir, routeFileName);
-      const copiedStepImports = copiedStepFiles
-        .map((copiedStepFile) => {
-          const importSpecifier = this.getRelativeImportSpecifier(
-            stepRouteFile,
-            copiedStepFile
-          );
-          return `import '${importSpecifier}';`;
-        })
-        .join('\n');
-      const serdeImports = serdeOnlyFiles
-        .map((serdeFile) => {
-          const normalizedSerdeFile =
-            this.normalizeDiscoveredFilePath(serdeFile);
-          const { importPath, isPackage } = getImportPath(
-            normalizedSerdeFile,
-            this.config.workingDir
-          );
-          if (isPackage) {
-            return `import '${importPath}';`;
-          }
-          const importSpecifier = this.getRelativeImportSpecifier(
-            stepRouteFile,
-            normalizedSerdeFile
-          );
-          return `import '${importSpecifier}';`;
-        })
-        .join('\n');
-
-      const routeContents = [
-        '// biome-ignore-all lint: generated file',
-        '/* eslint-disable */',
-        builtInStepFilePath ? '' : "import 'workflow/internal/builtins';",
-        copiedStepImports,
-        serdeImports
-          ? `// Serde files for cross-context class registration\n${serdeImports}`
-          : '',
-        "export { stepEntrypoint as POST } from 'workflow/runtime';",
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      await this.writeFileIfChanged(stepRouteFile, routeContents);
-
-      const manifest = await this.createDeferredStepsManifest({
-        stepFiles: copiedStepSourceFiles,
-        workflowFiles,
-        serdeOnlyFiles,
-      });
-
-      return {
-        context: undefined,
-        manifest,
-      };
-    }
-
-    private async buildWorkflowsFunction({
-      inputFiles,
-      workflowGeneratedDir,
-      tsconfigPath,
-      routeFileName = 'route.js',
-      discoveredEntries,
-    }: {
-      inputFiles: string[];
-      workflowGeneratedDir: string;
-      tsconfigPath?: string;
-      routeFileName?: string;
-      discoveredEntries: DeferredDiscoveredEntries;
-    }) {
-      const workflowsRouteDir = join(workflowGeneratedDir, 'flow');
-      await mkdir(workflowsRouteDir, { recursive: true });
-      return await this.createWorkflowsBundle({
-        format: 'esm',
-        outfile: join(workflowsRouteDir, routeFileName),
-        bundleFinalOutput: false,
-        inputFiles,
-        tsconfigPath,
-        discoveredEntries,
-      });
     }
 
     private async buildWebhookRoute({
