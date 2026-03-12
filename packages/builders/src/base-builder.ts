@@ -587,6 +587,8 @@ export abstract class BaseBuilder {
     manifest: WorkflowManifest;
     interimBundleCtx?: esbuild.BuildContext;
     bundleFinal?: (interimBundleResult: string) => Promise<void>;
+    /** The raw workflow VM code (before wrapping with entrypoint) */
+    interimBundleText?: string;
   }> {
     const discovered =
       discoveredEntries ??
@@ -830,17 +832,164 @@ export const POST = workflowEntrypoint(workflowCode);`;
         `${Date.now() - bundleStartTime}ms`
       );
     };
-    await bundleFinal(interimBundle.outputFiles[0].text);
+    const interimBundleText = interimBundle.outputFiles[0].text;
+    await bundleFinal(interimBundleText);
 
     if (this.config.watch) {
       return {
         manifest: workflowManifest,
         interimBundleCtx,
         bundleFinal,
+        interimBundleText,
       };
     }
     await interimBundleCtx.dispose();
-    return { manifest: workflowManifest };
+    return { manifest: workflowManifest, interimBundleText };
+  }
+
+  /**
+   * V2: Creates a combined bundle that includes both step registrations and
+   * workflow orchestration in a single route. The combined entrypoint executes
+   * steps inline when possible, reducing function invocations and queue overhead.
+   *
+   * This method reuses createStepsBundle (for step registrations) and
+   * createWorkflowsBundle (for workflow VM code), then combines them into
+   * a single route file using combinedEntrypoint().
+   */
+  protected async createCombinedBundle({
+    inputFiles,
+    stepsOutfile,
+    flowOutfile,
+    format = 'esm',
+    bundleFinalOutput = true,
+    tsconfigPath,
+    externalizeNonSteps,
+  }: {
+    inputFiles: string[];
+    /** Output path for the step registrations bundle (side effects only) */
+    stepsOutfile: string;
+    /** Output path for the combined route file */
+    flowOutfile: string;
+    format?: 'cjs' | 'esm';
+    bundleFinalOutput?: boolean;
+    tsconfigPath?: string;
+    externalizeNonSteps?: boolean;
+  }): Promise<{
+    manifest: WorkflowManifest;
+    stepsContext?: esbuild.BuildContext;
+    interimBundleCtx?: esbuild.BuildContext;
+    bundleFinal?: (interimBundleResult: string) => Promise<void>;
+  }> {
+    // 1. Build step registrations (same as createStepsBundle)
+    const { context: stepsContext, manifest: stepsManifest } =
+      await this.createStepsBundle({
+        inputFiles,
+        outfile: stepsOutfile,
+        format,
+        externalizeNonSteps,
+        tsconfigPath,
+      });
+
+    // 2. Build workflow VM code using createWorkflowsBundle.
+    // We pass a dummy outfile since createWorkflowsBundle writes the wrapper
+    // to it, but we only need the interimBundleText (raw VM code).
+    const tempWorkflowOutfile = `${flowOutfile}.__wf_tmp.js`;
+    const workflowsResult = await this.createWorkflowsBundle({
+      inputFiles,
+      outfile: tempWorkflowOutfile,
+      format,
+      bundleFinalOutput: false,
+      tsconfigPath,
+    });
+
+    // Get the raw workflow VM code (before it's wrapped with workflowEntrypoint)
+    const workflowVMCode = workflowsResult.interimBundleText;
+    if (!workflowVMCode) {
+      throw new Error('createWorkflowsBundle did not return interimBundleText');
+    }
+
+    // Clean up the wrapper file (we don't need it)
+    try {
+      const { unlink } = await import('node:fs/promises');
+      await unlink(tempWorkflowOutfile);
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    // 4. Generate combined route file
+    const stepsRelativePath = './' + basename(stepsOutfile).replace(/\\/g, '/');
+
+    // Escape the VM code for embedding in a template literal
+    const escapedVMCode = workflowVMCode.replace(/[\\`$]/g, '\\$&');
+
+    const combinedFunctionCode = `// biome-ignore-all lint: generated file
+/* eslint-disable */
+import '${stepsRelativePath}';
+import { combinedEntrypoint } from 'workflow/runtime';
+
+const workflowCode = \`${escapedVMCode}\`;
+
+export const POST = combinedEntrypoint(workflowCode);`;
+
+    if (!bundleFinalOutput) {
+      // Write directly (Next.js will bundle)
+      const tempPath = `${flowOutfile}.${randomUUID()}.tmp`;
+      await writeFile(tempPath, combinedFunctionCode);
+      await rename(tempPath, flowOutfile);
+    } else {
+      // Bundle the combined code for standalone use
+      const bundleStartTime = Date.now();
+      const finalResult = await esbuild.build({
+        banner: {
+          js: '// biome-ignore-all lint: generated file\n/* eslint-disable */\n',
+        },
+        stdin: {
+          contents: combinedFunctionCode,
+          resolveDir: this.config.workingDir,
+          sourcefile: 'virtual-entry.js',
+          loader: 'js',
+        },
+        outfile: flowOutfile,
+        absWorkingDir: this.config.workingDir,
+        bundle: true,
+        format,
+        platform: 'node',
+        target: 'es2022',
+        write: true,
+        keepNames: true,
+        minify: false,
+        external: ['@aws-sdk/credential-provider-web-identity'],
+      });
+      this.logEsbuildMessages(finalResult, 'combined bundle', true);
+      this.logBaseBuilderInfo(
+        'Created combined bundle',
+        `${Date.now() - bundleStartTime}ms`
+      );
+    }
+
+    // Merge manifests
+    const manifest: WorkflowManifest = {
+      ...stepsManifest,
+      workflows: {
+        ...stepsManifest.workflows,
+        ...workflowsResult.manifest.workflows,
+      },
+      classes: {
+        ...stepsManifest.classes,
+        ...workflowsResult.manifest.classes,
+      },
+    };
+
+    if (this.config.watch) {
+      return {
+        manifest,
+        stepsContext,
+        interimBundleCtx: workflowsResult.interimBundleCtx,
+        bundleFinal: workflowsResult.bundleFinal,
+      };
+    }
+
+    return { manifest };
   }
 
   /**

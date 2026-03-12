@@ -27,6 +27,8 @@ export const WorkflowInvokePayloadSchema = z.object({
   requestedAt: z.coerce.date().optional(),
   /** Number of times this message has been re-enqueued due to server errors (5xx) */
   serverErrorRetryCount: z.number().int().optional(),
+  /** V2: Step ID for inline step execution in combined handler */
+  stepId: z.string().optional(),
 });
 
 export const StepInvokePayloadSchema = z.object({

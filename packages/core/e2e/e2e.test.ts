@@ -1475,7 +1475,7 @@ describe('e2e', () => {
       // queue-based `healthCheck(world, endpoint, options)` function instead, which
       // bypasses protection by sending messages through the Queue infrastructure.
 
-      // Test the flow endpoint health check
+      // Test the flow endpoint health check (V2: combined handler for both workflow + step)
       const flowHealthUrl = new URL(
         '/.well-known/workflow/v1/flow?__health',
         deploymentUrl
@@ -1490,22 +1490,6 @@ describe('e2e', () => {
       expect(flowBody).toBe(
         'Workflow DevKit "/.well-known/workflow/v1/flow" endpoint is healthy'
       );
-
-      // Test the step endpoint health check
-      const stepHealthUrl = new URL(
-        '/.well-known/workflow/v1/step?__health',
-        deploymentUrl
-      );
-      const stepRes = await fetch(stepHealthUrl, {
-        method: 'POST',
-        headers: getProtectionBypassHeaders(),
-      });
-      expect(stepRes.status).toBe(200);
-      expect(stepRes.headers.get('Content-Type')).toBe('text/plain');
-      const stepBody = await stepRes.text();
-      expect(stepBody).toBe(
-        'Workflow DevKit "/.well-known/workflow/v1/step" endpoint is healthy'
-      );
     }
   );
 
@@ -1518,15 +1502,11 @@ describe('e2e', () => {
       // through the Queue infrastructure rather than direct HTTP.
       const world = getWorld();
 
-      // Test workflow endpoint health check
+      // Test workflow endpoint health check (V2: combined handler)
       const workflowResult = await healthCheck(world, 'workflow', {
         timeout: 30000,
       });
       expect(workflowResult.healthy).toBe(true);
-
-      // Test step endpoint health check
-      const stepResult = await healthCheck(world, 'step', { timeout: 30000 });
-      expect(stepResult.healthy).toBe(true);
     }
   );
 
@@ -1538,26 +1518,18 @@ describe('e2e', () => {
       // queue-based health check under the hood. The CLI provides a convenient
       // way to check endpoint health from the command line.
 
-      // Test checking both endpoints (default behavior)
-      const result = await cliHealthJson({ timeout: 30000 });
+      // V2: Only check the workflow endpoint since the combined handler
+      // replaces the separate step route.
+      const result = await cliHealthJson({
+        endpoint: 'workflow',
+        timeout: 30000,
+      });
       expect(result.json.allHealthy).toBe(true);
-      expect(result.json.results).toHaveLength(2);
-
-      // Verify workflow endpoint result
-      const workflowResult = result.json.results.find(
-        (r: { endpoint: string }) => r.endpoint === 'workflow'
-      );
-      expect(workflowResult).toBeDefined();
+      expect(result.json.results).toHaveLength(1);
+      const workflowResult = result.json.results[0];
+      expect(workflowResult.endpoint).toBe('workflow');
       expect(workflowResult.healthy).toBe(true);
       expect(workflowResult.latencyMs).toBeGreaterThan(0);
-
-      // Verify step endpoint result
-      const stepResult = result.json.results.find(
-        (r: { endpoint: string }) => r.endpoint === 'step'
-      );
-      expect(stepResult).toBeDefined();
-      expect(stepResult.healthy).toBe(true);
-      expect(stepResult.latencyMs).toBeGreaterThan(0);
     }
   );
 

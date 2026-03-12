@@ -1,4 +1,5 @@
 export {
+  combinedEntrypoint,
   createWorld,
   getWorld,
   getWorldHandlers,
