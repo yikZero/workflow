@@ -642,13 +642,13 @@ export function combinedEntrypoint(
                       // The server always returns a cursor when there are events (even on the
                       // final page), so we can reliably use it for incremental loading.
                       let events: Event[];
-                      if (cachedEvents === null || !eventsCursor) {
-                        // First iteration (or no cursor): full load
+                      if (cachedEvents === null) {
+                        // First iteration: full load
                         const loaded =
                           await getAllWorkflowRunEventsWithCursor(runId);
                         events = loaded.events;
                         eventsCursor = loaded.cursor;
-                      } else {
+                      } else if (eventsCursor) {
                         // Subsequent iteration: fetch only new events since last cursor
                         const loaded = await getNewWorkflowRunEvents(
                           runId,
@@ -656,6 +656,21 @@ export function combinedEntrypoint(
                         );
                         cachedEvents.push(...loaded.events);
                         eventsCursor = loaded.cursor ?? eventsCursor;
+                        events = cachedEvents;
+                      } else {
+                        // No cursor available despite having cached events. This should not
+                        // happen — all World implementations return a cursor when there are
+                        // events. If we hit this, the World has a bug. Fall back to a full
+                        // reload to avoid stale data.
+                        runtimeLogger.error(
+                          'Event cursor missing after initial load — falling back to full reload. ' +
+                            'This indicates a bug in the World implementation.',
+                          { workflowRunId: runId }
+                        );
+                        const loaded =
+                          await getAllWorkflowRunEventsWithCursor(runId);
+                        cachedEvents = loaded.events;
+                        eventsCursor = loaded.cursor;
                         events = cachedEvents;
                       }
 
