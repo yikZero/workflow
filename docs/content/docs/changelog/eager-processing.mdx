@@ -126,7 +126,7 @@ If a World implementation does not return a cursor after the initial load, the c
 
 The inline execution loop checks wall-clock time before each replay iteration. If the elapsed time exceeds a configurable threshold (default: 120 seconds), the handler re-schedules itself via the queue and returns.
 
-The threshold is configurable via the `WORKFLOW_NO_INLINE_REPLAY_AFTER_MS` environment variable. The default is set with the intention to be <=50% of the function timeout (5m by default), ensuring that steps get at least >=50% of the function time to complete on the first try. A retry of the step will lead to a full function time allotment for the next try.
+The threshold is configurable via the `WORKFLOW_NO_INLINE_REPLAY_AFTER_MS` environment variable. The default is set with the intention to be ≤50% of the function timeout (5m by default), ensuring that steps get at least ≥50% of the function time to complete on the first try. A retry of the step will lead to a full function time allotment for the next try.
 
 If a single step takes longer than the timeout threshold, the step runs to completion (or SIGKILL) — there is no interruption mechanism for in-progress step execution. This is the same behavior as the previous architecture.
 
