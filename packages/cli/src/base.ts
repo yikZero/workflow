@@ -30,6 +30,21 @@ async function flushStream(stream: NodeJS.WriteStream): Promise<void> {
 export abstract class BaseCommand extends Command {
   static enableJsonFlag = true;
 
+  async init(): Promise<void> {
+    await super.init();
+    // Handle SIGTERM gracefully so that when a parent process (e.g. vitest)
+    // kills the CLI, we flush a diagnostic message instead of dying silently.
+    // This makes e2e test failures much easier to debug.
+    const onSignal = (signal: string) => {
+      process.stderr.write(
+        `\n[workflow-cli] Received ${signal}, shutting down...\n`
+      );
+      process.exit(1);
+    };
+    process.on('SIGTERM', () => onSignal('SIGTERM'));
+    process.on('SIGINT', () => onSignal('SIGINT'));
+  }
+
   /**
    * Called by oclif after `run()` completes (or throws).
    * Closes the cached World instance so the process can exit cleanly

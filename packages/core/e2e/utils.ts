@@ -247,7 +247,7 @@ export const cliCancel = async (runId: string) => {
     'node',
     ['./node_modules/workflow/bin/run.js', 'cancel', runId, ...cliArgs],
     cliAppPath,
-    10_000
+    20_000
   );
   return result;
 };

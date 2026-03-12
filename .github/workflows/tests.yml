@@ -291,6 +291,7 @@ jobs:
           WORKFLOW_VERCEL_PROJECT: ${{ matrix.app.project-id }}
           WORKFLOW_VERCEL_PROJECT_SLUG: ${{ matrix.app.project-slug }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          WORKFLOW_E2E_CLI_TIMEOUT_MS: "45000"
 
       - name: Generate E2E summary
         if: always()
