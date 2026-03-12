@@ -980,12 +980,31 @@ export const POST = combinedEntrypoint(workflowCode);`;
       },
     };
 
+    // Create a custom bundleFinal for watch mode that uses combinedEntrypoint
+    const combinedBundleFinal = async (interimBundleText: string) => {
+      const escaped = interimBundleText.replace(/[\\`$]/g, '\\$&');
+      const code = `// biome-ignore-all lint: generated file
+/* eslint-disable */
+import '${stepsRelativePath}';
+import { combinedEntrypoint } from 'workflow/runtime';
+
+const workflowCode = \`${escaped}\`;
+
+export const POST = combinedEntrypoint(workflowCode);`;
+
+      const outputDir = dirname(flowOutfile);
+      await mkdir(outputDir, { recursive: true });
+      const tempPath = `${flowOutfile}.${randomUUID()}.tmp`;
+      await writeFile(tempPath, code);
+      await rename(tempPath, flowOutfile);
+    };
+
     if (this.config.watch) {
       return {
         manifest,
         stepsContext,
         interimBundleCtx: workflowsResult.interimBundleCtx,
-        bundleFinal: workflowsResult.bundleFinal,
+        bundleFinal: combinedBundleFinal,
       };
     }
 
