@@ -2,6 +2,7 @@ import { WorkflowAPIError } from '@workflow/errors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getWorkflowQueueName,
+  isTransientNetworkError,
   withServerErrorRetry,
   withThrottleRetry,
 } from './helpers.js';
@@ -167,7 +168,7 @@ describe('withServerErrorRetry', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('should not retry non-WorkflowAPIError errors', async () => {
+  it('should not retry non-WorkflowAPIError, non-network errors', async () => {
     const error = new Error('some other error');
     const fn = vi.fn().mockRejectedValue(error);
 
@@ -184,6 +185,102 @@ describe('withServerErrorRetry', () => {
 
     await expect(withServerErrorRetry(fn)).rejects.toThrow('Too Many Requests');
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should retry on transient network errors (e.g., ECONNRESET)', async () => {
+    const networkError = makeNetworkError('ECONNRESET');
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(networkError)
+      .mockResolvedValueOnce('recovered');
+
+    const promise = withServerErrorRetry(fn);
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should throw after exhausting retries on persistent network errors', async () => {
+    const networkError = makeNetworkError('ECONNRESET');
+
+    const fn = vi.fn().mockRejectedValue(networkError);
+
+    const promise = withServerErrorRetry(fn).catch((e) => e);
+
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const result = await promise;
+    expect(result).toBeInstanceOf(TypeError);
+    expect((result as TypeError).message).toBe('fetch failed');
+    expect(fn).toHaveBeenCalledTimes(4);
+  });
+});
+
+/**
+ * Creates a TypeError that mimics what Node.js `fetch()` throws on network
+ * errors — `TypeError: fetch failed` with a `cause` carrying the error code.
+ */
+function makeNetworkError(code: string): TypeError {
+  const cause = new Error(`${code}`);
+  (cause as any).code = code;
+  const error = new TypeError('fetch failed');
+  (error as any).cause = cause;
+  return error;
+}
+
+describe('isTransientNetworkError', () => {
+  it('should return true for TypeError with ECONNRESET cause', () => {
+    expect(isTransientNetworkError(makeNetworkError('ECONNRESET'))).toBe(true);
+  });
+
+  it('should return true for TypeError with ECONNREFUSED cause', () => {
+    expect(isTransientNetworkError(makeNetworkError('ECONNREFUSED'))).toBe(
+      true
+    );
+  });
+
+  it('should return true for TypeError with ENOTFOUND cause', () => {
+    expect(isTransientNetworkError(makeNetworkError('ENOTFOUND'))).toBe(true);
+  });
+
+  it('should return true for error with code directly on it (undici style)', () => {
+    const error = new Error('socket error');
+    (error as any).code = 'UND_ERR_SOCKET';
+    expect(isTransientNetworkError(error)).toBe(true);
+  });
+
+  it('should return false for regular Error', () => {
+    expect(isTransientNetworkError(new Error('something failed'))).toBe(false);
+  });
+
+  it('should return false for WorkflowAPIError', () => {
+    expect(
+      isTransientNetworkError(
+        new WorkflowAPIError('Internal Server Error', { status: 500 })
+      )
+    ).toBe(false);
+  });
+
+  it('should return false for non-Error values', () => {
+    expect(isTransientNetworkError('string error')).toBe(false);
+    expect(isTransientNetworkError(null)).toBe(false);
+    expect(isTransientNetworkError(undefined)).toBe(false);
+    expect(isTransientNetworkError(42)).toBe(false);
+  });
+
+  it('should return false for TypeError without a cause', () => {
+    expect(isTransientNetworkError(new TypeError('not a network error'))).toBe(
+      false
+    );
+  });
+
+  it('should return false for error with non-transient code', () => {
+    expect(isTransientNetworkError(makeNetworkError('ENOENT'))).toBe(false);
   });
 });
 

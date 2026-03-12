@@ -472,8 +472,54 @@ export async function withThrottleRetry(
 }
 
 /**
- * Retries a function when it throws a 5xx WorkflowAPIError.
- * Used to handle transient workflow-server errors without consuming step attempts.
+ * Known transient network error codes produced by Node.js / undici when
+ * a TCP connection is interrupted or unreachable. These are the same codes
+ * that undici's RetryAgent retries for non-POST methods by default.
+ */
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'EPIPE',
+  'UND_ERR_SOCKET',
+]);
+
+/**
+ * Detects transient network errors thrown by `fetch()` / undici when the
+ * underlying TCP connection fails (e.g., ECONNRESET, DNS failures).
+ *
+ * These errors are **not** `WorkflowAPIError` instances because they occur
+ * before an HTTP response is received. Node's `fetch()` wraps them as
+ * `TypeError: fetch failed` with a `cause` carrying the original error code.
+ *
+ * This helper is used to distinguish infrastructure-level network failures
+ * (which should be retried) from user-code errors (which should fail the run).
+ */
+export function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+
+  // Node fetch wraps network errors as `TypeError` with a `cause`
+  const cause = (err as Error & { cause?: Error }).cause;
+  if (cause && typeof (cause as any).code === 'string') {
+    return TRANSIENT_NETWORK_ERROR_CODES.has((cause as any).code);
+  }
+
+  // Direct undici errors may carry the code on the error itself
+  if (typeof (err as any).code === 'string') {
+    return TRANSIENT_NETWORK_ERROR_CODES.has((err as any).code);
+  }
+
+  return false;
+}
+
+/**
+ * Retries a function when it throws a 5xx WorkflowAPIError or a transient
+ * network error (e.g., ECONNRESET). Used to handle transient workflow-server
+ * errors without consuming step attempts.
  *
  * Retries up to 3 times with exponential backoff (500ms, 1s, 2s ≈ 3.5s total).
  * If all retries fail, the original error is re-thrown.
@@ -486,20 +532,24 @@ export async function withServerErrorRetry<T>(
     try {
       return await fn();
     } catch (err) {
-      if (
-        WorkflowAPIError.is(err) &&
-        err.status !== undefined &&
-        err.status >= 500 &&
-        attempt < delays.length
-      ) {
+      const isRetryable =
+        (WorkflowAPIError.is(err) &&
+          err.status !== undefined &&
+          err.status >= 500) ||
+        isTransientNetworkError(err);
+
+      if (isRetryable && attempt < delays.length) {
         runtimeLogger.warn(
-          'Server error (5xx) from workflow-server, retrying in-process',
+          'Server error from workflow-server, retrying in-process',
           {
-            status: err.status,
+            status: WorkflowAPIError.is(err) ? err.status : undefined,
+            networkErrorCode: isTransientNetworkError(err)
+              ? ((err as any).cause?.code ?? (err as any).code)
+              : undefined,
             attempt: attempt + 1,
             maxRetries: delays.length,
             nextDelayMs: delays[attempt],
-            url: err.url,
+            url: WorkflowAPIError.is(err) ? err.url : undefined,
           }
         );
         await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
