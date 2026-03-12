@@ -25,7 +25,6 @@ import {
   getErrorStack,
   normalizeUnknownError,
 } from '../types.js';
-import { withServerErrorRetry } from './helpers.js';
 
 const DEFAULT_STEP_MAX_RETRIES = 3;
 
@@ -98,13 +97,11 @@ export async function executeStep(
     // step_started validates state and returns the step entity
     let step;
     try {
-      const startResult = await withServerErrorRetry(() =>
-        world.events.create(workflowRunId, {
-          eventType: 'step_started',
-          specVersion: SPEC_VERSION_CURRENT,
-          correlationId: stepId,
-        })
-      );
+      const startResult = await world.events.create(workflowRunId, {
+        eventType: 'step_started',
+        specVersion: SPEC_VERSION_CURRENT,
+        correlationId: stepId,
+      });
 
       if (!startResult.step) {
         throw new WorkflowRuntimeError(
@@ -316,8 +313,8 @@ export async function executeStep(
 
       // Create step_completed event
       let stepCompleted409 = false;
-      await withServerErrorRetry(() =>
-        world.events.create(workflowRunId, {
+      await world.events
+        .create(workflowRunId, {
           eventType: 'step_completed',
           specVersion: SPEC_VERSION_CURRENT,
           correlationId: stepId,
@@ -325,22 +322,22 @@ export async function executeStep(
             result: result as Uint8Array,
           },
         })
-      ).catch((err) => {
-        if (WorkflowAPIError.is(err) && err.status === 409) {
-          runtimeLogger.warn(
-            'Tried completing step, but step has already finished.',
-            {
-              workflowRunId,
-              stepId,
-              stepName,
-              message: err.message,
-            }
-          );
-          stepCompleted409 = true;
-          return;
-        }
-        throw err;
-      });
+        .catch((err) => {
+          if (WorkflowAPIError.is(err) && err.status === 409) {
+            runtimeLogger.warn(
+              'Tried completing step, but step has already finished.',
+              {
+                workflowRunId,
+                stepId,
+                stepName,
+                message: err.message,
+              }
+            );
+            stepCompleted409 = true;
+            return;
+          }
+          throw err;
+        });
 
       if (stepCompleted409) {
         return { type: 'skipped' };
@@ -402,17 +399,15 @@ export async function executeStep(
           { workflowRunId, stepName, errorStack: normalizedStack }
         );
         try {
-          await withServerErrorRetry(() =>
-            world.events.create(workflowRunId, {
-              eventType: 'step_failed',
-              specVersion: SPEC_VERSION_CURRENT,
-              correlationId: stepId,
-              eventData: {
-                error: normalizedError.message,
-                stack: normalizedStack,
-              },
-            })
-          );
+          await world.events.create(workflowRunId, {
+            eventType: 'step_failed',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: stepId,
+            eventData: {
+              error: normalizedError.message,
+              stack: normalizedStack,
+            },
+          });
         } catch (stepFailErr) {
           if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
             runtimeLogger.warn(
@@ -458,14 +453,12 @@ export async function executeStep(
         );
         const errorMessage = `Step "${stepName}" failed after ${maxRetries} ${pluralize('retry', 'retries', maxRetries)}: ${normalizedError.message}`;
         try {
-          await withServerErrorRetry(() =>
-            world.events.create(workflowRunId, {
-              eventType: 'step_failed',
-              specVersion: SPEC_VERSION_CURRENT,
-              correlationId: stepId,
-              eventData: { error: errorMessage, stack: normalizedStack },
-            })
-          );
+          await world.events.create(workflowRunId, {
+            eventType: 'step_failed',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: stepId,
+            eventData: { error: errorMessage, stack: normalizedStack },
+          });
         } catch (stepFailErr) {
           if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
             runtimeLogger.warn(
@@ -506,18 +499,16 @@ export async function executeStep(
       }
 
       try {
-        await withServerErrorRetry(() =>
-          world.events.create(workflowRunId, {
-            eventType: 'step_retrying',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: stepId,
-            eventData: {
-              error: normalizedError.message,
-              stack: normalizedStack,
-              ...(RetryableError.is(err) && { retryAfter: err.retryAfter }),
-            },
-          })
-        );
+        await world.events.create(workflowRunId, {
+          eventType: 'step_retrying',
+          specVersion: SPEC_VERSION_CURRENT,
+          correlationId: stepId,
+          eventData: {
+            error: normalizedError.message,
+            stack: normalizedStack,
+            ...(RetryableError.is(err) && { retryAfter: err.retryAfter }),
+          },
+        });
       } catch (stepRetryErr) {
         if (WorkflowAPIError.is(stepRetryErr) && stepRetryErr.status === 409) {
           runtimeLogger.warn(

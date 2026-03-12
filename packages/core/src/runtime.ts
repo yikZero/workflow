@@ -11,6 +11,7 @@ import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
   getAllWorkflowRunEvents,
+  getAllWorkflowRunEventsWithCursor,
   getNewWorkflowRunEvents,
   getQueueOverhead,
   getWorkflowQueueName,
@@ -18,7 +19,6 @@ import {
   parseHealthCheckPayload,
   queueMessage,
   withHealthCheck,
-  withThrottleRetry,
 } from './runtime/helpers.js';
 import { executeStep } from './runtime/step-executor.js';
 import {
@@ -106,7 +106,6 @@ export function workflowEntrypoint(
         runId,
         traceCarrier: traceContext,
         requestedAt,
-        serverErrorRetryCount,
       } = WorkflowInvokePayloadSchema.parse(message_);
       // Extract the workflow name from the topic name
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
@@ -141,307 +140,303 @@ export function workflowEntrypoint(
                   ...Attribute.WorkflowTracePropagated(!!traceContext),
                 });
 
-                return await withThrottleRetry(async () => {
-                  let workflowStartedAt = -1;
-                  let workflowRun = await world.runs.get(runId);
-                  try {
-                    if (workflowRun.status === 'pending') {
-                      // Transition run to 'running' via event (event-sourced architecture)
-                      const result = await world.events.create(runId, {
-                        eventType: 'run_started',
-                        specVersion: SPEC_VERSION_CURRENT,
-                      });
-                      // Use the run entity from the event response (no extra get call needed)
-                      if (!result.run) {
-                        throw new WorkflowRuntimeError(
-                          `Event creation for 'run_started' did not return the run entity for run "${runId}"`
-                        );
-                      }
-                      workflowRun = result.run;
-                    }
+                let workflowStartedAt = -1;
+                let workflowRun = await world.runs.get(runId);
 
-                    // At this point, the workflow is "running" and `startedAt` should
-                    // definitely be set.
-                    if (!workflowRun.startedAt) {
-                      throw new WorkflowRuntimeError(
-                        `Workflow run "${runId}" has no "startedAt" timestamp`
-                      );
-                    }
-                    workflowStartedAt = +workflowRun.startedAt;
-
-                    span?.setAttributes({
-                      ...Attribute.WorkflowRunStatus(workflowRun.status),
-                      ...Attribute.WorkflowStartedAt(workflowStartedAt),
+                // --- Infrastructure: prepare the run state ---
+                // Network/server errors propagate to the queue handler for retry.
+                // WorkflowRuntimeError (data integrity issues) are fatal and
+                // produce run_failed since retrying won't fix them.
+                try {
+                  if (workflowRun.status === 'pending') {
+                    // Transition run to 'running' via event (event-sourced architecture)
+                    const result = await world.events.create(runId, {
+                      eventType: 'run_started',
+                      specVersion: SPEC_VERSION_CURRENT,
                     });
-
-                    if (workflowRun.status !== 'running') {
-                      // Workflow has already completed or failed, so we can skip it
-                      runtimeLogger.info(
-                        'Workflow already completed or failed, skipping',
-                        {
-                          workflowRunId: runId,
-                          status: workflowRun.status,
-                        }
+                    // Use the run entity from the event response (no extra get call needed)
+                    if (!result.run) {
+                      throw new WorkflowRuntimeError(
+                        `Event creation for 'run_started' did not return the run entity for run "${runId}"`
                       );
-
-                      // TODO: for `cancel`, we actually want to propagate a WorkflowCancelled event
-                      // inside the workflow context so the user can gracefully exit. this is SIGTERM
-                      // TODO: furthermore, there should be a timeout or a way to force cancel SIGKILL
-                      // so that we actually exit here without replaying the workflow at all, in the case
-                      // the replaying the workflow is itself failing.
-
-                      return;
                     }
+                    workflowRun = result.run;
+                  }
 
-                    // Load all events into memory before running
-                    const { events } = await getAllWorkflowRunEvents(
-                      workflowRun.runId
+                  // At this point, the workflow is "running" and `startedAt` should
+                  // definitely be set.
+                  if (!workflowRun.startedAt) {
+                    throw new WorkflowRuntimeError(
+                      `Workflow run "${runId}" has no "startedAt" timestamp`
                     );
-
-                    // Check for any elapsed waits and create wait_completed events
-                    const now = Date.now();
-
-                    // Pre-compute completed correlation IDs for O(n) lookup instead of O(n²)
-                    const completedWaitIds = new Set(
-                      events
-                        .filter((e) => e.eventType === 'wait_completed')
-                        .map((e) => e.correlationId)
+                  }
+                } catch (err) {
+                  if (err instanceof WorkflowRuntimeError) {
+                    runtimeLogger.error(
+                      'Fatal runtime error during workflow setup',
+                      { workflowRunId: runId, error: err.message }
                     );
-
-                    // Collect all waits that need completion
-                    const waitsToComplete = events
-                      .filter(
-                        (e): e is typeof e & { correlationId: string } =>
-                          e.eventType === 'wait_created' &&
-                          e.correlationId !== undefined &&
-                          !completedWaitIds.has(e.correlationId) &&
-                          now >= (e.eventData.resumeAt as Date).getTime()
-                      )
-                      .map((e) => ({
-                        eventType: 'wait_completed' as const,
-                        specVersion: SPEC_VERSION_CURRENT,
-                        correlationId: e.correlationId,
-                      }));
-
-                    // Create all wait_completed events
-                    for (const waitEvent of waitsToComplete) {
-                      try {
-                        const result = await world.events.create(
-                          runId,
-                          waitEvent
-                        );
-                        // Add the event to the events array so the workflow can see it
-                        events.push(result.event!);
-                      } catch (err) {
-                        if (WorkflowAPIError.is(err) && err.status === 409) {
-                          runtimeLogger.info(
-                            'Wait already completed, skipping',
-                            {
-                              workflowRunId: runId,
-                              correlationId: waitEvent.correlationId,
-                            }
-                          );
-                          continue;
-                        }
-                        throw err;
-                      }
-                    }
-
-                    const result = await trace(
-                      'workflow.replay',
-                      {},
-                      async (replaySpan) => {
-                        replaySpan?.setAttributes({
-                          ...Attribute.WorkflowEventsCount(events.length),
-                        });
-                        // Resolve the encryption key for this run's deployment
-                        const rawKey =
-                          await world.getEncryptionKeyForRun?.(workflowRun);
-                        const encryptionKey = rawKey
-                          ? await importKey(rawKey)
-                          : undefined;
-                        return await runWorkflow(
-                          workflowCode,
-                          workflowRun,
-                          events,
-                          encryptionKey
-                        );
-                      }
-                    );
-
-                    // Complete the workflow run via event (event-sourced architecture)
                     try {
                       await world.events.create(runId, {
-                        eventType: 'run_completed',
+                        eventType: 'run_failed',
                         specVersion: SPEC_VERSION_CURRENT,
                         eventData: {
-                          output: result,
+                          error: {
+                            message: err.message,
+                            stack: err.stack,
+                          },
                         },
                       });
-                    } catch (err) {
+                    } catch (failErr) {
                       if (
-                        WorkflowAPIError.is(err) &&
-                        (err.status === 409 || err.status === 410)
+                        WorkflowAPIError.is(failErr) &&
+                        (failErr.status === 409 || failErr.status === 410)
                       ) {
-                        runtimeLogger.warn(
-                          'Tried completing workflow run, but run has already finished.',
-                          {
-                            workflowRunId: runId,
-                            message: err.message,
-                          }
-                        );
                         return;
-                      } else {
-                        throw err;
                       }
+                      throw failErr;
+                    }
+                    return;
+                  }
+                  throw err;
+                }
+                workflowStartedAt = +workflowRun.startedAt;
+
+                span?.setAttributes({
+                  ...Attribute.WorkflowRunStatus(workflowRun.status),
+                  ...Attribute.WorkflowStartedAt(workflowStartedAt),
+                });
+
+                if (workflowRun.status !== 'running') {
+                  // Workflow has already completed or failed, so we can skip it
+                  runtimeLogger.info(
+                    'Workflow already completed or failed, skipping',
+                    {
+                      workflowRunId: runId,
+                      status: workflowRun.status,
+                    }
+                  );
+
+                  // TODO: for `cancel`, we actually want to propagate a WorkflowCancelled event
+                  // inside the workflow context so the user can gracefully exit. this is SIGTERM
+                  // TODO: furthermore, there should be a timeout or a way to force cancel SIGKILL
+                  // so that we actually exit here without replaying the workflow at all, in the case
+                  // the replaying the workflow is itself failing.
+
+                  return;
+                }
+
+                // Load all events into memory before running
+                const events = await getAllWorkflowRunEvents(workflowRun.runId);
+
+                // Check for any elapsed waits and create wait_completed events
+                const now = Date.now();
+
+                // Pre-compute completed correlation IDs for O(n) lookup instead of O(n²)
+                const completedWaitIds = new Set(
+                  events
+                    .filter((e) => e.eventType === 'wait_completed')
+                    .map((e) => e.correlationId)
+                );
+
+                // Collect all waits that need completion
+                const waitsToComplete = events
+                  .filter(
+                    (e): e is typeof e & { correlationId: string } =>
+                      e.eventType === 'wait_created' &&
+                      e.correlationId !== undefined &&
+                      !completedWaitIds.has(e.correlationId) &&
+                      now >= (e.eventData.resumeAt as Date).getTime()
+                  )
+                  .map((e) => ({
+                    eventType: 'wait_completed' as const,
+                    specVersion: SPEC_VERSION_CURRENT,
+                    correlationId: e.correlationId,
+                  }));
+
+                // Create all wait_completed events
+                for (const waitEvent of waitsToComplete) {
+                  try {
+                    const result = await world.events.create(runId, waitEvent);
+                    // Add the event to the events array so the workflow can see it
+                    events.push(result.event!);
+                  } catch (err) {
+                    if (WorkflowAPIError.is(err) && err.status === 409) {
+                      runtimeLogger.info('Wait already completed, skipping', {
+                        workflowRunId: runId,
+                        correlationId: waitEvent.correlationId,
+                      });
+                      continue;
+                    }
+                    throw err;
+                  }
+                }
+
+                // Resolve the encryption key for this run's deployment
+                const rawKey =
+                  await world.getEncryptionKeyForRun?.(workflowRun);
+                const encryptionKey = rawKey
+                  ? await importKey(rawKey)
+                  : undefined;
+
+                // --- User code execution ---
+                // Only errors from runWorkflow() (user workflow code) should
+                // produce run_failed. Infrastructure errors (network, server)
+                // must propagate to the queue handler for automatic retry.
+                let workflowResult: unknown;
+                try {
+                  workflowResult = await trace(
+                    'workflow.replay',
+                    {},
+                    async (replaySpan) => {
+                      replaySpan?.setAttributes({
+                        ...Attribute.WorkflowEventsCount(events.length),
+                      });
+                      return await runWorkflow(
+                        workflowCode,
+                        workflowRun,
+                        events,
+                        encryptionKey
+                      );
+                    }
+                  );
+                } catch (err) {
+                  // WorkflowSuspension is normal control flow — not an error
+                  if (WorkflowSuspension.is(err)) {
+                    const suspensionMessage = buildWorkflowSuspensionMessage(
+                      runId,
+                      err.stepCount,
+                      err.hookCount,
+                      err.waitCount
+                    );
+                    if (suspensionMessage) {
+                      runtimeLogger.debug(suspensionMessage);
                     }
 
-                    span?.setAttributes({
-                      ...Attribute.WorkflowRunStatus('completed'),
-                      ...Attribute.WorkflowEventsCount(events.length),
+                    const result = await handleSuspension({
+                      suspension: err,
+                      world,
+                      run: workflowRun,
+                      span,
                     });
-                  } catch (err) {
-                    if (WorkflowSuspension.is(err)) {
-                      const suspensionMessage = buildWorkflowSuspensionMessage(
-                        runId,
-                        err.stepCount,
-                        err.hookCount,
-                        err.waitCount
+
+                    if (result.timeoutSeconds !== undefined) {
+                      return { timeoutSeconds: result.timeoutSeconds };
+                    }
+
+                    // Suspension handled, no further work needed
+                    return;
+                  }
+
+                  // This is a user code error or a WorkflowRuntimeError
+                  // (e.g., corrupted event log). Fail the workflow run.
+
+                  // Record exception for OTEL error tracking
+                  if (err instanceof Error) {
+                    span?.recordException?.(err);
+                  }
+
+                  const normalizedError = await normalizeUnknownError(err);
+                  const errorName = normalizedError.name || getErrorName(err);
+                  const errorMessage = normalizedError.message;
+                  let errorStack = normalizedError.stack || getErrorStack(err);
+
+                  // Remap error stack using source maps to show original source locations
+                  if (errorStack) {
+                    const parsedName = parseWorkflowName(workflowName);
+                    const filename =
+                      parsedName?.moduleSpecifier || workflowName;
+                    errorStack = remapErrorStack(
+                      errorStack,
+                      filename,
+                      workflowCode
+                    );
+                  }
+
+                  runtimeLogger.error('Error while running workflow', {
+                    workflowRunId: runId,
+                    errorName,
+                    errorStack,
+                  });
+
+                  // Fail the workflow run via event (event-sourced architecture)
+                  try {
+                    await world.events.create(runId, {
+                      eventType: 'run_failed',
+                      specVersion: SPEC_VERSION_CURRENT,
+                      eventData: {
+                        error: {
+                          message: errorMessage,
+                          stack: errorStack,
+                        },
+                        // TODO: include error codes when we define them
+                      },
+                    });
+                  } catch (failErr) {
+                    if (
+                      WorkflowAPIError.is(failErr) &&
+                      (failErr.status === 409 || failErr.status === 410)
+                    ) {
+                      runtimeLogger.warn(
+                        'Tried failing workflow run, but run has already finished.',
+                        {
+                          workflowRunId: runId,
+                          message: failErr.message,
+                        }
                       );
-                      if (suspensionMessage) {
-                        runtimeLogger.debug(suspensionMessage);
-                      }
-
-                      const result = await handleSuspension({
-                        suspension: err,
-                        world,
-                        run: workflowRun,
-                        span,
-                      });
-
-                      if (result.timeoutSeconds !== undefined) {
-                        return { timeoutSeconds: result.timeoutSeconds };
-                      }
-                    } else {
-                      // Retry server errors (5xx) with exponential backoff before failing the run
-                      if (
-                        WorkflowAPIError.is(err) &&
-                        err.status !== undefined &&
-                        err.status >= 500
-                      ) {
-                        const retryCount = serverErrorRetryCount ?? 0;
-                        const delaySecondSteps = [5, 30, 120]; // 5s, 30s, 120s
-                        if (retryCount < delaySecondSteps.length) {
-                          runtimeLogger.warn(
-                            'Server error (5xx), re-enqueueing workflow with backoff',
-                            {
-                              workflowRunId: runId,
-                              retryCount,
-                              delaySeconds: delaySecondSteps[retryCount],
-                              error: err.message,
-                            }
-                          );
-                          await queueMessage(
-                            world,
-                            getWorkflowQueueName(workflowName),
-                            {
-                              runId,
-                              serverErrorRetryCount: retryCount + 1,
-                              traceCarrier: await serializeTraceCarrier(),
-                              requestedAt: new Date(),
-                            },
-                            { delaySeconds: delaySecondSteps[retryCount] }
-                          );
-                          return; // Don't fail the run, retry later
-                        }
-                        // Fall through to run_failed after exhausting retries
-                      } else if (
-                        WorkflowAPIError.is(err) &&
-                        err.status === 429
-                      ) {
-                        // Throw to let withThrottleRetry handle it
-                        throw err;
-                      }
-
-                      // NOTE: this error could be an error thrown in user code, or could also be a WorkflowRuntimeError
-                      // (for instance when the event log is corrupted, this is thrown by the event consumer). We could
-                      // specially handle these if needed.
-
-                      // Record exception for OTEL error tracking
-                      if (err instanceof Error) {
-                        span?.recordException?.(err);
-                      }
-
-                      const normalizedError = await normalizeUnknownError(err);
-                      const errorName =
-                        normalizedError.name || getErrorName(err);
-                      const errorMessage = normalizedError.message;
-                      let errorStack =
-                        normalizedError.stack || getErrorStack(err);
-
-                      // Remap error stack using source maps to show original source locations
-                      if (errorStack) {
-                        const parsedName = parseWorkflowName(workflowName);
-                        const filename =
-                          parsedName?.moduleSpecifier || workflowName;
-                        errorStack = remapErrorStack(
-                          errorStack,
-                          filename,
-                          workflowCode
-                        );
-                      }
-
-                      runtimeLogger.error('Error while running workflow', {
-                        workflowRunId: runId,
-                        errorName,
-                        errorStack,
-                      });
-
-                      // Fail the workflow run via event (event-sourced architecture)
-                      try {
-                        await world.events.create(runId, {
-                          eventType: 'run_failed',
-                          specVersion: SPEC_VERSION_CURRENT,
-                          eventData: {
-                            error: {
-                              message: errorMessage,
-                              stack: errorStack,
-                            },
-                            // TODO: include error codes when we define them
-                          },
-                        });
-                      } catch (err) {
-                        if (
-                          WorkflowAPIError.is(err) &&
-                          (err.status === 409 || err.status === 410)
-                        ) {
-                          runtimeLogger.warn(
-                            'Tried failing workflow run, but run has already finished.',
-                            {
-                              workflowRunId: runId,
-                              message: err.message,
-                            }
-                          );
-                          span?.setAttributes({
-                            ...Attribute.WorkflowErrorName(errorName),
-                            ...Attribute.WorkflowErrorMessage(errorMessage),
-                            ...Attribute.ErrorType(errorName),
-                          });
-                          return;
-                        } else {
-                          throw err;
-                        }
-                      }
-
                       span?.setAttributes({
-                        ...Attribute.WorkflowRunStatus('failed'),
                         ...Attribute.WorkflowErrorName(errorName),
                         ...Attribute.WorkflowErrorMessage(errorMessage),
                         ...Attribute.ErrorType(errorName),
                       });
+                      return;
+                    } else {
+                      throw failErr;
                     }
                   }
-                }); // End withThrottleRetry
+
+                  span?.setAttributes({
+                    ...Attribute.WorkflowRunStatus('failed'),
+                    ...Attribute.WorkflowErrorName(errorName),
+                    ...Attribute.WorkflowErrorMessage(errorMessage),
+                    ...Attribute.ErrorType(errorName),
+                  });
+                  return;
+                }
+
+                // --- Infrastructure: complete the run ---
+                // This is outside the user-code try/catch so that failures
+                // here (e.g., network errors) propagate to the queue handler.
+                try {
+                  await world.events.create(runId, {
+                    eventType: 'run_completed',
+                    specVersion: SPEC_VERSION_CURRENT,
+                    eventData: {
+                      output: workflowResult,
+                    },
+                  });
+                } catch (err) {
+                  if (
+                    WorkflowAPIError.is(err) &&
+                    (err.status === 409 || err.status === 410)
+                  ) {
+                    runtimeLogger.warn(
+                      'Tried completing workflow run, but run has already finished.',
+                      {
+                        workflowRunId: runId,
+                        message: err.message,
+                      }
+                    );
+                    return;
+                  } else {
+                    throw err;
+                  }
+                }
+
+                span?.setAttributes({
+                  ...Attribute.WorkflowRunStatus('completed'),
+                  ...Attribute.WorkflowEventsCount(events.length),
+                });
               }
             ); // End trace
           }
@@ -495,7 +490,6 @@ export function combinedEntrypoint(
         runId,
         traceCarrier: traceContext,
         requestedAt,
-        serverErrorRetryCount,
         stepId: incomingStepId,
       } = WorkflowInvokePayloadSchema.parse(message_);
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
@@ -522,88 +516,53 @@ export function combinedEntrypoint(
                   ...Attribute.WorkflowTracePropagated(!!traceContext),
                 });
 
-                return await withThrottleRetry(async () => {
-                  const invocationStartTime = Date.now();
-                  let loopIteration = 0;
+                const invocationStartTime = Date.now();
+                let loopIteration = 0;
 
-                  // Event cache: keep loaded events in memory across loop iterations.
-                  // On the first iteration we do a full load; on subsequent iterations
-                  // we fetch only events created after the last known cursor.
-                  let cachedEvents: Event[] | null = null;
-                  let eventsCursor: string | null = null;
+                // Event cache: keep loaded events in memory across loop iterations.
+                // On the first iteration we do a full load; on subsequent iterations
+                // we fetch only events created after the last known cursor.
+                let cachedEvents: Event[] | null = null;
+                let eventsCursor: string | null = null;
 
-                  // If incoming message has a stepId, this is a background step
-                  // execution. Execute the step, then queue a workflow continuation
-                  // (without stepId) so the workflow can replay and process the
-                  // step_completed event. Don't replay here — the step events
-                  // (step_started/step_completed) need to be processed by the
-                  // workflow's event consumer during replay.
-                  if (incomingStepId) {
-                    const stepName = await getStepNameFromEvent(
+                // If incoming message has a stepId, this is a background step
+                // execution. Execute the step, then queue a workflow continuation
+                // (without stepId) so the workflow can replay and process the
+                // step_completed event. Don't replay here — the step events
+                // (step_started/step_completed) need to be processed by the
+                // workflow's event consumer during replay.
+                if (incomingStepId) {
+                  const stepName = await getStepNameFromEvent(
+                    world,
+                    runId,
+                    incomingStepId
+                  );
+                  if (stepName) {
+                    const workflowRun = await world.runs.get(runId);
+                    const workflowStartedAt = workflowRun.startedAt
+                      ? +workflowRun.startedAt
+                      : Date.now();
+                    const stepResult = await executeStep({
                       world,
-                      runId,
-                      incomingStepId
-                    );
-                    if (stepName) {
-                      const workflowRun = await world.runs.get(runId);
-                      const workflowStartedAt = workflowRun.startedAt
-                        ? +workflowRun.startedAt
-                        : Date.now();
-                      const stepResult = await executeStep({
-                        world,
-                        workflowRunId: runId,
-                        workflowName,
-                        workflowStartedAt,
-                        stepId: incomingStepId,
-                        stepName,
-                      });
-                      if (stepResult.type === 'retry') {
-                        return { timeoutSeconds: stepResult.timeoutSeconds };
-                      }
-                      if (stepResult.type === 'throttled') {
-                        return { timeoutSeconds: stepResult.timeoutSeconds };
-                      }
-                      // Step completed/failed/skipped/gone — queue workflow
-                      // continuation so it can replay with the new events
-                      if (
-                        stepResult.type === 'completed' ||
-                        stepResult.type === 'failed' ||
-                        stepResult.type === 'skipped'
-                      ) {
-                        await queueMessage(
-                          world,
-                          getWorkflowQueueName(workflowName),
-                          {
-                            runId,
-                            traceCarrier: await serializeTraceCarrier(),
-                            requestedAt: new Date(),
-                          }
-                        );
-                      }
-                      return;
+                      workflowRunId: runId,
+                      workflowName,
+                      workflowStartedAt,
+                      stepId: incomingStepId,
+                      stepName,
+                    });
+                    if (stepResult.type === 'retry') {
+                      return { timeoutSeconds: stepResult.timeoutSeconds };
                     }
-                    // stepName not found — fall through to replay
-                    // (the workflow will handle the missing step)
-                  }
-
-                  // Main replay loop
-                  // biome-ignore lint/correctness/noConstantCondition: intentional loop
-                  while (true) {
-                    loopIteration++;
-
-                    // Check timeout before replay
+                    if (stepResult.type === 'throttled') {
+                      return { timeoutSeconds: stepResult.timeoutSeconds };
+                    }
+                    // Step completed/failed/skipped/gone — queue workflow
+                    // continuation so it can replay with the new events
                     if (
-                      Date.now() - invocationStartTime >=
-                      NO_INLINE_REPLAY_AFTER_MS
+                      stepResult.type === 'completed' ||
+                      stepResult.type === 'failed' ||
+                      stepResult.type === 'skipped'
                     ) {
-                      runtimeLogger.info(
-                        'V2 timeout reached, re-scheduling workflow',
-                        {
-                          workflowRunId: runId,
-                          loopIteration,
-                          elapsedMs: Date.now() - invocationStartTime,
-                        }
-                      );
                       await queueMessage(
                         world,
                         getWorkflowQueueName(workflowName),
@@ -613,373 +572,369 @@ export function combinedEntrypoint(
                           requestedAt: new Date(),
                         }
                       );
+                    }
+                    return;
+                  }
+                  // stepName not found — fall through to replay
+                  // (the workflow will handle the missing step)
+                }
+
+                // Main replay loop
+                // biome-ignore lint/correctness/noConstantCondition: intentional loop
+                while (true) {
+                  loopIteration++;
+
+                  // Check timeout before replay
+                  if (
+                    Date.now() - invocationStartTime >=
+                    NO_INLINE_REPLAY_AFTER_MS
+                  ) {
+                    runtimeLogger.info(
+                      'V2 timeout reached, re-scheduling workflow',
+                      {
+                        workflowRunId: runId,
+                        loopIteration,
+                        elapsedMs: Date.now() - invocationStartTime,
+                      }
+                    );
+                    await queueMessage(
+                      world,
+                      getWorkflowQueueName(workflowName),
+                      {
+                        runId,
+                        traceCarrier: await serializeTraceCarrier(),
+                        requestedAt: new Date(),
+                      }
+                    );
+                    return;
+                  }
+
+                  // Standard workflow replay
+                  let workflowRun = await world.runs.get(runId);
+                  let workflowStartedAt = -1;
+                  try {
+                    if (workflowRun.status === 'pending') {
+                      const result = await world.events.create(runId, {
+                        eventType: 'run_started',
+                        specVersion: SPEC_VERSION_CURRENT,
+                      });
+                      if (!result.run) {
+                        throw new WorkflowRuntimeError(
+                          `Event creation for 'run_started' did not return the run entity for run "${runId}"`
+                        );
+                      }
+                      workflowRun = result.run;
+                    }
+
+                    if (!workflowRun.startedAt) {
+                      throw new WorkflowRuntimeError(
+                        `Workflow run "${runId}" has no "startedAt" timestamp`
+                      );
+                    }
+                    workflowStartedAt = +workflowRun.startedAt;
+
+                    if (workflowRun.status !== 'running') {
+                      runtimeLogger.info(
+                        'Workflow already completed or failed, skipping',
+                        { workflowRunId: runId, status: workflowRun.status }
+                      );
                       return;
                     }
 
-                    // Standard workflow replay
-                    let workflowRun = await world.runs.get(runId);
-                    let workflowStartedAt = -1;
-                    try {
-                      if (workflowRun.status === 'pending') {
-                        const result = await world.events.create(runId, {
-                          eventType: 'run_started',
-                          specVersion: SPEC_VERSION_CURRENT,
-                        });
-                        if (!result.run) {
-                          throw new WorkflowRuntimeError(
-                            `Event creation for 'run_started' did not return the run entity for run "${runId}"`
-                          );
-                        }
-                        workflowRun = result.run;
-                      }
-
-                      if (!workflowRun.startedAt) {
-                        throw new WorkflowRuntimeError(
-                          `Workflow run "${runId}" has no "startedAt" timestamp`
-                        );
-                      }
-                      workflowStartedAt = +workflowRun.startedAt;
-
-                      if (workflowRun.status !== 'running') {
-                        runtimeLogger.info(
-                          'Workflow already completed or failed, skipping',
-                          { workflowRunId: runId, status: workflowRun.status }
-                        );
-                        return;
-                      }
-
-                      // Load events — use cached events with incremental fetch on subsequent iterations.
-                      // The server always returns a cursor when there are events (even on the
-                      // final page), so we can reliably use it for incremental loading.
-                      let events: Event[];
-                      if (cachedEvents === null) {
-                        // First iteration: full load
-                        const loaded = await getAllWorkflowRunEvents(runId);
-                        events = loaded.events;
-                        eventsCursor = loaded.cursor;
-                      } else if (eventsCursor) {
-                        // Subsequent iteration: fetch only new events since last cursor
-                        const loaded = await getNewWorkflowRunEvents(
-                          runId,
-                          eventsCursor
-                        );
-                        cachedEvents.push(...loaded.events);
-                        eventsCursor = loaded.cursor ?? eventsCursor;
-                        events = cachedEvents;
-                      } else {
-                        // No cursor available despite having cached events. This should not
-                        // happen — all World implementations return a cursor when there are
-                        // events. If we hit this, the World has a bug. Fall back to a full
-                        // reload to avoid stale data.
-                        runtimeLogger.error(
-                          'Event cursor missing after initial load — falling back to full reload. ' +
-                            'This indicates a bug in the World implementation.',
-                          { workflowRunId: runId }
-                        );
-                        const loaded = await getAllWorkflowRunEvents(runId);
-                        cachedEvents = loaded.events;
-                        eventsCursor = loaded.cursor;
-                        events = cachedEvents;
-                      }
-
-                      // Complete elapsed waits
-                      const now = Date.now();
-                      const completedWaitIds = new Set(
-                        events
-                          .filter((e) => e.eventType === 'wait_completed')
-                          .map((e) => e.correlationId)
+                    // Load events — use cached events with incremental fetch on subsequent iterations.
+                    // The server always returns a cursor when there are events (even on the
+                    // final page), so we can reliably use it for incremental loading.
+                    let events: Event[];
+                    if (cachedEvents === null) {
+                      // First iteration: full load
+                      const loaded =
+                        await getAllWorkflowRunEventsWithCursor(runId);
+                      events = loaded.events;
+                      eventsCursor = loaded.cursor;
+                    } else if (eventsCursor) {
+                      // Subsequent iteration: fetch only new events since last cursor
+                      const loaded = await getNewWorkflowRunEvents(
+                        runId,
+                        eventsCursor
                       );
-                      const waitsToComplete = events
-                        .filter(
-                          (e): e is typeof e & { correlationId: string } =>
-                            e.eventType === 'wait_created' &&
-                            e.correlationId !== undefined &&
-                            !completedWaitIds.has(e.correlationId) &&
-                            now >= (e.eventData.resumeAt as Date).getTime()
-                        )
-                        .map((e) => ({
-                          eventType: 'wait_completed' as const,
-                          specVersion: SPEC_VERSION_CURRENT,
-                          correlationId: e.correlationId,
-                        }));
-
-                      for (const waitEvent of waitsToComplete) {
-                        try {
-                          const result = await world.events.create(
-                            runId,
-                            waitEvent
-                          );
-                          events.push(result.event!);
-                        } catch (err) {
-                          if (WorkflowAPIError.is(err) && err.status === 409) {
-                            continue;
-                          }
-                          throw err;
-                        }
-                      }
-
-                      // Update cache reference (may have been set for first time)
-                      cachedEvents = events;
-
-                      // Replay workflow
-                      const rawKey =
-                        await world.getEncryptionKeyForRun?.(workflowRun);
-                      const encryptionKey = rawKey
-                        ? await importKey(rawKey)
-                        : undefined;
-                      const result = await runWorkflow(
-                        workflowCode,
-                        workflowRun,
-                        events,
-                        encryptionKey
+                      cachedEvents.push(...loaded.events);
+                      eventsCursor = loaded.cursor ?? eventsCursor;
+                      events = cachedEvents;
+                    } else {
+                      // No cursor available despite having cached events. This should not
+                      // happen — all World implementations return a cursor when there are
+                      // events. If we hit this, the World has a bug. Fall back to a full
+                      // reload to avoid stale data.
+                      runtimeLogger.error(
+                        'Event cursor missing after initial load — falling back to full reload. ' +
+                          'This indicates a bug in the World implementation.',
+                        { workflowRunId: runId }
                       );
+                      const loaded =
+                        await getAllWorkflowRunEventsWithCursor(runId);
+                      cachedEvents = loaded.events;
+                      eventsCursor = loaded.cursor;
+                      events = cachedEvents;
+                    }
 
-                      // Workflow completed
+                    // Complete elapsed waits
+                    const now = Date.now();
+                    const completedWaitIds = new Set(
+                      events
+                        .filter((e) => e.eventType === 'wait_completed')
+                        .map((e) => e.correlationId)
+                    );
+                    const waitsToComplete = events
+                      .filter(
+                        (e): e is typeof e & { correlationId: string } =>
+                          e.eventType === 'wait_created' &&
+                          e.correlationId !== undefined &&
+                          !completedWaitIds.has(e.correlationId) &&
+                          now >= (e.eventData.resumeAt as Date).getTime()
+                      )
+                      .map((e) => ({
+                        eventType: 'wait_completed' as const,
+                        specVersion: SPEC_VERSION_CURRENT,
+                        correlationId: e.correlationId,
+                      }));
+
+                    for (const waitEvent of waitsToComplete) {
                       try {
-                        await world.events.create(runId, {
-                          eventType: 'run_completed',
-                          specVersion: SPEC_VERSION_CURRENT,
-                          eventData: { output: result },
-                        });
+                        const result = await world.events.create(
+                          runId,
+                          waitEvent
+                        );
+                        events.push(result.event!);
                       } catch (err) {
-                        if (
-                          WorkflowAPIError.is(err) &&
-                          (err.status === 409 || err.status === 410)
-                        ) {
-                          runtimeLogger.warn(
-                            'Tried completing workflow run, but run has already finished.',
-                            { workflowRunId: runId, message: err.message }
-                          );
-                          return;
+                        if (WorkflowAPIError.is(err) && err.status === 409) {
+                          continue;
                         }
                         throw err;
                       }
+                    }
 
-                      span?.setAttributes({
-                        ...Attribute.WorkflowRunStatus('completed'),
+                    // Update cache reference (may have been set for first time)
+                    cachedEvents = events;
+
+                    // Replay workflow
+                    const rawKey =
+                      await world.getEncryptionKeyForRun?.(workflowRun);
+                    const encryptionKey = rawKey
+                      ? await importKey(rawKey)
+                      : undefined;
+                    const result = await runWorkflow(
+                      workflowCode,
+                      workflowRun,
+                      events,
+                      encryptionKey
+                    );
+
+                    // Workflow completed
+                    try {
+                      await world.events.create(runId, {
+                        eventType: 'run_completed',
+                        specVersion: SPEC_VERSION_CURRENT,
+                        eventData: { output: result },
                       });
-                      return;
                     } catch (err) {
-                      if (WorkflowSuspension.is(err)) {
-                        const suspensionMessage =
-                          buildWorkflowSuspensionMessage(
-                            runId,
-                            err.stepCount,
-                            err.hookCount,
-                            err.waitCount
-                          );
-                        if (suspensionMessage) {
-                          runtimeLogger.debug(suspensionMessage);
-                        }
-
-                        // V2: handle suspension without queuing steps
-                        const suspensionResult = await handleSuspensionV2({
-                          suspension: err,
-                          world,
-                          run: workflowRun,
-                          span,
-                        });
-
-                        // Hook conflict: break loop, re-invoke via queue
-                        if (suspensionResult.hasHookConflict) {
-                          return { timeoutSeconds: 0 };
-                        }
-
-                        const pendingSteps = suspensionResult.pendingSteps;
-
-                        if (pendingSteps.length === 0) {
-                          // No steps — only waits/hooks
-                          if (suspensionResult.timeoutSeconds !== undefined) {
-                            return {
-                              timeoutSeconds: suspensionResult.timeoutSeconds,
-                            };
-                          }
-                          return;
-                        }
-
-                        // Steps to execute!
-                        // Pick one step to execute inline, queue the rest
-                        const [inlineStep, ...backgroundSteps] = pendingSteps;
-
-                        // Queue background steps back to __wkf_workflow_* with stepId
-                        for (const bgStep of backgroundSteps) {
-                          const traceCarrier = await serializeTraceCarrier();
-                          await queueMessage(
-                            world,
-                            getWorkflowQueueName(workflowName),
-                            {
-                              runId,
-                              stepId: bgStep.correlationId,
-                              traceCarrier,
-                              requestedAt: new Date(),
-                            },
-                            {
-                              idempotencyKey: bgStep.correlationId,
-                            }
-                          );
-                        }
-
-                        // Execute inline step
-                        const stepResult = await executeStep({
-                          world,
-                          workflowRunId: runId,
-                          workflowName,
-                          workflowStartedAt,
-                          stepId: inlineStep.correlationId,
-                          stepName: inlineStep.stepName,
-                        });
-
-                        if (stepResult.type === 'retry') {
-                          // Step needs retry — queue self with stepId for retry
-                          const traceCarrier = await serializeTraceCarrier();
-                          await queueMessage(
-                            world,
-                            getWorkflowQueueName(workflowName),
-                            {
-                              runId,
-                              stepId: inlineStep.correlationId,
-                              traceCarrier,
-                              requestedAt: new Date(),
-                            },
-                            {
-                              delaySeconds: stepResult.timeoutSeconds,
-                            }
-                          );
-                          // If there are also waits, return their timeout
-                          if (suspensionResult.timeoutSeconds !== undefined) {
-                            return {
-                              timeoutSeconds: suspensionResult.timeoutSeconds,
-                            };
-                          }
-                          return;
-                        }
-
-                        if (stepResult.type === 'throttled') {
-                          return {
-                            timeoutSeconds: stepResult.timeoutSeconds,
-                          };
-                        }
-
-                        // Step completed or failed — loop back to replay
-                        // (gone/skipped also loop back since the workflow
-                        // will see the completed/failed event on replay)
-                        if (
-                          suspensionResult.timeoutSeconds !== undefined &&
-                          pendingSteps.length === 1
-                        ) {
-                          // Only 1 step and there's also waits/hooks,
-                          // step is done, but we need the wait timeout
-                          // Loop back to replay which will re-evaluate
-                        }
-                      } else {
-                        // Non-suspension error handling (same as V1)
-                        if (
-                          WorkflowAPIError.is(err) &&
-                          err.status !== undefined &&
-                          err.status >= 500
-                        ) {
-                          const retryCount = serverErrorRetryCount ?? 0;
-                          const delaySecondSteps = [5, 30, 120];
-                          if (retryCount < delaySecondSteps.length) {
-                            runtimeLogger.warn(
-                              'Server error (5xx), re-enqueueing workflow with backoff',
-                              {
-                                workflowRunId: runId,
-                                retryCount,
-                                delaySeconds: delaySecondSteps[retryCount],
-                                error: err.message,
-                              }
-                            );
-                            await queueMessage(
-                              world,
-                              getWorkflowQueueName(workflowName),
-                              {
-                                runId,
-                                serverErrorRetryCount: retryCount + 1,
-                                traceCarrier: await serializeTraceCarrier(),
-                                requestedAt: new Date(),
-                              },
-                              {
-                                delaySeconds: delaySecondSteps[retryCount],
-                              }
-                            );
-                            return;
-                          }
-                        } else if (
-                          WorkflowAPIError.is(err) &&
-                          err.status === 429
-                        ) {
-                          throw err;
-                        }
-
-                        if (err instanceof Error) {
-                          span?.recordException?.(err);
-                        }
-
-                        const normalizedError =
-                          await normalizeUnknownError(err);
-                        const errorName =
-                          normalizedError.name || getErrorName(err);
-                        const errorMessage = normalizedError.message;
-                        let errorStack =
-                          normalizedError.stack || getErrorStack(err);
-
-                        if (errorStack) {
-                          const parsedName = parseWorkflowName(workflowName);
-                          const filename =
-                            parsedName?.moduleSpecifier || workflowName;
-                          errorStack = remapErrorStack(
-                            errorStack,
-                            filename,
-                            workflowCode
-                          );
-                        }
-
-                        runtimeLogger.error('Error while running workflow', {
-                          workflowRunId: runId,
-                          errorName,
-                          errorStack,
-                        });
-
-                        try {
-                          await world.events.create(runId, {
-                            eventType: 'run_failed',
-                            specVersion: SPEC_VERSION_CURRENT,
-                            eventData: {
-                              error: {
-                                message: errorMessage,
-                                stack: errorStack,
-                              },
-                            },
-                          });
-                        } catch (failErr) {
-                          if (
-                            WorkflowAPIError.is(failErr) &&
-                            (failErr.status === 409 || failErr.status === 410)
-                          ) {
-                            runtimeLogger.warn(
-                              'Tried failing workflow run, but run has already finished.',
-                              {
-                                workflowRunId: runId,
-                                message: failErr.message,
-                              }
-                            );
-                            return;
-                          }
-                          throw failErr;
-                        }
-
-                        span?.setAttributes({
-                          ...Attribute.WorkflowRunStatus('failed'),
-                          ...Attribute.WorkflowErrorName(errorName),
-                          ...Attribute.WorkflowErrorMessage(errorMessage),
-                          ...Attribute.ErrorType(errorName),
-                        });
+                      if (
+                        WorkflowAPIError.is(err) &&
+                        (err.status === 409 || err.status === 410)
+                      ) {
+                        runtimeLogger.warn(
+                          'Tried completing workflow run, but run has already finished.',
+                          { workflowRunId: runId, message: err.message }
+                        );
                         return;
                       }
+                      throw err;
                     }
-                  } // End while loop
-                }); // End withThrottleRetry
+
+                    span?.setAttributes({
+                      ...Attribute.WorkflowRunStatus('completed'),
+                    });
+                    return;
+                  } catch (err) {
+                    if (WorkflowSuspension.is(err)) {
+                      const suspensionMessage = buildWorkflowSuspensionMessage(
+                        runId,
+                        err.stepCount,
+                        err.hookCount,
+                        err.waitCount
+                      );
+                      if (suspensionMessage) {
+                        runtimeLogger.debug(suspensionMessage);
+                      }
+
+                      // V2: handle suspension without queuing steps
+                      const suspensionResult = await handleSuspensionV2({
+                        suspension: err,
+                        world,
+                        run: workflowRun,
+                        span,
+                      });
+
+                      // Hook conflict: break loop, re-invoke via queue
+                      if (suspensionResult.hasHookConflict) {
+                        return { timeoutSeconds: 0 };
+                      }
+
+                      const pendingSteps = suspensionResult.pendingSteps;
+
+                      if (pendingSteps.length === 0) {
+                        // No steps — only waits/hooks
+                        if (suspensionResult.timeoutSeconds !== undefined) {
+                          return {
+                            timeoutSeconds: suspensionResult.timeoutSeconds,
+                          };
+                        }
+                        return;
+                      }
+
+                      // Steps to execute!
+                      // Pick one step to execute inline, queue the rest
+                      const [inlineStep, ...backgroundSteps] = pendingSteps;
+
+                      // Queue background steps back to __wkf_workflow_* with stepId
+                      for (const bgStep of backgroundSteps) {
+                        const traceCarrier = await serializeTraceCarrier();
+                        await queueMessage(
+                          world,
+                          getWorkflowQueueName(workflowName),
+                          {
+                            runId,
+                            stepId: bgStep.correlationId,
+                            traceCarrier,
+                            requestedAt: new Date(),
+                          },
+                          {
+                            idempotencyKey: bgStep.correlationId,
+                          }
+                        );
+                      }
+
+                      // Execute inline step
+                      const stepResult = await executeStep({
+                        world,
+                        workflowRunId: runId,
+                        workflowName,
+                        workflowStartedAt,
+                        stepId: inlineStep.correlationId,
+                        stepName: inlineStep.stepName,
+                      });
+
+                      if (stepResult.type === 'retry') {
+                        // Step needs retry — queue self with stepId for retry
+                        const traceCarrier = await serializeTraceCarrier();
+                        await queueMessage(
+                          world,
+                          getWorkflowQueueName(workflowName),
+                          {
+                            runId,
+                            stepId: inlineStep.correlationId,
+                            traceCarrier,
+                            requestedAt: new Date(),
+                          },
+                          {
+                            delaySeconds: stepResult.timeoutSeconds,
+                          }
+                        );
+                        // If there are also waits, return their timeout
+                        if (suspensionResult.timeoutSeconds !== undefined) {
+                          return {
+                            timeoutSeconds: suspensionResult.timeoutSeconds,
+                          };
+                        }
+                        return;
+                      }
+
+                      if (stepResult.type === 'throttled') {
+                        return {
+                          timeoutSeconds: stepResult.timeoutSeconds,
+                        };
+                      }
+
+                      // Step completed or failed — loop back to replay
+                      // (gone/skipped also loop back since the workflow
+                      // will see the completed/failed event on replay)
+                      if (
+                        suspensionResult.timeoutSeconds !== undefined &&
+                        pendingSteps.length === 1
+                      ) {
+                        // Only 1 step and there's also waits/hooks,
+                        // step is done, but we need the wait timeout
+                        // Loop back to replay which will re-evaluate
+                      }
+                    } else {
+                      // User code error from runWorkflow — create run_failed.
+                      // Infrastructure errors (network, 5xx) propagate to
+                      // the queue handler for automatic retry.
+                      if (err instanceof Error) {
+                        span?.recordException?.(err);
+                      }
+
+                      const normalizedError = await normalizeUnknownError(err);
+                      const errorName =
+                        normalizedError.name || getErrorName(err);
+                      const errorMessage = normalizedError.message;
+                      let errorStack =
+                        normalizedError.stack || getErrorStack(err);
+
+                      if (errorStack) {
+                        const parsedName = parseWorkflowName(workflowName);
+                        const filename =
+                          parsedName?.moduleSpecifier || workflowName;
+                        errorStack = remapErrorStack(
+                          errorStack,
+                          filename,
+                          workflowCode
+                        );
+                      }
+
+                      runtimeLogger.error('Error while running workflow', {
+                        workflowRunId: runId,
+                        errorName,
+                        errorStack,
+                      });
+
+                      try {
+                        await world.events.create(runId, {
+                          eventType: 'run_failed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: {
+                            error: {
+                              message: errorMessage,
+                              stack: errorStack,
+                            },
+                          },
+                        });
+                      } catch (failErr) {
+                        if (
+                          WorkflowAPIError.is(failErr) &&
+                          (failErr.status === 409 || failErr.status === 410)
+                        ) {
+                          runtimeLogger.warn(
+                            'Tried failing workflow run, but run has already finished.',
+                            {
+                              workflowRunId: runId,
+                              message: failErr.message,
+                            }
+                          );
+                          return;
+                        }
+                        throw failErr;
+                      }
+
+                      span?.setAttributes({
+                        ...Attribute.WorkflowRunStatus('failed'),
+                        ...Attribute.WorkflowErrorName(errorName),
+                        ...Attribute.WorkflowErrorMessage(errorMessage),
+                        ...Attribute.ErrorType(errorName),
+                      });
+                      return;
+                    }
+                  }
+                } // End while loop
               }
             ); // End trace
           }
@@ -1001,7 +956,7 @@ async function getStepNameFromEvent(
   runId: string,
   stepId: string
 ): Promise<string | undefined> {
-  const { events } = await getAllWorkflowRunEvents(runId);
+  const events = await getAllWorkflowRunEvents(runId);
   const stepCreated = events.find(
     (e) => e.eventType === 'step_created' && e.correlationId === stepId
   );
