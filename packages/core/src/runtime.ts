@@ -15,7 +15,6 @@ import {
   handleHealthCheckMessage,
   parseHealthCheckPayload,
   withHealthCheck,
-  withThrottleRetry,
 } from './runtime/helpers.js';
 import { handleSuspension } from './runtime/suspension-handler.js';
 import { getWorld, getWorldHandlers } from './runtime/world.js';
@@ -132,14 +131,14 @@ export function workflowEntrypoint(
                   ...Attribute.WorkflowTracePropagated(!!traceContext),
                 });
 
-                return await withThrottleRetry(async () => {
-                  let workflowStartedAt = -1;
-                  let workflowRun = await world.runs.get(runId);
+                let workflowStartedAt = -1;
+                let workflowRun = await world.runs.get(runId);
 
-                  // --- Infrastructure: prepare the run state ---
-                  // Errors here (network failures, server errors) propagate to the
-                  // queue handler, which returns a non-200 response so the message
-                  // is redelivered and the workflow retries automatically.
+                // --- Infrastructure: prepare the run state ---
+                // Network/server errors propagate to the queue handler for retry.
+                // WorkflowRuntimeError (data integrity issues) are fatal and
+                // produce run_failed since retrying won't fix them.
+                try {
                   if (workflowRun.status === 'pending') {
                     // Transition run to 'running' via event (event-sourced architecture)
                     const result = await world.events.create(runId, {
@@ -162,187 +161,21 @@ export function workflowEntrypoint(
                       `Workflow run "${runId}" has no "startedAt" timestamp`
                     );
                   }
-                  workflowStartedAt = +workflowRun.startedAt;
-
-                  span?.setAttributes({
-                    ...Attribute.WorkflowRunStatus(workflowRun.status),
-                    ...Attribute.WorkflowStartedAt(workflowStartedAt),
-                  });
-
-                  if (workflowRun.status !== 'running') {
-                    // Workflow has already completed or failed, so we can skip it
-                    runtimeLogger.info(
-                      'Workflow already completed or failed, skipping',
-                      {
-                        workflowRunId: runId,
-                        status: workflowRun.status,
-                      }
+                } catch (err) {
+                  if (err instanceof WorkflowRuntimeError) {
+                    runtimeLogger.error(
+                      'Fatal runtime error during workflow setup',
+                      { workflowRunId: runId, error: err.message }
                     );
-
-                    // TODO: for `cancel`, we actually want to propagate a WorkflowCancelled event
-                    // inside the workflow context so the user can gracefully exit. this is SIGTERM
-                    // TODO: furthermore, there should be a timeout or a way to force cancel SIGKILL
-                    // so that we actually exit here without replaying the workflow at all, in the case
-                    // the replaying the workflow is itself failing.
-
-                    return;
-                  }
-
-                  // Load all events into memory before running
-                  const events = await getAllWorkflowRunEvents(
-                    workflowRun.runId
-                  );
-
-                  // Check for any elapsed waits and create wait_completed events
-                  const now = Date.now();
-
-                  // Pre-compute completed correlation IDs for O(n) lookup instead of O(n²)
-                  const completedWaitIds = new Set(
-                    events
-                      .filter((e) => e.eventType === 'wait_completed')
-                      .map((e) => e.correlationId)
-                  );
-
-                  // Collect all waits that need completion
-                  const waitsToComplete = events
-                    .filter(
-                      (e): e is typeof e & { correlationId: string } =>
-                        e.eventType === 'wait_created' &&
-                        e.correlationId !== undefined &&
-                        !completedWaitIds.has(e.correlationId) &&
-                        now >= (e.eventData.resumeAt as Date).getTime()
-                    )
-                    .map((e) => ({
-                      eventType: 'wait_completed' as const,
-                      specVersion: SPEC_VERSION_CURRENT,
-                      correlationId: e.correlationId,
-                    }));
-
-                  // Create all wait_completed events
-                  for (const waitEvent of waitsToComplete) {
-                    try {
-                      const result = await world.events.create(
-                        runId,
-                        waitEvent
-                      );
-                      // Add the event to the events array so the workflow can see it
-                      events.push(result.event!);
-                    } catch (err) {
-                      if (WorkflowAPIError.is(err) && err.status === 409) {
-                        runtimeLogger.info('Wait already completed, skipping', {
-                          workflowRunId: runId,
-                          correlationId: waitEvent.correlationId,
-                        });
-                        continue;
-                      }
-                      throw err;
-                    }
-                  }
-
-                  // Resolve the encryption key for this run's deployment
-                  const rawKey =
-                    await world.getEncryptionKeyForRun?.(workflowRun);
-                  const encryptionKey = rawKey
-                    ? await importKey(rawKey)
-                    : undefined;
-
-                  // --- User code execution ---
-                  // Only errors from runWorkflow() (user workflow code) should
-                  // produce run_failed. Infrastructure errors (network, server)
-                  // must propagate to the queue handler for automatic retry.
-                  let workflowResult: unknown;
-                  try {
-                    workflowResult = await trace(
-                      'workflow.replay',
-                      {},
-                      async (replaySpan) => {
-                        replaySpan?.setAttributes({
-                          ...Attribute.WorkflowEventsCount(events.length),
-                        });
-                        return await runWorkflow(
-                          workflowCode,
-                          workflowRun,
-                          events,
-                          encryptionKey
-                        );
-                      }
-                    );
-                  } catch (err) {
-                    // WorkflowSuspension is normal control flow — not an error
-                    if (WorkflowSuspension.is(err)) {
-                      const suspensionMessage = buildWorkflowSuspensionMessage(
-                        runId,
-                        err.stepCount,
-                        err.hookCount,
-                        err.waitCount
-                      );
-                      if (suspensionMessage) {
-                        runtimeLogger.debug(suspensionMessage);
-                      }
-
-                      const result = await handleSuspension({
-                        suspension: err,
-                        world,
-                        run: workflowRun,
-                        span,
-                      });
-
-                      if (result.timeoutSeconds !== undefined) {
-                        return { timeoutSeconds: result.timeoutSeconds };
-                      }
-
-                      // Suspension handled, no further work needed
-                      return;
-                    }
-
-                    if (WorkflowAPIError.is(err) && err.status === 429) {
-                      // Throw to let withThrottleRetry handle it
-                      throw err;
-                    }
-
-                    // This is a user code error or a WorkflowRuntimeError
-                    // (e.g., corrupted event log). Fail the workflow run.
-
-                    // Record exception for OTEL error tracking
-                    if (err instanceof Error) {
-                      span?.recordException?.(err);
-                    }
-
-                    const normalizedError = await normalizeUnknownError(err);
-                    const errorName = normalizedError.name || getErrorName(err);
-                    const errorMessage = normalizedError.message;
-                    let errorStack =
-                      normalizedError.stack || getErrorStack(err);
-
-                    // Remap error stack using source maps to show original source locations
-                    if (errorStack) {
-                      const parsedName = parseWorkflowName(workflowName);
-                      const filename =
-                        parsedName?.moduleSpecifier || workflowName;
-                      errorStack = remapErrorStack(
-                        errorStack,
-                        filename,
-                        workflowCode
-                      );
-                    }
-
-                    runtimeLogger.error('Error while running workflow', {
-                      workflowRunId: runId,
-                      errorName,
-                      errorStack,
-                    });
-
-                    // Fail the workflow run via event (event-sourced architecture)
                     try {
                       await world.events.create(runId, {
                         eventType: 'run_failed',
                         specVersion: SPEC_VERSION_CURRENT,
                         eventData: {
                           error: {
-                            message: errorMessage,
-                            stack: errorStack,
+                            message: err.message,
+                            stack: err.stack,
                           },
-                          // TODO: include error codes when we define them
                         },
                       });
                     } catch (failErr) {
@@ -350,67 +183,251 @@ export function workflowEntrypoint(
                         WorkflowAPIError.is(failErr) &&
                         (failErr.status === 409 || failErr.status === 410)
                       ) {
-                        runtimeLogger.warn(
-                          'Tried failing workflow run, but run has already finished.',
-                          {
-                            workflowRunId: runId,
-                            message: failErr.message,
-                          }
-                        );
-                        span?.setAttributes({
-                          ...Attribute.WorkflowErrorName(errorName),
-                          ...Attribute.WorkflowErrorMessage(errorMessage),
-                          ...Attribute.ErrorType(errorName),
-                        });
                         return;
-                      } else {
-                        throw failErr;
                       }
+                      throw failErr;
+                    }
+                    return;
+                  }
+                  throw err;
+                }
+                workflowStartedAt = +workflowRun.startedAt;
+
+                span?.setAttributes({
+                  ...Attribute.WorkflowRunStatus(workflowRun.status),
+                  ...Attribute.WorkflowStartedAt(workflowStartedAt),
+                });
+
+                if (workflowRun.status !== 'running') {
+                  // Workflow has already completed or failed, so we can skip it
+                  runtimeLogger.info(
+                    'Workflow already completed or failed, skipping',
+                    {
+                      workflowRunId: runId,
+                      status: workflowRun.status,
+                    }
+                  );
+
+                  // TODO: for `cancel`, we actually want to propagate a WorkflowCancelled event
+                  // inside the workflow context so the user can gracefully exit. this is SIGTERM
+                  // TODO: furthermore, there should be a timeout or a way to force cancel SIGKILL
+                  // so that we actually exit here without replaying the workflow at all, in the case
+                  // the replaying the workflow is itself failing.
+
+                  return;
+                }
+
+                // Load all events into memory before running
+                const events = await getAllWorkflowRunEvents(workflowRun.runId);
+
+                // Check for any elapsed waits and create wait_completed events
+                const now = Date.now();
+
+                // Pre-compute completed correlation IDs for O(n) lookup instead of O(n²)
+                const completedWaitIds = new Set(
+                  events
+                    .filter((e) => e.eventType === 'wait_completed')
+                    .map((e) => e.correlationId)
+                );
+
+                // Collect all waits that need completion
+                const waitsToComplete = events
+                  .filter(
+                    (e): e is typeof e & { correlationId: string } =>
+                      e.eventType === 'wait_created' &&
+                      e.correlationId !== undefined &&
+                      !completedWaitIds.has(e.correlationId) &&
+                      now >= (e.eventData.resumeAt as Date).getTime()
+                  )
+                  .map((e) => ({
+                    eventType: 'wait_completed' as const,
+                    specVersion: SPEC_VERSION_CURRENT,
+                    correlationId: e.correlationId,
+                  }));
+
+                // Create all wait_completed events
+                for (const waitEvent of waitsToComplete) {
+                  try {
+                    const result = await world.events.create(runId, waitEvent);
+                    // Add the event to the events array so the workflow can see it
+                    events.push(result.event!);
+                  } catch (err) {
+                    if (WorkflowAPIError.is(err) && err.status === 409) {
+                      runtimeLogger.info('Wait already completed, skipping', {
+                        workflowRunId: runId,
+                        correlationId: waitEvent.correlationId,
+                      });
+                      continue;
+                    }
+                    throw err;
+                  }
+                }
+
+                // Resolve the encryption key for this run's deployment
+                const rawKey =
+                  await world.getEncryptionKeyForRun?.(workflowRun);
+                const encryptionKey = rawKey
+                  ? await importKey(rawKey)
+                  : undefined;
+
+                // --- User code execution ---
+                // Only errors from runWorkflow() (user workflow code) should
+                // produce run_failed. Infrastructure errors (network, server)
+                // must propagate to the queue handler for automatic retry.
+                let workflowResult: unknown;
+                try {
+                  workflowResult = await trace(
+                    'workflow.replay',
+                    {},
+                    async (replaySpan) => {
+                      replaySpan?.setAttributes({
+                        ...Attribute.WorkflowEventsCount(events.length),
+                      });
+                      return await runWorkflow(
+                        workflowCode,
+                        workflowRun,
+                        events,
+                        encryptionKey
+                      );
+                    }
+                  );
+                } catch (err) {
+                  // WorkflowSuspension is normal control flow — not an error
+                  if (WorkflowSuspension.is(err)) {
+                    const suspensionMessage = buildWorkflowSuspensionMessage(
+                      runId,
+                      err.stepCount,
+                      err.hookCount,
+                      err.waitCount
+                    );
+                    if (suspensionMessage) {
+                      runtimeLogger.debug(suspensionMessage);
                     }
 
-                    span?.setAttributes({
-                      ...Attribute.WorkflowRunStatus('failed'),
-                      ...Attribute.WorkflowErrorName(errorName),
-                      ...Attribute.WorkflowErrorMessage(errorMessage),
-                      ...Attribute.ErrorType(errorName),
+                    const result = await handleSuspension({
+                      suspension: err,
+                      world,
+                      run: workflowRun,
+                      span,
                     });
+
+                    if (result.timeoutSeconds !== undefined) {
+                      return { timeoutSeconds: result.timeoutSeconds };
+                    }
+
+                    // Suspension handled, no further work needed
                     return;
                   }
 
-                  // --- Infrastructure: complete the run ---
-                  // This is outside the user-code try/catch so that failures
-                  // here (e.g., network errors) propagate to the queue handler.
+                  // This is a user code error or a WorkflowRuntimeError
+                  // (e.g., corrupted event log). Fail the workflow run.
+
+                  // Record exception for OTEL error tracking
+                  if (err instanceof Error) {
+                    span?.recordException?.(err);
+                  }
+
+                  const normalizedError = await normalizeUnknownError(err);
+                  const errorName = normalizedError.name || getErrorName(err);
+                  const errorMessage = normalizedError.message;
+                  let errorStack = normalizedError.stack || getErrorStack(err);
+
+                  // Remap error stack using source maps to show original source locations
+                  if (errorStack) {
+                    const parsedName = parseWorkflowName(workflowName);
+                    const filename =
+                      parsedName?.moduleSpecifier || workflowName;
+                    errorStack = remapErrorStack(
+                      errorStack,
+                      filename,
+                      workflowCode
+                    );
+                  }
+
+                  runtimeLogger.error('Error while running workflow', {
+                    workflowRunId: runId,
+                    errorName,
+                    errorStack,
+                  });
+
+                  // Fail the workflow run via event (event-sourced architecture)
                   try {
                     await world.events.create(runId, {
-                      eventType: 'run_completed',
+                      eventType: 'run_failed',
                       specVersion: SPEC_VERSION_CURRENT,
                       eventData: {
-                        output: workflowResult,
+                        error: {
+                          message: errorMessage,
+                          stack: errorStack,
+                        },
+                        // TODO: include error codes when we define them
                       },
                     });
-                  } catch (err) {
+                  } catch (failErr) {
                     if (
-                      WorkflowAPIError.is(err) &&
-                      (err.status === 409 || err.status === 410)
+                      WorkflowAPIError.is(failErr) &&
+                      (failErr.status === 409 || failErr.status === 410)
                     ) {
                       runtimeLogger.warn(
-                        'Tried completing workflow run, but run has already finished.',
+                        'Tried failing workflow run, but run has already finished.',
                         {
                           workflowRunId: runId,
-                          message: err.message,
+                          message: failErr.message,
                         }
                       );
+                      span?.setAttributes({
+                        ...Attribute.WorkflowErrorName(errorName),
+                        ...Attribute.WorkflowErrorMessage(errorMessage),
+                        ...Attribute.ErrorType(errorName),
+                      });
                       return;
                     } else {
-                      throw err;
+                      throw failErr;
                     }
                   }
 
                   span?.setAttributes({
-                    ...Attribute.WorkflowRunStatus('completed'),
-                    ...Attribute.WorkflowEventsCount(events.length),
+                    ...Attribute.WorkflowRunStatus('failed'),
+                    ...Attribute.WorkflowErrorName(errorName),
+                    ...Attribute.WorkflowErrorMessage(errorMessage),
+                    ...Attribute.ErrorType(errorName),
                   });
-                }); // End withThrottleRetry
+                  return;
+                }
+
+                // --- Infrastructure: complete the run ---
+                // This is outside the user-code try/catch so that failures
+                // here (e.g., network errors) propagate to the queue handler.
+                try {
+                  await world.events.create(runId, {
+                    eventType: 'run_completed',
+                    specVersion: SPEC_VERSION_CURRENT,
+                    eventData: {
+                      output: workflowResult,
+                    },
+                  });
+                } catch (err) {
+                  if (
+                    WorkflowAPIError.is(err) &&
+                    (err.status === 409 || err.status === 410)
+                  ) {
+                    runtimeLogger.warn(
+                      'Tried completing workflow run, but run has already finished.',
+                      {
+                        workflowRunId: runId,
+                        message: err.message,
+                      }
+                    );
+                    return;
+                  } else {
+                    throw err;
+                  }
+                }
+
+                span?.setAttributes({
+                  ...Attribute.WorkflowRunStatus('completed'),
+                  ...Attribute.WorkflowEventsCount(events.length),
+                });
               }
             ); // End trace
           }

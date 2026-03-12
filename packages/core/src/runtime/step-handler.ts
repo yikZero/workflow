@@ -132,7 +132,7 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             step = startResult.step;
           } catch (err) {
             if (WorkflowAPIError.is(err)) {
-              if (WorkflowAPIError.is(err) && err.status === 429) {
+              if (err.status === 429) {
                 const retryRetryAfter = Math.max(
                   1,
                   typeof err.retryAfter === 'number' ? err.retryAfter : 1
@@ -289,7 +289,9 @@ const stepHandler = getWorldHandlers().createQueueHandler(
           }
 
           // --- Infrastructure: prepare step input ---
-          // Errors here propagate to the queue handler for automatic retry.
+          // Network/server errors propagate to the queue handler for retry.
+          // WorkflowRuntimeError (data integrity issues) are fatal — retrying
+          // won't fix them, so we re-queue the workflow to surface the error.
           // step_started already validated the step is in valid state (pending/running)
           // and returned the updated step entity with incremented attempt
 
@@ -297,9 +299,35 @@ const stepHandler = getWorldHandlers().createQueueHandler(
           const attempt = step.attempt;
 
           if (!step.startedAt) {
-            throw new WorkflowRuntimeError(
-              `Step "${stepId}" has no "startedAt" timestamp`
-            );
+            const errorMessage = `Step "${stepId}" has no "startedAt" timestamp`;
+            runtimeLogger.error('Fatal runtime error during step setup', {
+              workflowRunId,
+              stepId,
+              error: errorMessage,
+            });
+            try {
+              await world.events.create(workflowRunId, {
+                eventType: 'step_failed',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: stepId,
+                eventData: {
+                  error: errorMessage,
+                  stack: new Error(errorMessage).stack ?? '',
+                },
+              });
+            } catch (failErr) {
+              if (WorkflowAPIError.is(failErr) && failErr.status === 409) {
+                return;
+              }
+              throw failErr;
+            }
+            // Re-queue the workflow so it can process the step failure
+            await queueMessage(world, getWorkflowQueueName(workflowName), {
+              runId: workflowRunId,
+              traceCarrier: await serializeTraceCarrier(),
+              requestedAt: new Date(),
+            });
+            return;
           }
           // Capture startedAt for use in async callback (TypeScript narrowing doesn't persist)
           const stepStartedAt = step.startedAt;
