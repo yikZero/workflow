@@ -1067,23 +1067,12 @@ describe('e2e', () => {
         expect(result.attempt).toBe(1);
       });
 
-      test(
-        'workflow completes despite transient 5xx on step_completed',
-        { timeout: 120_000 },
-        async () => {
-          const run = await start(
-            await e2e('serverError5xxRetryWorkflow'),
-            [42]
-          );
-          const result = await run.returnValue;
-
-          // Correct result proves workflow completed successfully
-          expect(result.result).toBe(84); // 42 * 2
-
-          // retryCount > 0 proves the fault injection actually triggered
-          expect(result.retryCount).toBe(2);
-        }
-      );
+      // Removed: 'workflow completes despite transient 5xx on step_completed'
+      // This test validated withServerErrorRetry's in-process retry behavior,
+      // which was removed in favor of structural error separation (infra errors
+      // propagate to the queue for retry). Queue-level retry with process-scoped
+      // fault injection is unreliable (different serverless instances) and too
+      // slow for a bounded e2e timeout.
     });
 
     describe('catchability', () => {
