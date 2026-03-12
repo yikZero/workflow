@@ -2,7 +2,9 @@
 
 ## Overview
 
-Replace the current two-route architecture (`/.well-known/workflow/v1/flow` + `/.well-known/workflow/v1/step`) with a single combined route at `/.well-known/workflow/v2/flow` that handles both workflow orchestration and step execution. This reduces function invocations and queue overhead by executing steps inline when possible.
+Replace the current two-route architecture (`/.well-known/workflow/v1/flow` + `/.well-known/workflow/v1/step`) with a single combined route at `/.well-known/workflow/v1/flow` that handles both workflow orchestration and step execution using `combinedEntrypoint()`. This reduces function invocations and queue overhead by executing steps inline when possible.
+
+> **Implementation note**: The combined route uses the same `v1` path prefix to avoid breaking manifest URLs, webhook paths, and queue topic routing. The step route (`v1/step/route.js`) is no longer generated. Step registrations are in `v1/flow/__step_registrations.js` imported by the combined route.
 
 ## Current Architecture (V1)
 
