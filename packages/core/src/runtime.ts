@@ -11,7 +11,6 @@ import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
   getAllWorkflowRunEvents,
-  getAllWorkflowRunEventsWithCursor,
   getNewWorkflowRunEvents,
   getQueueOverhead,
   getWorkflowQueueName,
@@ -21,11 +20,11 @@ import {
   withHealthCheck,
   withThrottleRetry,
 } from './runtime/helpers.js';
+import { executeStep } from './runtime/step-executor.js';
 import {
   handleSuspension,
   handleSuspensionV2,
 } from './runtime/suspension-handler.js';
-import { executeStep } from './runtime/step-executor.js';
 import { getWorld, getWorldHandlers } from './runtime/world.js';
 import { remapErrorStack } from './source-map.js';
 import * as Attribute from './telemetry/semantic-conventions.js';
@@ -195,7 +194,7 @@ export function workflowEntrypoint(
                     }
 
                     // Load all events into memory before running
-                    const events = await getAllWorkflowRunEvents(
+                    const { events } = await getAllWorkflowRunEvents(
                       workflowRun.runId
                     );
 
@@ -644,8 +643,7 @@ export function combinedEntrypoint(
                       let events: Event[];
                       if (cachedEvents === null) {
                         // First iteration: full load
-                        const loaded =
-                          await getAllWorkflowRunEventsWithCursor(runId);
+                        const loaded = await getAllWorkflowRunEvents(runId);
                         events = loaded.events;
                         eventsCursor = loaded.cursor;
                       } else if (eventsCursor) {
@@ -667,8 +665,7 @@ export function combinedEntrypoint(
                             'This indicates a bug in the World implementation.',
                           { workflowRunId: runId }
                         );
-                        const loaded =
-                          await getAllWorkflowRunEventsWithCursor(runId);
+                        const loaded = await getAllWorkflowRunEvents(runId);
                         cachedEvents = loaded.events;
                         eventsCursor = loaded.cursor;
                         events = cachedEvents;
@@ -863,7 +860,6 @@ export function combinedEntrypoint(
                           // step is done, but we need the wait timeout
                           // Loop back to replay which will re-evaluate
                         }
-                        continue;
                       } else {
                         // Non-suspension error handling (same as V1)
                         if (
@@ -994,7 +990,7 @@ async function getStepNameFromEvent(
   runId: string,
   stepId: string
 ): Promise<string | undefined> {
-  const events = await getAllWorkflowRunEvents(runId);
+  const { events } = await getAllWorkflowRunEvents(runId);
   const stepCreated = events.find(
     (e) => e.eventType === 'step_created' && e.correlationId === stepId
   );

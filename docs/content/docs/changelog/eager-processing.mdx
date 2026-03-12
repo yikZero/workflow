@@ -111,7 +111,7 @@ A future improvement would be to add `ne(status, 'running')` to the `step_starte
 
 The combined handler caches the event log in memory across loop iterations. Instead of re-fetching the entire event log on each replay:
 
-1. **First iteration**: full load via `getAllWorkflowRunEventsWithCursor()`, which returns both the events and the final pagination cursor
+1. **First iteration**: full load via `getAllWorkflowRunEvents()`, which returns both the events and the final pagination cursor
 2. **Subsequent iterations**: `getNewWorkflowRunEvents(runId, cursor)` fetches only events created after the saved cursor and appends them to the cached array
 
 For a 10-step serial workflow completing in one invocation, the 10th replay loads ~2 new events instead of re-fetching all ~30.
@@ -198,6 +198,7 @@ The combined bundle is larger (contains both step code and workflow VM code). Co
 ### Step Retries
 
 When an inline step fails with retries remaining:
+
 - `RetryableError` with explicit `retryAfter` delay: re-queue to self with `stepId` and delay
 - Transient errors with immediate retry: re-queue to self with `stepId` (delay = 1s)
 - `FatalError`: fail immediately
