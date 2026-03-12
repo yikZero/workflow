@@ -517,16 +517,20 @@ export function combinedEntrypoint(
                   const invocationStartTime = Date.now();
                   let loopIteration = 0;
 
-                  // If incoming message has a stepId, execute that step first
+                  // If incoming message has a stepId, this is a background step
+                  // execution. Execute the step, then queue a workflow continuation
+                  // (without stepId) so the workflow can replay and process the
+                  // step_completed event. Don't replay here — the step events
+                  // (step_started/step_completed) need to be processed by the
+                  // workflow's event consumer during replay.
                   if (incomingStepId) {
-                    // Extract step name from the step's created event
                     const stepName = await getStepNameFromEvent(
                       world,
                       runId,
                       incomingStepId
                     );
                     if (stepName) {
-                      let workflowRun = await world.runs.get(runId);
+                      const workflowRun = await world.runs.get(runId);
                       const workflowStartedAt = workflowRun.startedAt
                         ? +workflowRun.startedAt
                         : Date.now();
@@ -538,15 +542,33 @@ export function combinedEntrypoint(
                         stepId: incomingStepId,
                         stepName,
                       });
-                      // If step needs retry, return timeout to queue
                       if (stepResult.type === 'retry') {
                         return { timeoutSeconds: stepResult.timeoutSeconds };
                       }
                       if (stepResult.type === 'throttled') {
                         return { timeoutSeconds: stepResult.timeoutSeconds };
                       }
-                      // For gone/skipped, proceed to replay (which will handle it)
+                      // Step completed/failed/skipped/gone — queue workflow
+                      // continuation so it can replay with the new events
+                      if (
+                        stepResult.type === 'completed' ||
+                        stepResult.type === 'failed' ||
+                        stepResult.type === 'skipped'
+                      ) {
+                        await queueMessage(
+                          world,
+                          getWorkflowQueueName(workflowName),
+                          {
+                            runId,
+                            traceCarrier: await serializeTraceCarrier(),
+                            requestedAt: new Date(),
+                          }
+                        );
+                      }
+                      return;
                     }
+                    // stepName not found — fall through to replay
+                    // (the workflow will handle the missing step)
                   }
 
                   // Main replay loop
