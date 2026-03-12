@@ -37,3 +37,17 @@ A serial 10-step workflow now completes in 1 function invocation instead of 21.
 ## Companion Changes
 
 - **workflow-server** (`peter/fix-end-cursor`): `queryByRunId` now returns a cursor even on the final page, enabling incremental event loading.
+
+## Known Issues
+
+### step_started does not reject already-running steps
+
+`step_started` in workflow-server uses a WHERE clause that only rejects terminal states (`completed`, `failed`, `cancelled`). It does **not** reject `running` — it succeeds and increments the attempt counter. This means multiple concurrent V2 invocations can all start and execute the same step simultaneously.
+
+This causes:
+- Redundant step execution (wasted compute, though harmless if steps are idempotent)
+- Attempt counter inflation (could trigger premature "exceeded max retries")
+
+V1 mitigates this through queue idempotency keys that serialize step execution. V2 removed that gate for inline execution.
+
+**Fix**: Add `ne(status, 'running')` to the `handleStepStarted` WHERE clause in `workflow-server/lib/data/events.ts`. This needs careful handling of the retry-after-SIGKILL case where a step was killed mid-execution and needs to be re-started by the queue.

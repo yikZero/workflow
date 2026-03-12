@@ -97,11 +97,15 @@ Each background step message is handled by a separate function invocation of the
 After N parallel steps complete, up to N concurrent replay attempts may occur (each background step queues a continuation). The event-sourced architecture ensures safe convergence:
 
 - **`step_created` idempotency** --- duplicate creates return 409
-- **`step_started` idempotency** --- only one invocation wins the race to execute a step
+- **`step_completed` idempotency** --- only the first invocation to complete a step records the result (409 for duplicates)
 - **Queue idempotency keys** --- background step messages use `correlationId` as idempotency key
 - **Deterministic replay** --- all invocations produce the same result given the same event log
 
-The "losing" invocations find that the next step has already been started by a "winning" invocation, skip it (409 from `step_started`), and exit. Eventually only one invocation continues past the parallel section.
+Multiple concurrent invocations may all successfully call `step_started` and begin executing the same step — `step_started` does not reject already-running steps (it succeeds and increments the attempt counter). However, only one `step_completed` event is recorded; the rest get 409 and exit.
+
+**Known limitation**: The redundant `step_started` calls inflate the attempt counter, which could cause premature "exceeded max retries" failures if many concurrent invocations race on the same step. In practice this is bounded by the number of parallel steps that just completed (e.g., a `Promise.all` with 10 steps produces at most 10 concurrent continuations). This is the same convergence behavior as V1 (where redundant workflow replays also race on the next step), though V1 mitigates it by serializing step execution through queue idempotency keys.
+
+A future improvement would be to add `ne(status, 'running')` to the `step_started` WHERE clause in workflow-server, so that only the first invocation succeeds and the rest get 409. This would require careful handling of the legitimate retry-after-SIGKILL case where a step was killed mid-execution and the queue re-delivers the message.
 
 ## Incremental Event Loading
 
