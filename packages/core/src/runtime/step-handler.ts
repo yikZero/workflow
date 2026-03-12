@@ -382,6 +382,28 @@ const stepHandler = getWorldHandlers().createQueueHandler(
           // --- Handle user code errors ---
           if (userCodeFailed) {
             const err = userCodeError;
+
+            // Infrastructure errors that somehow surfaced through user code
+            // should propagate to the queue handler for retry, not consume
+            // step attempts.
+            if (WorkflowAPIError.is(err)) {
+              if (err.status === 410) {
+                // Workflow has already completed, so no-op
+                stepLogger.info(
+                  'Workflow run already completed, skipping step',
+                  {
+                    workflowRunId,
+                    stepId,
+                    message: err.message,
+                  }
+                );
+                return;
+              }
+              if (err.status !== undefined && err.status >= 500) {
+                throw err;
+              }
+            }
+
             const normalizedError = await normalizeUnknownError(err);
             const normalizedStack =
               normalizedError.stack || getErrorStack(err) || '';

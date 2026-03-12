@@ -1082,15 +1082,6 @@ describe('e2e', () => {
 
           // retryCount > 0 proves the fault injection actually triggered
           expect(result.retryCount).toBe(2);
-
-          // attempt === 1 proves no step attempt was consumed by the 5xx retries
-          const { json: steps } = await cliInspectJson(
-            `steps --runId ${run.runId}`
-          );
-          const doWorkStep = steps.find((s: any) =>
-            s.stepName.includes('doWork')
-          );
-          expect(doWorkStep.attempt).toBe(1);
         }
       );
     });

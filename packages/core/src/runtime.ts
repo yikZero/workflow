@@ -239,6 +239,13 @@ export function workflowEntrypoint(
                     }
                   }
 
+                  // Resolve the encryption key for this run's deployment
+                  const rawKey =
+                    await world.getEncryptionKeyForRun?.(workflowRun);
+                  const encryptionKey = rawKey
+                    ? await importKey(rawKey)
+                    : undefined;
+
                   // --- User code execution ---
                   // Only errors from runWorkflow() (user workflow code) should
                   // produce run_failed. Infrastructure errors (network, server)
@@ -252,12 +259,6 @@ export function workflowEntrypoint(
                         replaySpan?.setAttributes({
                           ...Attribute.WorkflowEventsCount(events.length),
                         });
-                        // Resolve the encryption key for this run's deployment
-                        const rawKey =
-                          await world.getEncryptionKeyForRun?.(workflowRun);
-                        const encryptionKey = rawKey
-                          ? await importKey(rawKey)
-                          : undefined;
                         return await runWorkflow(
                           workflowCode,
                           workflowRun,
