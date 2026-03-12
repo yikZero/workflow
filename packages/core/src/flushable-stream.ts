@@ -219,7 +219,12 @@ export async function flushablePipe(
 
       // Read from source - don't count as pending op since we're just waiting for data
       // The important ops are writes to the sink (server)
-      const readResult = await reader.read();
+      const readResult = await Promise.race([
+        reader.read(),
+        writer.closed.then(() => {
+          throw new Error('Writable stream closed prematurely');
+        }),
+      ]);
 
       // Check if stream has ended (e.g., due to error in another path) before processing
       if (state.streamEnded) {
@@ -257,8 +262,14 @@ export async function flushablePipe(
     // while other callers may depend on this rejection. Some known callers
     // explicitly ignore this rejection (`.catch(() => {})`) and rely solely
     // on `state.reject(err)` for error handling.
+
+    // Attempt to cancel the upstream reader so the source knows it should stop generating data.
+    reader.cancel(err).catch(() => {});
     throw err;
   } finally {
+    // If we're exiting normally but the stream was externally ended before completion,
+    // we should cancel the reader to notify the source.
+    reader.cancel().catch(() => {});
     reader.releaseLock();
     writer.releaseLock();
   }
