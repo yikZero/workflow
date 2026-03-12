@@ -273,12 +273,11 @@ export async function healthCheck(
  * Loads all workflow run events by iterating through all pages of paginated results.
  * This ensures that *all* events are loaded into memory before running the workflow.
  * Events must be in chronological order (ascending) for proper workflow replay.
- */
-/**
- * Loads all workflow run events, returning both the events and the final pagination cursor.
+ *
+ * Returns both the events and the final pagination cursor.
  * The cursor can be used with getNewWorkflowRunEvents for incremental loading.
  */
-export async function getAllWorkflowRunEventsWithCursor(
+export async function getAllWorkflowRunEvents(
   runId: string
 ): Promise<{ events: Event[]; cursor: string | null }> {
   return trace('workflow.loadEvents', async (span) => {
@@ -314,11 +313,6 @@ export async function getAllWorkflowRunEventsWithCursor(
 
     return { events: allEvents, cursor };
   });
-}
-
-export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
-  const result = await getAllWorkflowRunEventsWithCursor(runId);
-  return result.events;
 }
 
 /**

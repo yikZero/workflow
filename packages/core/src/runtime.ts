@@ -11,7 +11,6 @@ import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
   getAllWorkflowRunEvents,
-  getAllWorkflowRunEventsWithCursor,
   getNewWorkflowRunEvents,
   getQueueOverhead,
   getWorkflowQueueName,
@@ -227,7 +226,9 @@ export function workflowEntrypoint(
                 }
 
                 // Load all events into memory before running
-                const events = await getAllWorkflowRunEvents(workflowRun.runId);
+                const { events } = await getAllWorkflowRunEvents(
+                  workflowRun.runId
+                );
 
                 // Check for any elapsed waits and create wait_completed events
                 const now = Date.now();
@@ -647,8 +648,7 @@ export function combinedEntrypoint(
                     let events: Event[];
                     if (cachedEvents === null) {
                       // First iteration: full load
-                      const loaded =
-                        await getAllWorkflowRunEventsWithCursor(runId);
+                      const loaded = await getAllWorkflowRunEvents(runId);
                       events = loaded.events;
                       eventsCursor = loaded.cursor;
                     } else if (eventsCursor) {
@@ -670,8 +670,7 @@ export function combinedEntrypoint(
                           'This indicates a bug in the World implementation.',
                         { workflowRunId: runId }
                       );
-                      const loaded =
-                        await getAllWorkflowRunEventsWithCursor(runId);
+                      const loaded = await getAllWorkflowRunEvents(runId);
                       cachedEvents = loaded.events;
                       eventsCursor = loaded.cursor;
                       events = cachedEvents;
@@ -956,7 +955,7 @@ async function getStepNameFromEvent(
   runId: string,
   stepId: string
 ): Promise<string | undefined> {
-  const events = await getAllWorkflowRunEvents(runId);
+  const { events } = await getAllWorkflowRunEvents(runId);
   const stepCreated = events.find(
     (e) => e.eventType === 'step_created' && e.correlationId === stepId
   );
