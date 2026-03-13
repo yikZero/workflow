@@ -50,18 +50,12 @@ export class LocalBuilder extends BaseBuilder {
     const inputFiles = await this.getInputFiles();
     await mkdir(this.#outDir, { recursive: true });
 
-    const { manifest: workflowsManifest } = await this.createWorkflowsBundle({
-      outfile: join(this.#outDir, 'workflows.mjs'),
-      bundleFinalOutput: false,
-      format: 'esm',
+    const { manifest } = await this.createCombinedBundle({
       inputFiles,
-    });
-
-    const { manifest: stepsManifest } = await this.createStepsBundle({
-      outfile: join(this.#outDir, 'steps.mjs'),
-      externalizeNonSteps: true,
+      stepsOutfile: join(this.#outDir, 'steps.mjs'),
+      flowOutfile: join(this.#outDir, 'workflows.mjs'),
       format: 'esm',
-      inputFiles,
+      bundleFinalOutput: true,
     });
 
     const webhookRouteFile = join(this.#outDir, 'webhook.mjs');
@@ -70,13 +64,6 @@ export class LocalBuilder extends BaseBuilder {
       outfile: webhookRouteFile,
       bundle: false,
     });
-
-    // Merge manifests from both bundles
-    const manifest = {
-      steps: { ...stepsManifest.steps, ...workflowsManifest.steps },
-      workflows: { ...stepsManifest.workflows, ...workflowsManifest.workflows },
-      classes: { ...stepsManifest.classes, ...workflowsManifest.classes },
-    };
 
     // Generate manifest
     const workflowBundlePath = join(this.#outDir, 'workflows.mjs');

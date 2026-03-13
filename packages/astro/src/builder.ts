@@ -14,10 +14,6 @@ const WORKFLOW_ROUTES = [
     dest: '/.well-known/workflow/v1/flow',
   },
   {
-    src: '^/\\.well-known/workflow/v1/step/?$',
-    dest: '/.well-known/workflow/v1/step',
-  },
-  {
     src: '^/\\.well-known/workflow/v1/webhook/([^/]+?)/?$',
     dest: '/.well-known/workflow/v1/webhook/[token]',
   },
@@ -52,26 +48,34 @@ export class LocalBuilder extends BaseBuilder {
     const inputFiles = await this.getInputFiles();
     const tsconfigPath = await this.findTsConfigPath();
 
-    const options = {
+    // Create combined bundle
+    const { manifest } = await this.createCombinedBundle({
       inputFiles,
-      workflowGeneratedDir,
+      stepsOutfile: join(workflowGeneratedDir, '__step_registrations.js'),
+      flowOutfile: join(workflowGeneratedDir, 'flow.js'),
+      format: 'esm',
+      bundleFinalOutput: false,
       tsconfigPath,
-    };
+    });
 
-    // Generate the three Astro route handlers
-    const stepsManifest = await this.buildStepsRoute(options);
-    const workflowsManifest = await this.buildWorkflowsRoute(options);
+    // Post-process the generated file to wrap with Astro request converter
+    const workflowsRouteFile = join(workflowGeneratedDir, 'flow.js');
+    let workflowsRouteContent = await readFile(workflowsRouteFile, 'utf-8');
+
+    // Normalize request, needed for preserving request through astro
+    workflowsRouteContent = workflowsRouteContent.replace(
+      /export const POST = combinedEntrypoint\(workflowCode\);?$/m,
+      `${NORMALIZE_REQUEST_CODE}
+export const POST = async ({request}) => {
+  const normalRequest = await normalizeRequest(request);
+  return combinedEntrypoint(workflowCode)(normalRequest);
+}
+
+export const prerender = false;`
+    );
+    await writeFile(workflowsRouteFile, workflowsRouteContent);
+
     await this.buildWebhookRoute({ workflowGeneratedDir });
-
-    // Merge manifests from both bundles
-    const manifest = {
-      steps: { ...stepsManifest.steps, ...workflowsManifest.steps },
-      workflows: {
-        ...stepsManifest.workflows,
-        ...workflowsManifest.workflows,
-      },
-      classes: { ...stepsManifest.classes, ...workflowsManifest.classes },
-    };
 
     // Generate unified manifest
     const workflowBundlePath = join(workflowGeneratedDir, 'flow.js');
@@ -95,80 +99,6 @@ export class LocalBuilder extends BaseBuilder {
 export const prerender = false;\n`
       );
     }
-  }
-
-  private async buildStepsRoute({
-    inputFiles,
-    workflowGeneratedDir,
-    tsconfigPath,
-  }: {
-    inputFiles: string[];
-    workflowGeneratedDir: string;
-    tsconfigPath?: string;
-  }) {
-    // Create steps route: .well-known/workflow/v1/step.js
-    const stepsRouteFile = join(workflowGeneratedDir, 'step.js');
-    const { manifest } = await this.createStepsBundle({
-      format: 'esm',
-      inputFiles,
-      outfile: stepsRouteFile,
-      externalizeNonSteps: true,
-      tsconfigPath,
-    });
-
-    let stepsRouteContent = await readFile(stepsRouteFile, 'utf-8');
-
-    // Normalize request, needed for preserving request through astro
-    stepsRouteContent = stepsRouteContent.replace(
-      /export\s*\{\s*stepEntrypoint\s+as\s+POST\s*\}\s*;?$/m,
-      `${NORMALIZE_REQUEST_CODE}
-export const POST = async ({request}) => {
-  const normalRequest = await normalizeRequest(request);
-  return stepEntrypoint(normalRequest);
-}
-
-export const prerender = false;`
-    );
-    await writeFile(stepsRouteFile, stepsRouteContent);
-
-    return manifest;
-  }
-
-  private async buildWorkflowsRoute({
-    inputFiles,
-    workflowGeneratedDir,
-    tsconfigPath,
-  }: {
-    inputFiles: string[];
-    workflowGeneratedDir: string;
-    tsconfigPath?: string;
-  }) {
-    // Create workflows route: .well-known/workflow/v1/flow.js
-    const workflowsRouteFile = join(workflowGeneratedDir, 'flow.js');
-    const { manifest } = await this.createWorkflowsBundle({
-      format: 'esm',
-      outfile: workflowsRouteFile,
-      bundleFinalOutput: false,
-      inputFiles,
-      tsconfigPath,
-    });
-
-    let workflowsRouteContent = await readFile(workflowsRouteFile, 'utf-8');
-
-    // Normalize request, needed for preserving request through astro
-    workflowsRouteContent = workflowsRouteContent.replace(
-      /export const POST = workflowEntrypoint\(workflowCode\);?$/m,
-      `${NORMALIZE_REQUEST_CODE}
-export const POST = async ({request}) => {
-  const normalRequest = await normalizeRequest(request);
-  return workflowEntrypoint(workflowCode)(normalRequest);
-}
-
-export const prerender = false;`
-    );
-    await writeFile(workflowsRouteFile, workflowsRouteContent);
-
-    return manifest;
   }
 
   private async buildWebhookRoute({

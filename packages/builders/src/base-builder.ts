@@ -945,7 +945,7 @@ export const POST = combinedEntrypoint(workflowCode);`;
         },
         stdin: {
           contents: combinedFunctionCode,
-          resolveDir: this.config.workingDir,
+          resolveDir: dirname(flowOutfile),
           sourcefile: 'virtual-entry.js',
           loader: 'js',
         },

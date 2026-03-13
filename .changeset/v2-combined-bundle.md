@@ -2,6 +2,10 @@
 '@workflow/core': patch
 '@workflow/builders': patch
 '@workflow/next': patch
+'@workflow/nest': patch
+'@workflow/sveltekit': patch
+'@workflow/nitro': patch
+'@workflow/astro': patch
 '@workflow/world': patch
 'workflow': patch
 ---

@@ -183,7 +183,7 @@ The `step/` directory is no longer generated.
 
 A new `handleSuspensionV2()` function was added to `packages/core/src/runtime/suspension-handler.ts`. It performs the same event creation as the original `handleSuspension()` (hooks, step events, wait events) but does **not** queue step messages. It returns the pending step items so the combined handler can decide which to execute inline vs. queue to background.
 
-The original `handleSuspension()` remains unchanged for backward compatibility with the V1 step handler.
+The original `handleSuspension()` remains in the codebase but is no longer invoked by any builder-generated route. It can be removed in a future cleanup pass.
 
 ## Concerns and Edge Cases
 
@@ -217,4 +217,4 @@ Encryption keys are resolved per-run during event loading and step execution, sa
 
 ## Framework Support
 
-Currently updated for Next.js (both eager and deferred/lazyDiscovery builders). Other framework integrations (NestJS, SvelteKit, CLI standalone, Astro, Nitro, Nuxt) still use the V1 two-route architecture and will be updated separately.
+All framework integrations have been updated: Next.js (eager and deferred/lazyDiscovery), NestJS, SvelteKit, Astro, Nitro/Nuxt/Hono/Express/Vite, and CLI standalone. The Vercel Build Output API builder (used by Nitro and Astro for production deploys) also uses the combined bundle with `COMBINED_QUEUE_TRIGGER`.
