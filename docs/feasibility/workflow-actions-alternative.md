@@ -820,3 +820,442 @@ The Workflow step function uses whichever executor is configured, making the san
 | How does it integrate? | Each Workflow `"use step"` function creates a Sandbox, runs commands, returns results |
 | What's the sandbox lifecycle? | One sandbox per job; steps within a job share it; destroyed after job completes |
 | What about cost? | ~$0.16 per 10-min job (2 vCPUs); comparable to GitHub Actions |
+
+---
+
+## 12. DX for AI Agents: Rethinking the Interface
+
+If the primary users of this CI system are AI agents — not humans clicking through a web UI — the entire developer experience needs to be reconsidered. GitHub Actions was designed for humans: YAML files you hand-edit, a web dashboard you stare at, log output you scroll through, manual approval buttons you click. Every one of these assumptions breaks when the user is an agent.
+
+### 12.1 What Changes When the User Is an Agent
+
+| Human DX | Agent DX | Why It Matters |
+|---|---|---|
+| Read YAML docs, write YAML by hand | Generate workflows programmatically from intent | Agents don't "learn" a config format — they need a well-typed API or a clear schema to generate against |
+| Watch a dashboard for green/red | Poll structured status, react programmatically | Agents need machine-readable state, not colored circles |
+| Scroll logs to find the error | Receive structured error objects with context | Agents can process 10,000 lines of logs but are better served by a parsed failure summary |
+| Manually re-run failed jobs | Automatically retry with modified strategy | Agents can reason about *why* something failed and adapt |
+| Click "approve" on deployment gates | Programmatic approval via API/hook | Agent-to-agent approval, policy-based auto-approval |
+| Copy-paste from Stack Overflow to fix CI | Observe failure → modify code → re-trigger → verify, in one loop | The tight feedback loop is the killer feature |
+
+### 12.2 Programmatic-First Workflow Definition
+
+YAML is fine for portability (and we should keep it for GitHub Actions compatibility), but for agents the primary interface should be a **TypeScript SDK** for workflow definition. Agents generate code, not config.
+
+```typescript
+import { pipeline, job, step } from '@workflow/actions';
+
+const ci = pipeline('ci', {
+  trigger: ['push', 'pull_request'],
+
+  jobs: {
+    test: job({
+      steps: [
+        step.checkout(),
+        step.setupNode({ version: 20 }),
+        step.run('npm ci'),
+        step.run('npm test', { env: { CI: 'true' } }),
+      ],
+    }),
+
+    deploy: job({
+      needs: ['test'],
+      if: (ctx) => ctx.github.ref === 'refs/heads/main',
+      steps: [
+        step.checkout(),
+        step.run('./deploy.sh', {
+          env: { TOKEN: (ctx) => ctx.secrets.DEPLOY_TOKEN },
+        }),
+      ],
+    }),
+  },
+});
+```
+
+This gives agents:
+- **Type safety** — autocompletion and type errors instead of YAML schema violations
+- **Composability** — reuse steps as functions, build abstractions
+- **Conditional logic** — real JavaScript `if`/`else`, not string expression evaluation
+- **Testability** — unit test pipeline definitions before running them
+
+The SDK generates the same Workflow DevKit code underneath. YAML is an alternative input format that compiles to the same thing.
+
+### 12.3 Structured Output: Machine-Readable Everything
+
+GitHub Actions emits unstructured log lines. An agent-oriented system should return **structured results at every level**:
+
+```typescript
+// What an agent gets back from a CI run — not log text, but typed data
+interface CIRunResult {
+  status: 'success' | 'failed' | 'cancelled';
+  duration: { total: number; perJob: Record<string, number> };
+
+  jobs: Record<string, {
+    status: 'success' | 'failed' | 'skipped';
+    steps: Array<{
+      name: string;
+      status: 'success' | 'failed' | 'skipped';
+      exitCode?: number;
+      duration: number;
+      outputs: Record<string, string>;
+      // Structured failure info — not just "npm test failed"
+      failure?: {
+        type: 'test_failure' | 'build_error' | 'lint_error' | 'timeout' | 'unknown';
+        summary: string;
+        details: TestFailure[] | BuildError[] | LintViolation[];
+        filesInvolved: string[];
+        suggestedFix?: string;
+      };
+    }>;
+  }>;
+}
+```
+
+This maps well to Workflow's architecture. The event log already captures structured per-step data (`step_completed` with serialized results, `step_failed` with error + stack). The extension is having step executors **parse** common output formats (JUnit XML, TAP, ESLint JSON, TypeScript compiler output) into structured objects instead of returning raw text.
+
+```typescript
+async function runTestStep(sandbox: Sandbox, context: JobContext) {
+  'use step';
+
+  const result = await sandbox.runCommand({
+    cmd: 'npm', args: ['test', '--', '--reporter=json'],
+    cwd: '/workspace',
+  });
+
+  // Parse test output into structured data
+  const testResults = parseJestJson(result.stdout());
+
+  if (result.exitCode !== 0) {
+    throw new FatalError('Tests failed', {
+      // Structured failure data is serialized into the event log
+      // and available to the agent via run.returnValue
+      data: {
+        type: 'test_failure',
+        summary: `${testResults.numFailedTests} of ${testResults.numTotalTests} tests failed`,
+        failedTests: testResults.testResults
+          .filter(t => t.status === 'failed')
+          .map(t => ({
+            name: t.name,
+            file: t.ancestorTitles.join(' > '),
+            error: t.failureMessages[0],
+          })),
+      },
+    });
+  }
+
+  return testResults;
+}
+```
+
+### 12.4 The Tight Feedback Loop: Observe → Reason → Fix → Re-Run
+
+The single biggest DX shift for agents is the **feedback loop speed**. A human's CI loop is:
+
+```
+edit code → git commit → git push → wait for CI → read logs → understand failure → edit code → ...
+```
+
+An agent's loop should be:
+
+```
+trigger run → observe structured result → reason about failure → fix code in sandbox → re-run in same sandbox → verify → commit only when green
+```
+
+This is where Workflow + Sandbox together unlock something GitHub Actions fundamentally cannot do. The Workflow step has a **live sandbox** and can iterate inside it:
+
+```typescript
+async function smartTestStep(sandbox: Sandbox, context: JobContext) {
+  'use step';
+
+  const result = await sandbox.runCommand({
+    cmd: 'npm', args: ['test', '--reporter=json'],
+    cwd: '/workspace',
+  });
+
+  if (result.exitCode === 0) {
+    return { status: 'passed', attempts: 1 };
+  }
+
+  // Agent-oriented: return rich failure data so the calling agent
+  // can decide what to do (fix code, adjust config, skip flaky tests, etc.)
+  const failures = parseTestOutput(result.stdout());
+
+  return {
+    status: 'failed',
+    attempts: 1,
+    failures,
+    // Sandbox is still alive — the agent can send follow-up commands
+    sandboxId: sandbox.id,
+  };
+}
+```
+
+But the more powerful pattern is giving the agent **interactive access to the sandbox** via hooks. The workflow suspends and waits for the agent to send commands:
+
+```typescript
+export async function interactiveCi(repoUrl: string) {
+  'use workflow';
+
+  const sandbox = await createSandbox(repoUrl);
+  const testResult = await runTests(sandbox);
+
+  if (testResult.status === 'failed') {
+    // Create a hook — the agent can send fix attempts
+    const fixHook = createHook<FixAttempt>({
+      token: `fix:${getWorkflowMetadata().workflowRunId}`,
+      metadata: {
+        failures: testResult.failures,
+        sandboxId: testResult.sandboxId,
+      },
+    });
+
+    // Wait for the agent to send a fix
+    for await (const attempt of fixHook) {
+      const retryResult = await applyFixAndRetest(sandbox, attempt);
+      if (retryResult.status === 'passed') {
+        fixHook.dispose();
+        return { status: 'fixed', fix: attempt, results: retryResult };
+      }
+      // Loop continues — agent can try another fix
+    }
+  }
+
+  return { status: testResult.status, results: testResult };
+}
+```
+
+The calling agent's interaction:
+
+```typescript
+// Agent starts a CI run
+const run = await start(interactiveCi, ['https://github.com/user/repo']);
+
+// Wait for result or hook suspension
+const status = await run.status;
+
+// If the workflow suspended on the fix hook, the agent can send patches
+await resumeHook(`fix:${run.runId}`, {
+  type: 'patch',
+  diff: '--- a/src/utils.ts\n+++ b/src/utils.ts\n@@ ...',
+});
+
+// Wait for the final result
+const result = await run.returnValue;
+```
+
+This is a **conversational CI loop** — the workflow stays alive, the sandbox stays warm, and the agent can iterate without the overhead of new commits, new pushes, and new CI runs.
+
+### 12.5 Tool-Use Interface (MCP / Function Calling)
+
+For AI agents using tool-use protocols (MCP, OpenAI function calling, Anthropic tool use), the CI system should expose itself as **callable tools**, not just an API:
+
+```typescript
+// MCP tool definitions the CI system would expose
+const tools = [
+  {
+    name: 'ci_run',
+    description: 'Start a CI pipeline for a repository',
+    parameters: {
+      repo: { type: 'string', description: 'Repository URL or path' },
+      ref: { type: 'string', description: 'Git ref (branch, tag, SHA)' },
+      workflow: { type: 'string', description: 'Workflow file path or name' },
+    },
+  },
+  {
+    name: 'ci_status',
+    description: 'Get the current status of a CI run with structured results',
+    parameters: {
+      runId: { type: 'string' },
+    },
+  },
+  {
+    name: 'ci_logs',
+    description: 'Get logs for a specific job/step in a CI run',
+    parameters: {
+      runId: { type: 'string' },
+      job: { type: 'string', optional: true },
+      step: { type: 'string', optional: true },
+    },
+  },
+  {
+    name: 'ci_fix_and_retry',
+    description: 'Apply a code fix to the sandbox and re-run failed tests',
+    parameters: {
+      runId: { type: 'string' },
+      patch: { type: 'string', description: 'Unified diff to apply' },
+    },
+  },
+  {
+    name: 'ci_sandbox_exec',
+    description: 'Run an arbitrary command in the CI sandbox for debugging',
+    parameters: {
+      runId: { type: 'string' },
+      command: { type: 'string' },
+    },
+  },
+];
+```
+
+This lets an agent interact with CI the same way it interacts with any other tool — no special knowledge of YAML formats or web UIs needed. The agent says "run CI on this repo" and gets back structured results it can reason about.
+
+### 12.6 Event Streaming for Real-Time Agent Observation
+
+Instead of polling for results, agents should be able to **stream events** as they happen. Workflow's `getReadable()` API already supports this:
+
+```typescript
+const run = await start(ciWorkflow, [repoUrl]);
+
+// Stream events in real-time — agent can react as each step completes
+const reader = run.readable.getReader();
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  // Agent receives typed events
+  switch (value.type) {
+    case 'step_started':
+      // Agent knows which step is running
+      break;
+    case 'step_completed':
+      // Agent can inspect results immediately
+      break;
+    case 'step_failed':
+      // Agent can start reasoning about the fix before the full run completes
+      break;
+  }
+}
+```
+
+This enables **early termination** — if the agent sees a critical failure in step 2, it can cancel the run and start fixing rather than waiting for all 10 steps to complete or fail.
+
+### 12.7 Self-Describing Workflows: Schema as Context
+
+Agents operate best when they have full context about what they're interacting with. Workflows should be **self-describing**:
+
+```typescript
+// An agent can inspect a workflow before running it
+const meta = await getWorkflowSchema('ci');
+// Returns:
+{
+  name: 'ci',
+  triggers: ['push', 'pull_request'],
+  inputs: [{ name: 'deploy_target', type: 'string', required: false }],
+  jobs: {
+    lint: { needs: [], steps: ['checkout', 'setup-node', 'npm ci', 'npm run lint'] },
+    test: { needs: [], steps: ['checkout', 'setup-node', 'npm ci', 'npm test'] },
+    deploy: { needs: ['lint', 'test'], conditional: 'refs/heads/main only' },
+  },
+  estimatedDuration: '8-12 minutes',
+  lastRunStatus: 'failed',
+  lastFailure: { job: 'test', step: 'npm test', type: 'test_failure' },
+}
+```
+
+This metadata comes from Workflow's JSON manifest (already generated by the SWC plugin) combined with historical run data from the event log. An agent can use this to decide whether to run the full pipeline, skip certain jobs, or focus on the historically failing step.
+
+### 12.8 Agent-to-Agent Approval Gates
+
+GitHub Actions has environment protection rules where a human must click "approve." For agent users, this becomes agent-to-agent review:
+
+```typescript
+export async function deployWorkflow(env: string) {
+  'use workflow';
+
+  const buildResult = await runBuild();
+
+  // Instead of a human approval button, create a hook for a review agent
+  const reviewHook = createHook<ReviewDecision>({
+    token: `deploy-review:${getWorkflowMetadata().workflowRunId}`,
+    metadata: {
+      environment: env,
+      changes: buildResult.changelog,
+      testResults: buildResult.testSummary,
+      riskScore: buildResult.riskAssessment,
+    },
+  });
+
+  // A review agent receives this hook, inspects the metadata,
+  // runs its own checks, and responds with approve/reject
+  const decision = await reviewHook;
+
+  if (decision.approved) {
+    return await runDeploy(env, buildResult);
+  } else {
+    return { status: 'rejected', reason: decision.reason };
+  }
+}
+```
+
+The review agent operates independently — it receives the hook metadata (which includes structured build results, changelogs, risk scores), runs its own analysis (maybe checking for security issues, performance regressions, or policy violations), and sends back a typed decision. No human in the loop unless the review agent escalates.
+
+### 12.9 Diff-Aware Pipelines
+
+Agents are good at understanding code changes. The CI system should provide **diff context** to every step, enabling intelligent behavior:
+
+```typescript
+async function smartLintStep(sandbox: Sandbox, context: JobContext) {
+  'use step';
+
+  // Only lint changed files — the agent cares about fast feedback
+  const changedFiles = context.diff.files
+    .filter(f => f.path.endsWith('.ts') || f.path.endsWith('.tsx'));
+
+  if (changedFiles.length === 0) {
+    return { status: 'skipped', reason: 'no TypeScript files changed' };
+  }
+
+  const result = await sandbox.runCommand({
+    cmd: 'npx',
+    args: ['eslint', '--format=json', ...changedFiles.map(f => f.path)],
+    cwd: '/workspace',
+  });
+
+  const violations = JSON.parse(result.stdout());
+
+  // Only report violations on changed lines — agents can reason about this
+  const relevantViolations = violations.filter(v =>
+    context.diff.isLineChanged(v.filePath, v.line)
+  );
+
+  return {
+    total: violations.length,
+    relevant: relevantViolations.length,
+    violations: relevantViolations,
+  };
+}
+```
+
+### 12.10 Idempotent Run-If-Changed
+
+Agents trigger CI runs frequently — sometimes redundantly. The system should support **idempotent execution**:
+
+```typescript
+// Agent can say "ensure CI passes for this SHA" without worrying about duplicates
+const run = await ensureCi({
+  repo: 'user/repo',
+  sha: 'abc123',
+  workflow: 'ci',
+  // If a run for this SHA already exists and passed, return it immediately
+  // If it's running, attach to it. If it failed, optionally re-run.
+  strategy: 'reuse-if-passed',
+});
+```
+
+Workflow's `runId` and event log make this natural — check if a run exists for the given commit SHA, return the cached result if it passed, or create a new run if needed.
+
+### 12.11 Summary: Agent-First DX Principles
+
+| Principle | Implementation |
+|---|---|
+| **Structured over textual** | Every step returns typed objects, not log text. Errors include type, affected files, and suggested fixes. |
+| **Programmatic over declarative** | TypeScript SDK as the primary interface; YAML as a compatibility layer. |
+| **Interactive over batch** | Hooks enable conversational CI — agent sends patches, workflow retries in the same warm sandbox. |
+| **Tool-use native** | Expose CI as MCP/function-calling tools that agents can discover and invoke. |
+| **Streaming over polling** | Real-time event streams via `getReadable()` so agents can react mid-run. |
+| **Self-describing** | Workflows expose their schema, history, and expected behavior as queryable metadata. |
+| **Diff-aware** | Steps receive structured diff context and can scope work to changed files/lines. |
+| **Idempotent** | "Ensure CI passes for SHA X" without duplicate runs. |
+| **Agent-to-agent gates** | Approval hooks with structured metadata for review agents, not human click-to-approve. |
+| **Tight feedback loops** | Observe failure → fix in sandbox → re-run → verify, all within a single workflow run. |
+
+The key insight is that Workflow DevKit is already closer to this agent-oriented model than GitHub Actions is. The event log provides structured data. Hooks provide interactive suspension/resumption. Streaming provides real-time observation. The sandbox provides a persistent environment for iterative fixing. The missing piece is mostly a **presentation layer** — packaging these primitives into an agent-friendly interface with tool definitions, structured error parsing, and the "conversational CI" pattern using hooks.
