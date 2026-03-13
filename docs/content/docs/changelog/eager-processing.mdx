@@ -216,3 +216,25 @@ Encryption keys are resolved per-run during event loading and step execution, sa
 ## Framework Support
 
 All framework integrations have been updated: Next.js (eager and deferred/lazyDiscovery), NestJS, SvelteKit, Astro, Nitro/Nuxt/Hono/Express/Vite, and CLI standalone. The Vercel Build Output API builder (used by Nitro and Astro for production deploys) also uses the combined bundle with `WORKFLOW_QUEUE_TRIGGER`.
+
+## Non-Next.js Integration Challenges
+
+### Module Scope Duplication in Re-Bundled Output
+
+Builders that use `bundleFinalOutput: true` (standalone CLI, Vercel Build Output API, NestJS) produce a single file where esbuild re-bundles the step registrations and the workflow runtime together. esbuild creates isolated module scopes for each source module, even within the same output file. This meant `registerStepFunction` and `getStepFunction` operated on different `Map` instances — steps were registered into one Map but looked up from another.
+
+**Fix**: The step function registry (`registeredSteps` Map in `@workflow/core/private`) and the step context storage (`contextStorage` AsyncLocalStorage in `@workflow/core/step/context-storage`) were changed from module-scoped variables to `globalThis` singletons using `Symbol.for`. This ensures all esbuild module scopes share the same instances. The pattern was already used in the codebase for the World singleton and the class serialization registry.
+
+### Workflow Package CJS Export Condition
+
+The `workflow` package's root export has `"require": "./dist/typescript-plugin.cjs"` for TypeScript editor plugin loading. When esbuild bundles with CJS format, it resolves `import { defineHook } from 'workflow'` via the `require` condition, getting the TS plugin instead of the API.
+
+**Fix**: Added a `"node"` condition (`"node": "./dist/index.js"`) before the `"require"` condition in the workflow package's exports. esbuild with `conditions: ['node']` matches `"node"` first and uses the correct API entry. TypeScript's plugin loader doesn't use `conditions: ['node']`, so it still falls through to `"require"` for the TS plugin.
+
+### Local World Concurrent Replay Interference
+
+The local development world (`world-local`) processes queue messages with high concurrency (default: 1000). With the V2 combined handler, parallel steps generate multiple workflow continuation messages. When these are processed concurrently, each triggers a replay that sees in-flight events from other concurrent replays. This causes "unconsumed event" errors because the event consumer encounters events that don't match any subscriber in the current replay state.
+
+In production (Vercel), this doesn't happen — each function invocation is isolated with its own event loading.
+
+**Fix**: The world-testing embedded test server now defaults to `WORKFLOW_LOCAL_QUEUE_CONCURRENCY=1`, serializing queue processing to simulate the production isolation model. This prevents concurrent replays from interfering with each other.

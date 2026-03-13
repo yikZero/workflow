@@ -482,8 +482,6 @@ export function workflowEntrypoint(
                       }
                     } else {
                       // User code error from runWorkflow — create run_failed.
-                      // Infrastructure errors (network, 5xx) propagate to
-                      // the queue handler for automatic retry.
                       if (err instanceof Error) {
                         span?.recordException?.(err);
                       }
