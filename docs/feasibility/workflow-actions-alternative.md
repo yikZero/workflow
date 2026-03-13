@@ -518,3 +518,305 @@ The main effort is in three areas:
 A working POC that can execute the target YAML from Section 5.3 is achievable in approximately 3 weeks of focused work. The compile-time approach leverages the existing SWC plugin infrastructure, and the step executor is straightforward Node.js `child_process` work.
 
 **Verdict: Feasible. Start with the YAML parser and a shell step executor, validate with a simple lint+test+build workflow, then iterate.**
+
+---
+
+## 11. Execution Environment: Where Do Jobs Run?
+
+### 11.1 The Problem
+
+GitHub Actions runs each job inside an isolated VM or container (`runs-on: ubuntu-latest`). Every step within a job shares that VM's filesystem, network, and installed tools. Between jobs, isolation is complete — no shared state except explicit artifacts/outputs.
+
+Workflow DevKit steps currently run **in-process** within the same Node.js runtime that handles the queue message. There's no concept of "spin up a VM, run shell commands in it, tear it down." For a CI/CD system, we need:
+
+1. **Isolation** — untrusted CI code (user's `run:` commands) must not compromise the orchestrator
+2. **Full Linux environment** — CI steps run `apt-get install`, `docker build`, `npm install`, etc.
+3. **Shared filesystem within a job** — steps within a job share `$GITHUB_WORKSPACE`
+4. **Clean slate per job** — each job starts fresh (unless caching is used)
+
+### 11.2 Vercel Sandbox as the Execution Backend
+
+[Vercel Sandbox](https://vercel.com/docs/vercel-sandbox) is a strong fit for this. It provides exactly the missing "runner" layer:
+
+| Requirement | Vercel Sandbox Capability |
+|---|---|
+| Isolated execution | Firecracker microVMs — full process/filesystem/network isolation |
+| Full Linux environment | Amazon Linux 2023 with `sudo` access |
+| Shell command execution | `sandbox.runCommand({ cmd, args, cwd, env })` with exit codes and stdout/stderr |
+| Filesystem operations | `sandbox.writeFiles()`, `sandbox.readFile()`, `sandbox.mkDir()` |
+| Shared workspace within a job | All steps in a job run in the same sandbox instance |
+| Clean slate per job | Each job creates a new `Sandbox.create()` instance |
+| Fast startup | Millisecond-scale microVM startup |
+| Snapshotting | `sandbox.snapshot()` to pre-bake dependencies (like GitHub Actions' cached runner images) |
+| Networking | Configurable network policies; outbound access for `npm install`, `apt-get`, etc. |
+| Resource control | 1-8 vCPUs, up to 16 GB RAM per sandbox |
+| Timeout | Default 5 min, extendable up to 5 hours (Pro/Enterprise) |
+
+### 11.3 Architecture: Sandbox-Backed Steps
+
+The key insight is that **each Workflow step function becomes the bridge between the durable orchestrator and a Sandbox microVM**. The step function's body doesn't run the shell command directly — it creates (or reuses) a Sandbox and executes the command inside it.
+
+```
+┌─────────────────────────────────┐
+│  Workflow Orchestrator (VM)     │  "use workflow" — deterministic,
+│                                 │  event-sourced, runs on Vercel
+│  const lint = await runStep(…)  │  Functions / local
+│  const test = await runStep(…)  │
+│  if (lint.ok && test.ok)        │
+│    await runStep(deploy, …)     │
+└──────────┬──────────────────────┘
+           │ step invocation (queued)
+           ▼
+┌─────────────────────────────────┐
+│  Step Handler (Node.js)         │  "use step" — full Node.js,
+│                                 │  runs on Vercel Functions
+│  const sandbox = await          │
+│    Sandbox.create({ … })        │  Creates or reconnects to a
+│  const result = await           │  Firecracker microVM
+│    sandbox.runCommand(…)        │
+│  return { exitCode, stdout }    │  Returns serializable result
+└──────────┬──────────────────────┘
+           │ @vercel/sandbox SDK
+           ▼
+┌─────────────────────────────────┐
+│  Vercel Sandbox (microVM)       │  Isolated Amazon Linux 2023
+│                                 │
+│  $ npm install                  │  Full Linux, sudo, networking
+│  $ npm test                     │  Shared filesystem within job
+│  $ ./deploy.sh                  │
+└─────────────────────────────────┘
+```
+
+### 11.4 Sandbox Lifecycle: One Per Job
+
+Each **job** gets its own Sandbox. Steps within a job share the sandbox (and its filesystem). This mirrors GitHub Actions' model exactly.
+
+```typescript
+async function executeJob(
+  jobDef: JobDefinition,
+  context: WorkflowContext
+) {
+  'use step';
+
+  // Create a fresh sandbox for this job
+  const sandbox = await Sandbox.create({
+    runtime: 'node24',
+    resources: { vcpus: 2 },
+    timeout: ms('30m'),
+  });
+
+  try {
+    // Clone the repo (equivalent to actions/checkout)
+    await sandbox.runCommand({
+      cmd: 'git',
+      args: ['clone', context.repoUrl, '/vercel/sandbox/workspace'],
+    });
+
+    // Execute each step sequentially within the same sandbox
+    const stepResults: StepResult[] = [];
+    for (const step of jobDef.steps) {
+      if (step.if && !evaluateExpression(step.if, context)) {
+        stepResults.push({ name: step.name, status: 'skipped' });
+        continue;
+      }
+
+      const result = await sandbox.runCommand({
+        cmd: 'bash',
+        args: ['-c', step.run],
+        cwd: '/vercel/sandbox/workspace',
+        env: { ...context.env, ...step.env },
+        stdout: process.stdout,  // stream logs in real-time
+        stderr: process.stderr,
+      });
+
+      if (result.exitCode !== 0) {
+        if (step.continueOnError) {
+          stepResults.push({ name: step.name, status: 'failed', exitCode: result.exitCode });
+          continue;
+        }
+        throw new FatalError(
+          `Step "${step.name}" failed with exit code ${result.exitCode}`
+        );
+      }
+
+      stepResults.push({ name: step.name, status: 'success' });
+    }
+
+    return stepResults;
+  } finally {
+    await sandbox.shutdown();
+  }
+}
+```
+
+### 11.5 Snapshotting: Fast Starts with Pre-Baked Environments
+
+Vercel Sandbox's snapshot feature is a game-changer for CI. Instead of installing dependencies from scratch on every job, you can:
+
+1. **Create a base snapshot** with common tools pre-installed (Node.js, Python, Docker CLI, build-essential)
+2. **Create per-project snapshots** after `npm install` to cache `node_modules`
+3. **Boot from snapshot** — millisecond startup with dependencies already present
+
+This is analogous to GitHub Actions' cached runner images, but more flexible:
+
+```typescript
+// One-time: create a snapshot with project dependencies
+const setupSandbox = await Sandbox.create({ runtime: 'node24' });
+await setupSandbox.runCommand({ cmd: 'git', args: ['clone', repoUrl, '/workspace'] });
+await setupSandbox.runCommand({ cmd: 'npm', args: ['ci'], cwd: '/workspace' });
+const snapshot = await setupSandbox.snapshot();
+// snapshot.id can be stored and reused
+
+// Per-job: boot from snapshot — deps are already installed
+const jobSandbox = await Sandbox.create({
+  snapshot: snapshot.id,
+  resources: { vcpus: 4 },
+});
+// node_modules already present, skip npm install
+await jobSandbox.runCommand({ cmd: 'npm', args: ['test'], cwd: '/workspace' });
+```
+
+### 11.6 Job-as-Step vs Step-as-Step: Granularity Decision
+
+There are two viable approaches for how Sandbox maps to Workflow primitives:
+
+#### Option A: Entire Job = Single Workflow Step (Recommended for POC)
+
+Each job is one durable step. The step creates a sandbox, runs all shell commands sequentially, and returns the combined result.
+
+**Pros:**
+- Simpler — fewer events in the log, less serialization overhead
+- Natural sandbox lifecycle — one sandbox per step, created/destroyed cleanly
+- Matches the "steps share a filesystem" model of GitHub Actions
+- If the step fails, Workflow retries the entire job (which may be desirable for CI)
+
+**Cons:**
+- No per-shell-command durability (if sandbox crashes mid-job, the whole job retries)
+- Less granular observability in the Workflow event log
+
+#### Option B: Each Shell Command = Separate Workflow Step
+
+Each `run:` command is its own Workflow step. The sandbox is created once and its ID is passed between steps.
+
+**Pros:**
+- Per-command durability — if command 3/5 fails, commands 1-2 don't re-execute
+- More granular observability
+
+**Cons:**
+- Sandbox must persist between steps (use `Sandbox.get(sandboxId)` to reconnect)
+- Sandbox timeout must cover the entire job duration
+- More complex state management (passing sandbox ID through step outputs)
+- Higher serialization overhead
+
+**Recommendation**: Start with **Option A** (Job = Step). For a CI/CD workload, retrying an entire job on failure is acceptable — it's what GitHub Actions does anyway. The Workflow event log still captures per-job outcomes, and within each step, you can log per-command results.
+
+### 11.7 Do We Need Sandboxes? Can We Skip Them?
+
+For a pure **local development** POC (like `act` for GitHub Actions), sandboxes are optional. Steps can run shell commands directly via `child_process.spawn()` on the local machine. This is useful for:
+
+- Local development and testing
+- Self-hosted runners where the user trusts the CI code
+- Quick iteration without Vercel infrastructure
+
+But for **production** or **multi-tenant** use, sandboxes are essential:
+
+| Concern | Without Sandbox | With Vercel Sandbox |
+|---|---|---|
+| Security | CI code runs in the same process/machine — full access to host | Firecracker microVM isolation — no host access |
+| Reproducibility | Depends on host machine state | Clean Amazon Linux 2023 every time |
+| Resource limits | No enforcement | CPU/memory limits per sandbox |
+| Cleanup | Manual; leftover files/processes | Sandbox destroyed after job |
+| Networking | No isolation | Configurable network policies |
+
+### 11.8 Cost Model
+
+Vercel Sandbox pricing for CI workloads (Pro plan):
+
+| Metric | Rate | Example (10-min CI job, 2 vCPUs) |
+|---|---|---|
+| Active CPU | $0.50/hr | ~$0.08 per job |
+| Provisioned Memory | $0.10/GB-hr | ~$0.07 per job (4 GB) |
+| Sandbox Creation | $0.60/million | Negligible |
+| Network | $0.10/GB | ~$0.01 per job |
+| **Total per job** | | **~$0.16** |
+
+For comparison, GitHub Actions charges ~$0.008/min for Linux runners = $0.08 for a 10-min job. Vercel Sandbox is roughly 2x the cost, but includes better isolation, snapshot-based caching, and the durability benefits of Workflow underneath.
+
+### 11.9 Hybrid Approach: Sandbox Optional
+
+The best architecture supports both modes:
+
+```typescript
+interface StepExecutor {
+  runCommand(cmd: string, args: string[], opts: RunOpts): Promise<CommandResult>;
+  writeFile(path: string, content: string): Promise<void>;
+  readFile(path: string): Promise<string>;
+  cleanup(): Promise<void>;
+}
+
+// Production: Vercel Sandbox
+class SandboxExecutor implements StepExecutor {
+  private sandbox: Sandbox;
+  async runCommand(cmd, args, opts) {
+    return await this.sandbox.runCommand({ cmd, args, ...opts });
+  }
+}
+
+// Local dev: direct shell execution
+class LocalExecutor implements StepExecutor {
+  async runCommand(cmd, args, opts) {
+    return await execFile(cmd, args, opts);
+  }
+}
+```
+
+The Workflow step function uses whichever executor is configured, making the sandbox layer pluggable. This gives us:
+
+- **Local mode**: `workflow actions run ci.yml` — runs on your machine via `child_process`
+- **Cloud mode**: `workflow actions run ci.yml --sandbox` — runs in Vercel Sandbox microVMs
+- **Production mode**: triggered by webhooks, always uses Sandbox for isolation
+
+### 11.10 Updated Architecture Diagram
+
+```
+┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐
+│ GitHub/Git   │     │ Trigger Layer    │     │ Workflow DevKit          │
+│ Webhook      │────▶│ (HTTP endpoint)  │────▶│ Orchestrator             │
+│ push event   │     │ start(workflow)  │     │ "use workflow"           │
+└──────────────┘     └──────────────────┘     │                          │
+                                               │ job_lint = runJob(…)     │
+                                               │ job_test = runJob(…)     │
+                                               │ Promise.all([lint,test]) │
+                                               │ await runJob(deploy)     │
+                                               └───────────┬──────────────┘
+                                                           │
+                                          ┌────────────────┼────────────────┐
+                                          │                │                │
+                                          ▼                ▼                ▼
+                                   ┌────────────┐  ┌────────────┐  ┌────────────┐
+                                   │ Step: lint  │  │ Step: test │  │ Step:deploy│
+                                   │ "use step"  │  │ "use step" │  │ "use step" │
+                                   └──────┬──────┘  └──────┬─────┘  └──────┬─────┘
+                                          │                │               │
+                                          ▼                ▼               ▼
+                                   ┌────────────┐  ┌────────────┐  ┌────────────┐
+                                   │ Sandbox A  │  │ Sandbox B  │  │ Sandbox C  │
+                                   │ npm run    │  │ npm test   │  │ ./deploy   │
+                                   │   lint     │  │ (node 18)  │  │            │
+                                   │            │  │ npm test   │  │            │
+                                   │            │  │ (node 20)  │  │            │
+                                   └────────────┘  └────────────┘  └────────────┘
+                                    Firecracker     Firecracker     Firecracker
+                                    microVM         microVMs        microVM
+```
+
+### 11.11 Summary
+
+| Question | Answer |
+|---|---|
+| Where do jobs run? | In Vercel Sandbox microVMs (production) or locally via `child_process` (dev) |
+| Do we need sandboxes? | Yes for production/multi-tenant; optional for local dev |
+| Can we use Vercel Sandbox? | Yes — it's an excellent fit. Provides isolation, full Linux, shell execution, snapshotting, and a TypeScript SDK |
+| How does it integrate? | Each Workflow `"use step"` function creates a Sandbox, runs commands, returns results |
+| What's the sandbox lifecycle? | One sandbox per job; steps within a job share it; destroyed after job completes |
+| What about cost? | ~$0.16 per 10-min job (2 vCPUs); comparable to GitHub Actions |
