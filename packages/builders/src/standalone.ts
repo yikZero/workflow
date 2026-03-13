@@ -20,32 +20,18 @@ export class StandaloneBuilder extends BaseBuilder {
     await this.ensureDirectory(stepsBundlePath);
     await this.ensureDirectory(workflowBundlePath);
 
-    // Build step registrations and workflow bundles separately (not combined)
-    // so they share the Node.js module cache at runtime. Re-bundling with
-    // createCombinedBundle would create duplicate @workflow/core/private
-    // instances, making step registrations invisible to the runtime.
-    const { manifest: stepsManifest } = await this.createStepsBundle({
-      outfile: stepsBundlePath,
-      inputFiles,
-      tsconfigPath,
-    });
+    console.log('Creating combined bundle');
 
-    const { manifest: workflowsManifest } = await this.createWorkflowsBundle({
-      outfile: workflowBundlePath,
+    const { manifest } = await this.createCombinedBundle({
       inputFiles,
+      stepsOutfile: stepsBundlePath,
+      flowOutfile: workflowBundlePath,
+      format: 'cjs',
       tsconfigPath,
+      bundleFinalOutput: true,
     });
 
     await this.buildWebhookFunction();
-
-    const manifest = {
-      steps: { ...stepsManifest.steps, ...workflowsManifest.steps },
-      workflows: {
-        ...stepsManifest.workflows,
-        ...workflowsManifest.workflows,
-      },
-      classes: { ...stepsManifest.classes, ...workflowsManifest.classes },
-    };
 
     const manifestDir = this.resolvePath('.well-known/workflow/v1');
     await this.createManifest({

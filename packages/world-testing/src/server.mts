@@ -4,9 +4,6 @@ import { Hono } from 'hono';
 import { getHookByToken, getRun, resumeHook, start } from 'workflow/api';
 import { getWorld } from 'workflow/runtime';
 import * as z from 'zod';
-// Step registrations (side effects — registers step functions)
-import '../.well-known/workflow/v1/step.js';
-// Combined handler (workflow + step execution)
 import flow from '../.well-known/workflow/v1/flow.js';
 import manifest from '../.well-known/workflow/v1/manifest.json' with {
   type: 'json',

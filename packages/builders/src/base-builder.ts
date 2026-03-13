@@ -878,7 +878,8 @@ export const POST = workflowEntrypoint(workflowCode);`;
     interimBundleCtx?: esbuild.BuildContext;
     bundleFinal?: (interimBundleResult: string) => Promise<void>;
   }> {
-    // 1. Build step registrations (same as createStepsBundle)
+    // 1. Build step registrations bundle (used as separate file for
+    // bundleFinalOutput: false, or read back for inline content when true)
     const { context: stepsContext, manifest: stepsManifest } =
       await this.createStepsBundle({
         inputFiles,
@@ -888,9 +889,7 @@ export const POST = workflowEntrypoint(workflowCode);`;
         tsconfigPath,
       });
 
-    // 2. Build workflow VM code using createWorkflowsBundle.
-    // We pass a dummy outfile since createWorkflowsBundle writes the wrapper
-    // to it, but we only need the interimBundleText (raw VM code).
+    // 2. Build workflow VM code
     const tempWorkflowOutfile = `${flowOutfile}.__wf_tmp.js`;
     const workflowsResult = await this.createWorkflowsBundle({
       inputFiles,
@@ -900,13 +899,12 @@ export const POST = workflowEntrypoint(workflowCode);`;
       tsconfigPath,
     });
 
-    // Get the raw workflow VM code (before it's wrapped with workflowEntrypoint)
     const workflowVMCode = workflowsResult.interimBundleText;
     if (!workflowVMCode) {
       throw new Error('createWorkflowsBundle did not return interimBundleText');
     }
 
-    // Clean up the wrapper file (we don't need it)
+    // Clean up the wrapper file
     try {
       const { unlink } = await import('node:fs/promises');
       await unlink(tempWorkflowOutfile);
@@ -914,13 +912,20 @@ export const POST = workflowEntrypoint(workflowCode);`;
       // Ignore cleanup errors
     }
 
-    // 4. Generate combined route file
+    // 3. Generate combined route file
     const stepsRelativePath = './' + basename(stepsOutfile).replace(/\\/g, '/');
-
-    // Escape the VM code for embedding in a template literal
     const escapedVMCode = workflowVMCode.replace(/[\\`$]/g, '\\$&');
 
-    const combinedFunctionCode = `// biome-ignore-all lint: generated file
+    let combinedFunctionCode: string;
+
+    if (bundleFinalOutput) {
+      // For bundleFinalOutput: true, use the step registrations file as the
+      // import source. The final esbuild will bundle both the step file and
+      // workflow/runtime together, ensuring they share the same module
+      // instances (same @workflow/core/private Map for step registration).
+      // Note: We import the step registrations file (not the pre-bundled content)
+      // so esbuild resolves all imports from source in a single pass.
+      combinedFunctionCode = `// biome-ignore-all lint: generated file
 /* eslint-disable */
 import '${stepsRelativePath}';
 import { workflowEntrypoint } from 'workflow/runtime';
@@ -928,6 +933,16 @@ import { workflowEntrypoint } from 'workflow/runtime';
 const workflowCode = \`${escapedVMCode}\`;
 
 export const POST = workflowEntrypoint(workflowCode);`;
+    } else {
+      combinedFunctionCode = `// biome-ignore-all lint: generated file
+/* eslint-disable */
+import '${stepsRelativePath}';
+import { workflowEntrypoint } from 'workflow/runtime';
+
+const workflowCode = \`${escapedVMCode}\`;
+
+export const POST = workflowEntrypoint(workflowCode);`;
+    }
 
     if (!bundleFinalOutput) {
       // Write directly (Next.js will bundle)
