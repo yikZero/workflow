@@ -36,9 +36,11 @@ export async function startServer(opts: { world: string }) {
       // Serialize queue processing to prevent concurrent replays from
       // seeing each other's in-flight events (unconsumed event errors).
       // In production, each function invocation is isolated — this
-      // simulates that isolation in the local world.
+      // simulates that isolation for local and postgres worlds.
       WORKFLOW_LOCAL_QUEUE_CONCURRENCY:
         process.env.WORKFLOW_LOCAL_QUEUE_CONCURRENCY ?? '1',
+      WORKFLOW_POSTGRES_WORKER_CONCURRENCY:
+        process.env.WORKFLOW_POSTGRES_WORKER_CONCURRENCY ?? '1',
     },
   });
   onTestFinished(() => {

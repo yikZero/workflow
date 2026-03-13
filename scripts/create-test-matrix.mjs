@@ -27,7 +27,8 @@ const DEV_TEST_CONFIGS = {
     apiFileImportPath: '../..',
   },
   sveltekit: {
-    generatedStepPath: 'src/routes/.well-known/workflow/v1/step/+server.js',
+    generatedStepPath:
+      'src/routes/.well-known/workflow/v1/flow/__step_registrations.js',
     generatedWorkflowPath: 'src/routes/.well-known/workflow/v1/flow/+server.js',
     apiFilePath: 'src/routes/api/chat/+server.ts',
     apiFileImportPath: '../../../..',
@@ -65,7 +66,8 @@ const DEV_TEST_CONFIGS = {
     workflowsDir: 'src/workflows',
   },
   astro: {
-    generatedStepPath: 'src/pages/.well-known/workflow/v1/step.js',
+    generatedStepPath:
+      'src/pages/.well-known/workflow/v1/__step_registrations.js',
     generatedWorkflowPath: 'src/pages/.well-known/workflow/v1/flow.js',
     apiFilePath: 'src/pages/api/chat.ts',
     apiFileImportPath: '../..',
