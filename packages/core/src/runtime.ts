@@ -11,6 +11,7 @@ import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
   getAllWorkflowRunEvents,
+  getAllWorkflowRunEventsWithCursor,
   getNewWorkflowRunEvents,
   getQueueOverhead,
   getWorkflowQueueName,
@@ -226,9 +227,7 @@ export function workflowEntrypoint(
                 }
 
                 // Load all events into memory before running
-                const { events } = await getAllWorkflowRunEvents(
-                  workflowRun.runId
-                );
+                const events = await getAllWorkflowRunEvents(workflowRun.runId);
 
                 // Check for any elapsed waits and create wait_completed events
                 const now = Date.now();
@@ -454,13 +453,6 @@ export function workflowEntrypoint(
 export function runStep() {}
 
 /**
- * Intended to be <=50% of the function timeout (5m by default), ensuring that
- * steps get at least >=50% of the function time to complete on the first try.
- * A retry of the step will lead to a full function time allotment for the next try.
- */
-export const WORKFLOW_NO_INLINE_REPLAY_AFTER_MS = 120_000;
-
-/**
  * V2 combined entrypoint: handles both workflow orchestration and step execution
  * in a single route. After workflow replay, executes steps inline when possible
  * to reduce function invocations and queue overhead.
@@ -474,9 +466,9 @@ export const WORKFLOW_NO_INLINE_REPLAY_AFTER_MS = 120_000;
 export function combinedEntrypoint(
   workflowCode: string
 ): (req: Request) => Promise<Response> {
+  // Configurable timeout: use env var or default to 110s (for 120s function limit)
   const NO_INLINE_REPLAY_AFTER_MS =
-    Number(process.env.WORKFLOW_NO_INLINE_REPLAY_AFTER_MS) ||
-    WORKFLOW_NO_INLINE_REPLAY_AFTER_MS;
+    Number(process.env.WORKFLOW_V2_TIMEOUT_MS) || 110_000;
 
   const handler = getWorldHandlers().createQueueHandler(
     '__wkf_workflow_',
@@ -648,7 +640,8 @@ export function combinedEntrypoint(
                     let events: Event[];
                     if (cachedEvents === null) {
                       // First iteration: full load
-                      const loaded = await getAllWorkflowRunEvents(runId);
+                      const loaded =
+                        await getAllWorkflowRunEventsWithCursor(runId);
                       events = loaded.events;
                       eventsCursor = loaded.cursor;
                     } else if (eventsCursor) {
@@ -670,7 +663,8 @@ export function combinedEntrypoint(
                           'This indicates a bug in the World implementation.',
                         { workflowRunId: runId }
                       );
-                      const loaded = await getAllWorkflowRunEvents(runId);
+                      const loaded =
+                        await getAllWorkflowRunEventsWithCursor(runId);
                       cachedEvents = loaded.events;
                       eventsCursor = loaded.cursor;
                       events = cachedEvents;
@@ -955,7 +949,7 @@ async function getStepNameFromEvent(
   runId: string,
   stepId: string
 ): Promise<string | undefined> {
-  const { events } = await getAllWorkflowRunEvents(runId);
+  const events = await getAllWorkflowRunEvents(runId);
   const stepCreated = events.find(
     (e) => e.eventType === 'step_created' && e.correlationId === stepId
   );

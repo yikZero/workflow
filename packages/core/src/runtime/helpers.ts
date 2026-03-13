@@ -277,7 +277,16 @@ export async function healthCheck(
  * Returns both the events and the final pagination cursor.
  * The cursor can be used with getNewWorkflowRunEvents for incremental loading.
  */
-export async function getAllWorkflowRunEvents(
+export async function getAllWorkflowRunEvents(runId: string): Promise<Event[]> {
+  const result = await getAllWorkflowRunEventsWithCursor(runId);
+  return result.events;
+}
+
+/**
+ * Loads all workflow run events, returning both the events and the final pagination cursor.
+ * The cursor can be used with getNewWorkflowRunEvents for incremental loading.
+ */
+export async function getAllWorkflowRunEventsWithCursor(
   runId: string
 ): Promise<{ events: Event[]; cursor: string | null }> {
   return trace('workflow.loadEvents', async (span) => {
