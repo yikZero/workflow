@@ -4,11 +4,13 @@ import { Hono } from 'hono';
 import { getHookByToken, getRun, resumeHook, start } from 'workflow/api';
 import { getWorld } from 'workflow/runtime';
 import * as z from 'zod';
+// Step registrations (side effects — registers step functions)
+import '../.well-known/workflow/v1/step.js';
+// Combined handler (workflow + step execution)
 import flow from '../.well-known/workflow/v1/flow.js';
 import manifest from '../.well-known/workflow/v1/manifest.json' with {
   type: 'json',
 };
-import step from '../.well-known/workflow/v1/step.js';
 
 if (!process.env.WORKFLOW_TARGET_WORLD) {
   console.error(
@@ -45,9 +47,6 @@ const Invoke = z
 const app = new Hono()
   .post('/.well-known/workflow/v1/flow', (ctx) => {
     return flow.POST(ctx.req.raw);
-  })
-  .post('/.well-known/workflow/v1/step', (ctx) => {
-    return step.POST(ctx.req.raw);
   })
   .get('/_manifest', (ctx) => ctx.json(manifest))
   .post('/invoke', async (ctx) => {
