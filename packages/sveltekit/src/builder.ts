@@ -73,11 +73,11 @@ export class SvelteKitBuilder extends BaseBuilder {
 
     // Replace the default export with SvelteKit-compatible handler
     workflowsRouteContent = workflowsRouteContent.replace(
-      /export const POST = combinedEntrypoint\(workflowCode\);?$/m,
+      /export const POST = workflowEntrypoint\(workflowCode\);?$/m,
       `${NORMALIZE_REQUEST_CODE}
 export const POST = async ({request}) => {
   const normalRequest = await normalizeRequest(request);
-  return combinedEntrypoint(workflowCode)(normalRequest);
+  return workflowEntrypoint(workflowCode)(normalRequest);
 }`
     );
     await writeFile(workflowsRouteFile, workflowsRouteContent);

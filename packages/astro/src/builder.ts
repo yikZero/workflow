@@ -64,11 +64,11 @@ export class LocalBuilder extends BaseBuilder {
 
     // Normalize request, needed for preserving request through astro
     workflowsRouteContent = workflowsRouteContent.replace(
-      /export const POST = combinedEntrypoint\(workflowCode\);?$/m,
+      /export const POST = workflowEntrypoint\(workflowCode\);?$/m,
       `${NORMALIZE_REQUEST_CODE}
 export const POST = async ({request}) => {
   const normalRequest = await normalizeRequest(request);
-  return combinedEntrypoint(workflowCode)(normalRequest);
+  return workflowEntrypoint(workflowCode)(normalRequest);
 }
 
 export const prerender = false;`

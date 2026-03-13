@@ -421,9 +421,7 @@ export abstract class BaseBuilder {
     // User steps
     ${stepImports}
     // Serde files for cross-context class registration
-    ${serdeImports}
-    // API entrypoint
-    export { stepEntrypoint as POST } from 'workflow/runtime';`;
+    ${serdeImports}`;
 
     // Bundle with esbuild and our custom SWC plugin
     const entriesToBundle = externalizeNonSteps
@@ -854,7 +852,7 @@ export const POST = workflowEntrypoint(workflowCode);`;
    *
    * This method reuses createStepsBundle (for step registrations) and
    * createWorkflowsBundle (for workflow VM code), then combines them into
-   * a single route file using combinedEntrypoint().
+   * a single route file using workflowEntrypoint().
    */
   protected async createCombinedBundle({
     inputFiles,
@@ -925,11 +923,11 @@ export const POST = workflowEntrypoint(workflowCode);`;
     const combinedFunctionCode = `// biome-ignore-all lint: generated file
 /* eslint-disable */
 import '${stepsRelativePath}';
-import { combinedEntrypoint } from 'workflow/runtime';
+import { workflowEntrypoint } from 'workflow/runtime';
 
 const workflowCode = \`${escapedVMCode}\`;
 
-export const POST = combinedEntrypoint(workflowCode);`;
+export const POST = workflowEntrypoint(workflowCode);`;
 
     if (!bundleFinalOutput) {
       // Write directly (Next.js will bundle)
@@ -980,17 +978,17 @@ export const POST = combinedEntrypoint(workflowCode);`;
       },
     };
 
-    // Create a custom bundleFinal for watch mode that uses combinedEntrypoint
+    // Create a custom bundleFinal for watch mode that uses workflowEntrypoint
     const combinedBundleFinal = async (interimBundleText: string) => {
       const escaped = interimBundleText.replace(/[\\`$]/g, '\\$&');
       const code = `// biome-ignore-all lint: generated file
 /* eslint-disable */
 import '${stepsRelativePath}';
-import { combinedEntrypoint } from 'workflow/runtime';
+import { workflowEntrypoint } from 'workflow/runtime';
 
 const workflowCode = \`${escaped}\`;
 
-export const POST = combinedEntrypoint(workflowCode);`;
+export const POST = workflowEntrypoint(workflowCode);`;
 
       const outputDir = dirname(flowOutfile);
       await mkdir(outputDir, { recursive: true });

@@ -1,7 +1,7 @@
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { BaseBuilder } from './base-builder.js';
-import { COMBINED_QUEUE_TRIGGER } from './constants.js';
+import { WORKFLOW_QUEUE_TRIGGER } from './constants.js';
 
 export class VercelBuildOutputAPIBuilder extends BaseBuilder {
   async build(): Promise<void> {
@@ -30,7 +30,7 @@ export class VercelBuildOutputAPIBuilder extends BaseBuilder {
     // Create package.json and .vc-config.json for combined function
     await this.createPackageJson(workflowsFuncDir, 'commonjs');
     await this.createVcConfig(workflowsFuncDir, {
-      experimentalTriggers: [COMBINED_QUEUE_TRIGGER],
+      experimentalTriggers: [WORKFLOW_QUEUE_TRIGGER],
       runtime: this.config.runtime,
     });
 

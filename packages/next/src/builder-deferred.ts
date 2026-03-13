@@ -31,7 +31,7 @@ export async function getNextBuilderDeferred() {
 
   const {
     BaseBuilder: BaseBuilderClass,
-    COMBINED_QUEUE_TRIGGER,
+    WORKFLOW_QUEUE_TRIGGER,
     detectWorkflowPatterns,
     isWorkflowSdkFile,
     // biome-ignore lint/security/noGlobalEval: Need to use eval here to avoid TypeScript from transpiling the import statement into `require()`
@@ -994,7 +994,7 @@ export async function getNextBuilderDeferred() {
       const generatedConfig = {
         version: '0',
         workflows: {
-          experimentalTriggers: [COMBINED_QUEUE_TRIGGER],
+          experimentalTriggers: [WORKFLOW_QUEUE_TRIGGER],
         },
       };
 
