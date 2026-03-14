@@ -109,6 +109,45 @@ describe('flushable stream behavior', () => {
     expect(streamClosed).toBe(true);
   });
 
+  it('should handle abort signal propagating back up flushablePipe when reader disconnects early', async () => {
+    const chunks: string[] = [];
+    let sinkAborted = false;
+
+    // Create a sink that aborts (representing a dropped connection)
+    const mockSink = new WritableStream<string>({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+      abort(reason) {
+        sinkAborted = true;
+      },
+    });
+
+    const { readable, writable } = new TransformStream<string, string>();
+    const state = createFlushableState();
+
+    // Start piping in background
+    const pipePromise = flushablePipe(readable, mockSink, state);
+
+    pollWritableLock(writable, state);
+
+    const userWriter = writable.getWriter();
+    await userWriter.write('valid chunk');
+
+    // Simulate a stream error / drop on the readable side (which aborts the pipe)
+    const error = new Error('Client disconnected');
+    readable.cancel(error);
+
+    // Write should fail because the underlying pipe broke
+    await expect(userWriter.write('another')).rejects.toThrow();
+
+    // State promise should reject with the cancellation error
+    await expect(state.promise).rejects.toThrow('Client disconnected');
+
+    // Ensure the sink received the abort signal
+    expect(sinkAborted).toBe(true);
+  });
+
   it('should handle write errors during pipe operations', async () => {
     const chunks: string[] = [];
 
