@@ -218,7 +218,7 @@ export function workflowEntrypoint(
                 }
 
                 // Load all events into memory before running
-                const events = await getAllWorkflowRunEvents(workflowRun.runId);
+                let events = await getAllWorkflowRunEvents(workflowRun.runId);
 
                 // Check for any elapsed waits and create wait_completed events
                 const now = Date.now();
@@ -245,7 +245,11 @@ export function workflowEntrypoint(
                     correlationId: e.correlationId,
                   }));
 
-                // Create all wait_completed events
+                // Create all wait_completed events.
+                // If any creation returns 409, a concurrent invocation already
+                // created the event. Re-fetch the full event log to get the
+                // authoritative ordering rather than appending locally.
+                let needsRefetch = false;
                 for (const waitEvent of waitsToComplete) {
                   try {
                     const result = await world.events.create(runId, waitEvent);
@@ -257,10 +261,17 @@ export function workflowEntrypoint(
                         workflowRunId: runId,
                         correlationId: waitEvent.correlationId,
                       });
+                      needsRefetch = true;
                       continue;
                     }
                     throw err;
                   }
+                }
+
+                // Re-fetch the event log if a concurrent invocation created
+                // events we don't have locally, ensuring correct ordering.
+                if (needsRefetch) {
+                  events = await getAllWorkflowRunEvents(workflowRun.runId);
                 }
 
                 // Resolve the encryption key for this run's deployment
