@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   type AstroConfig,
@@ -43,6 +43,9 @@ export class LocalBuilder extends BaseBuilder {
     if (process.env.VERCEL_DEPLOYMENT_ID === undefined) {
       await writeFile(join(workflowGeneratedDir, '.gitignore'), '*');
     }
+
+    // Clean up stale V1 step route (may persist via Vercel build cache)
+    await rm(join(workflowGeneratedDir, 'step.js'), { force: true });
 
     // Get workflow and step files to bundle
     const inputFiles = await this.getInputFiles();

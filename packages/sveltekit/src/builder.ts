@@ -4,6 +4,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
@@ -49,6 +50,12 @@ export class SvelteKitBuilder extends BaseBuilder {
     if (process.env.VERCEL_DEPLOYMENT_ID === undefined) {
       await writeFile(join(workflowGeneratedDir, '.gitignore'), '*');
     }
+
+    // Clean up stale V1 step route directory (may persist via Vercel build cache)
+    await rm(join(workflowGeneratedDir, 'step'), {
+      recursive: true,
+      force: true,
+    });
 
     // Get workflow and step files to bundle
     const inputFiles = await this.getInputFiles();

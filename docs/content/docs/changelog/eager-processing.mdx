@@ -238,3 +238,9 @@ The local development world (`world-local`) processes queue messages with high c
 In production (Vercel), this doesn't happen — each function invocation is isolated with its own event loading.
 
 **Fix**: The world-testing embedded test server now defaults to `WORKFLOW_LOCAL_QUEUE_CONCURRENCY=1`, serializing queue processing to simulate the production isolation model. This prevents concurrent replays from interfering with each other.
+
+### ESM `bundleFinalOutput` and Dynamic Require Errors
+
+When `bundleFinalOutput: true` is used with ESM format, esbuild bundles CJS dependencies (like `debug`) into the output. CJS `require()` calls are wrapped in esbuild's `__require` polyfill, which throws "Dynamic require of X is not supported" in ESM contexts where `require` is undefined. This affected all ESM-based framework builders (Nitro, NestJS, SvelteKit, Astro) that were switched to `bundleFinalOutput: true` during the V2 migration.
+
+**Fix**: ESM builders use `bundleFinalOutput: false` with `externalizeNonSteps: true`, matching the pre-V2 behavior. The framework's own bundler (Vite, Rollup, Turbopack) handles dependency resolution. Only CJS builders (standalone CLI, Vercel Build Output API) use `bundleFinalOutput: true`, where `require()` is natively available.
