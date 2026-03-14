@@ -421,7 +421,10 @@ export abstract class BaseBuilder {
     // User steps
     ${stepImports}
     // Serde files for cross-context class registration
-    ${serdeImports}`;
+    ${serdeImports}
+    // Sentinel export so bundlers (rollup) don't tree-shake this module
+    // when it's imported as a side-effect-only dependency.
+    export const __steps_registered = true;`;
 
     // Bundle with esbuild and our custom SWC plugin
     const entriesToBundle = externalizeNonSteps
@@ -918,8 +921,11 @@ export const POST = workflowEntrypoint(workflowCode);`;
 
     const combinedFunctionCode = `// biome-ignore-all lint: generated file
 /* eslint-disable */
-import '${stepsRelativePath}';
+import { __steps_registered } from '${stepsRelativePath}';
 import { workflowEntrypoint } from 'workflow/runtime';
+
+// Prevent rollup from tree-shaking the steps side-effect import
+void __steps_registered;
 
 const workflowCode = \`${escapedVMCode}\`;
 
@@ -979,8 +985,10 @@ export const POST = workflowEntrypoint(workflowCode);`;
       const escaped = interimBundleText.replace(/[\\`$]/g, '\\$&');
       const code = `// biome-ignore-all lint: generated file
 /* eslint-disable */
-import '${stepsRelativePath}';
+import { __steps_registered } from '${stepsRelativePath}';
 import { workflowEntrypoint } from 'workflow/runtime';
+
+void __steps_registered;
 
 const workflowCode = \`${escaped}\`;
 
