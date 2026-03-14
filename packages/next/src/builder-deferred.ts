@@ -413,13 +413,15 @@ export async function getNextBuilderDeferred() {
       // V2: Build combined route (replaces separate step + flow routes)
       const flowRouteDir = join(workflowGeneratedDir, 'flow');
       await mkdir(flowRouteDir, { recursive: true });
+      // Write step registrations to final name directly (not temp) so the
+      // import path in the flow route is correct. The flow route uses temp
+      // naming to avoid HMR churn via copyFileIfChanged, but the step
+      // registrations file is a side-effect import and doesn't need that.
+      const stepsOutfile = join(flowRouteDir, '__step_registrations.js');
       const combinedResult = await this.createCombinedBundle({
         format: 'esm',
         inputFiles: buildInputFiles,
-        stepsOutfile: join(
-          flowRouteDir,
-          `__step_registrations.${tempRouteFileName}`
-        ),
+        stepsOutfile,
         flowOutfile: join(flowRouteDir, tempRouteFileName),
         bundleFinalOutput: false,
         externalizeNonSteps: true,
@@ -461,17 +463,10 @@ export async function getNextBuilderDeferred() {
 
       await this.writeFunctionsConfig(outputDir);
 
-      // V2: Combined route (flow) + step registrations side-effect file
+      // V2: Combined route (flow) — step registrations already at final path
       await this.copyFileIfChanged(
         join(workflowGeneratedDir, `flow/${tempRouteFileName}`),
         join(workflowGeneratedDir, 'flow/route.js')
-      );
-      await this.copyFileIfChanged(
-        join(
-          workflowGeneratedDir,
-          `flow/__step_registrations.${tempRouteFileName}`
-        ),
-        join(workflowGeneratedDir, 'flow/__step_registrations.js')
       );
       await this.copyFileIfChanged(
         join(workflowGeneratedDir, `webhook/[token]/${tempRouteFileName}`),
