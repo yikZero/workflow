@@ -55,6 +55,7 @@ export class LocalBuilder extends BaseBuilder {
       flowOutfile: join(workflowGeneratedDir, 'flow.js'),
       format: 'esm',
       bundleFinalOutput: false,
+      externalizeNonSteps: true,
       tsconfigPath,
     });
 

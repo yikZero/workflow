@@ -55,7 +55,12 @@ export class LocalBuilder extends BaseBuilder {
       stepsOutfile: join(this.#outDir, 'steps.mjs'),
       flowOutfile: join(this.#outDir, 'workflows.mjs'),
       format: 'esm',
-      bundleFinalOutput: true,
+      // bundleFinalOutput: false — Nitro externalizes the workflow build dir
+      // during dev, and its own rollup pipeline handles bundling for prod.
+      // Using true causes "Dynamic require of X is not supported" errors
+      // because esbuild wraps CJS require() calls in ESM output.
+      bundleFinalOutput: false,
+      externalizeNonSteps: true,
     });
 
     const webhookRouteFile = join(this.#outDir, 'webhook.mjs');

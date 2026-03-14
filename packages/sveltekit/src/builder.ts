@@ -64,6 +64,7 @@ export class SvelteKitBuilder extends BaseBuilder {
       flowOutfile: join(flowRouteDir, '+server.js'),
       format: 'esm',
       bundleFinalOutput: false,
+      externalizeNonSteps: true,
       tsconfigPath,
     });
 

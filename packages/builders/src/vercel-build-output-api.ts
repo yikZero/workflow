@@ -23,6 +23,7 @@ export class VercelBuildOutputAPIBuilder extends BaseBuilder {
       inputFiles,
       stepsOutfile: join(workflowsFuncDir, '__step_registrations.js'),
       flowOutfile: join(workflowsFuncDir, 'index.js'),
+      format: 'cjs',
       tsconfigPath,
       bundleFinalOutput: true,
     });

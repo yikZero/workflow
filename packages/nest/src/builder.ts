@@ -85,7 +85,8 @@ export class NestLocalBuilder extends BaseBuilder {
       stepsOutfile: join(this.#outDir, 'steps.mjs'),
       flowOutfile: join(this.#outDir, 'workflows.mjs'),
       format: 'esm',
-      bundleFinalOutput: true,
+      bundleFinalOutput: false,
+      externalizeNonSteps: true,
     });
 
     // When the NestJS project compiles to CJS via SWC, the ESM steps bundle
