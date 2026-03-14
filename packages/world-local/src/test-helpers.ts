@@ -3,6 +3,7 @@ import type {
   SerializedData,
   Step,
   Storage,
+  Wait,
   WorkflowRun,
 } from '@workflow/world';
 import { SPEC_VERSION_CURRENT } from '@workflow/world';
@@ -138,4 +139,46 @@ export async function disposeHook(
     specVersion: SPEC_VERSION_CURRENT,
     correlationId: hookId,
   });
+}
+
+/**
+ * Create a new wait through the wait_created event.
+ */
+export async function createWait(
+  storage: Storage,
+  runId: string,
+  data: {
+    waitId: string;
+    resumeAt: Date;
+  }
+): Promise<Wait> {
+  const result = await storage.events.create(runId, {
+    eventType: 'wait_created',
+    specVersion: SPEC_VERSION_CURRENT,
+    correlationId: data.waitId,
+    eventData: { resumeAt: data.resumeAt },
+  });
+  if (!result.wait) {
+    throw new Error('Expected wait to be created');
+  }
+  return result.wait;
+}
+
+/**
+ * Complete a wait through the wait_completed event.
+ */
+export async function completeWait(
+  storage: Storage,
+  runId: string,
+  waitId: string
+): Promise<Wait> {
+  const result = await storage.events.create(runId, {
+    eventType: 'wait_completed',
+    specVersion: SPEC_VERSION_CURRENT,
+    correlationId: waitId,
+  });
+  if (!result.wait) {
+    throw new Error('Expected wait to be completed');
+  }
+  return result.wait;
 }

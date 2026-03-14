@@ -718,8 +718,23 @@ export function createEventsStorage(
           wait
         );
       } else if (data.eventType === 'wait_completed') {
-        // wait_completed: Transitions wait to 'completed', rejects duplicates
+        // wait_completed: Transitions wait to 'completed', rejects duplicates.
+        // Uses writeExclusive on a lock file to atomically prevent concurrent
+        // invocations from both completing the same wait (TOCTOU race).
         const waitCompositeKey = `${effectiveRunId}-${data.correlationId}`;
+        const lockPath = taggedPath(
+          basedir,
+          'waits',
+          `${waitCompositeKey}.completed`,
+          tag
+        );
+        const claimed = await writeExclusive(lockPath, '');
+        if (!claimed) {
+          throw new WorkflowAPIError(
+            `Wait "${data.correlationId}" already completed`,
+            { status: 409 }
+          );
+        }
         const existingWait = await readJSONWithFallback(
           basedir,
           'waits',
@@ -731,12 +746,6 @@ export function createEventsStorage(
           throw new WorkflowAPIError(`Wait "${data.correlationId}" not found`, {
             status: 404,
           });
-        }
-        if (existingWait.status === 'completed') {
-          throw new WorkflowAPIError(
-            `Wait "${data.correlationId}" already completed`,
-            { status: 409 }
-          );
         }
         wait = {
           ...existingWait,

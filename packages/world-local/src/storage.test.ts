@@ -9,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeJSON } from './fs.js';
 import { createStorage } from './storage.js';
 import {
+  completeWait,
   createHook,
   createRun,
   createStep,
+  createWait,
   disposeHook,
   updateRun,
   updateStep,
@@ -2541,6 +2543,102 @@ describe('Storage', () => {
         expect(result.run?.status).toBe('running');
         expect(result.event?.eventType).toBe('run_started');
       });
+    });
+  });
+
+  describe('waits', () => {
+    it('should create and complete a wait', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'dep-1',
+        workflowName: 'wf-1',
+        input: new Uint8Array(),
+      });
+      await updateRun(storage, run.runId, 'run_started');
+
+      const wait = await createWait(storage, run.runId, {
+        waitId: 'wait_001',
+        resumeAt: new Date('2099-01-01'),
+      });
+      expect(wait.status).toBe('waiting');
+
+      const completed = await completeWait(storage, run.runId, 'wait_001');
+      expect(completed.status).toBe('completed');
+    });
+
+    it('should reject duplicate wait_created for the same correlationId', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'dep-1',
+        workflowName: 'wf-1',
+        input: new Uint8Array(),
+      });
+      await updateRun(storage, run.runId, 'run_started');
+
+      await createWait(storage, run.runId, {
+        waitId: 'wait_dup',
+        resumeAt: new Date('2099-01-01'),
+      });
+
+      await expect(
+        createWait(storage, run.runId, {
+          waitId: 'wait_dup',
+          resumeAt: new Date('2099-01-01'),
+        })
+      ).rejects.toThrow(/already exists/i);
+    });
+
+    it('should reject duplicate wait_completed for the same correlationId', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'dep-1',
+        workflowName: 'wf-1',
+        input: new Uint8Array(),
+      });
+      await updateRun(storage, run.runId, 'run_started');
+
+      await createWait(storage, run.runId, {
+        waitId: 'wait_once',
+        resumeAt: new Date('2099-01-01'),
+      });
+
+      await completeWait(storage, run.runId, 'wait_once');
+
+      // Second completion should be rejected with 409
+      await expect(
+        completeWait(storage, run.runId, 'wait_once')
+      ).rejects.toThrow(/already completed/i);
+    });
+
+    it('should reject concurrent wait_completed for the same correlationId', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'dep-1',
+        workflowName: 'wf-1',
+        input: new Uint8Array(),
+      });
+      await updateRun(storage, run.runId, 'run_started');
+
+      await createWait(storage, run.runId, {
+        waitId: 'wait_race',
+        resumeAt: new Date('2099-01-01'),
+      });
+
+      // Simulate two concurrent completions racing
+      const results = await Promise.allSettled([
+        completeWait(storage, run.runId, 'wait_race'),
+        completeWait(storage, run.runId, 'wait_race'),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      // Exactly one should succeed, one should fail with 409
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+        WorkflowAPIError
+      );
+      expect(
+        ((rejected[0] as PromiseRejectedResult).reason as WorkflowAPIError)
+          .status
+      ).toBe(409);
     });
   });
 
