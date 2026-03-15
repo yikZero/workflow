@@ -472,6 +472,29 @@ export function workflowEntrypoint(
                       // Step completed or failed — loop back to replay
                       // (gone/skipped also loop back since the workflow
                       // will see the completed/failed event on replay)
+
+                      // If the step had pending background ops (e.g., stream
+                      // writes to S3), break the loop and return so waitUntil
+                      // can flush them. This matches V1 behavior where each
+                      // step ran in a separate function invocation. Without
+                      // this, the inline loop continues and the stream data
+                      // may not reach S3 before the test tries to read it.
+                      if (
+                        stepResult.type === 'completed' &&
+                        stepResult.hasPendingOps
+                      ) {
+                        await queueMessage(
+                          world,
+                          getWorkflowQueueName(workflowName),
+                          {
+                            runId,
+                            traceCarrier: await serializeTraceCarrier(),
+                            requestedAt: new Date(),
+                          }
+                        );
+                        return;
+                      }
+
                       if (
                         suspensionResult.timeoutSeconds !== undefined &&
                         pendingSteps.length === 1

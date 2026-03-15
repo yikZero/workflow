@@ -43,7 +43,7 @@ export interface StepExecutorParams {
  * based on the result type (e.g., queue workflow continuation, replay inline, etc.).
  */
 export type StepExecutionResult =
-  | { type: 'completed' }
+  | { type: 'completed'; hasPendingOps?: boolean }
   | { type: 'failed' }
   | { type: 'retry'; timeoutSeconds: number }
   | { type: 'skipped' }
@@ -352,7 +352,7 @@ export async function executeStep(
         ...Attribute.StepResultType(typeof result),
       });
 
-      return { type: 'completed' };
+      return { type: 'completed', hasPendingOps: ops.length > 0 };
     } catch (err: unknown) {
       const normalizedError = await normalizeUnknownError(err);
       const normalizedStack = normalizedError.stack || getErrorStack(err) || '';
