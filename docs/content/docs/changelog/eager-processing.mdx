@@ -268,3 +268,19 @@ SvelteKit and Astro's build caches (including Vercel's) may preserve the old V1 
 The deferred (lazyDiscovery) Next.js builder writes build artifacts with a `.temp` extension to avoid HMR churn, then copies them to their final names. The V2 migration created `__step_registrations.route.js.temp` in the `app/` directory. Canary Turbopack rejects this file as an "Unknown module type" because the `.temp` extension has no associated loader.
 
 **Fix**: The step registrations file is written directly to its final name (`__step_registrations.js`) since it doesn't need the temp-file HMR mechanism. Only the route file uses temp naming.
+
+### Concurrent `step_started` Inflating Attempt Counter
+
+When the V2 handler dispatches N parallel steps as background messages, each background step completion queues a workflow continuation. Up to N continuations may replay concurrently, and each may attempt to start the same not-yet-completed step (since `step_started` succeeds for already-running steps). Each call atomically increments the `attempt` counter. With N=5 parallel steps, the attempt counter can reach 5 on the first genuine execution — exceeding the default `maxRetries + 1 = 4` threshold and prematurely failing the step with "exceeded max retries".
+
+This is the same known limitation described in "Convergence After Parallel Steps" above, but with a concrete failure mode: `promiseRaceStressTestWorkflow` (which uses 5 parallel steps with `Promise.race`) consistently failed on Postgres tests.
+
+**Fix**: The max retries check in `executeStep()` now only enforces when `step.error` exists — distinguishing actual retries (failed → retry with error) from concurrent first-attempt races (multiple handlers start the same step simultaneously without any prior failure). Concurrent starts are harmless since `step_completed` idempotency ensures only the first completion wins.
+
+### Inline Step Execution with Pending Stream Operations
+
+When a step writes to a `WritableStream` (e.g., via `getWritable()`), the stream data is piped to S3 through a background `flushablePipe` operation registered with `waitUntil()`. In V1, each step ran in a separate function invocation — the function returned after the step, and `waitUntil` flushed the stream data to S3 before the function was garbage collected. The test's stream reader could then read the committed data.
+
+In V2, the inline execution loop continues after the step completes (replay → next sleep → etc.), keeping the function alive and competing for event loop time with the background stream ops. The `waitUntil` ops don't get exclusive event loop time to flush, so the stream data never reaches S3 within the test's 60-second timeout. This caused `outputStreamWorkflow` and `outputStreamInsideStepWorkflow` to consistently time out on Vercel Prod.
+
+**Fix**: `executeStep()` now returns `hasPendingOps: true` when the step had background operations (stream pipes). The V2 handler checks this flag after inline step execution: if pending ops exist, it breaks the inline loop, queues a workflow continuation, and returns — giving `waitUntil` exclusive control to flush the ops. This matches V1 behavior where each step was a separate function invocation. Steps without stream ops continue to execute inline without the extra queue round-trip.
