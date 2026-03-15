@@ -25,8 +25,12 @@ export interface EventsConsumerOptions {
    * check is deferred until after the promise queue has drained, ensuring that
    * any pending async work (e.g., deserialization/decryption) completes and
    * downstream subscribe() calls have a chance to cancel the check first.
+   *
+   * Return `true` to skip past the event and continue processing (for events
+   * that are safe to ignore, e.g. step_created from concurrent handlers).
+   * Return `false` or `undefined` to treat it as a fatal error.
    */
-  onUnconsumedEvent: (event: Event) => void;
+  onUnconsumedEvent: (event: Event) => boolean | void;
   /**
    * Returns the current promise queue. The unconsumed event check is chained
    * onto this queue so it only fires after all pending async work (e.g.,
@@ -40,7 +44,7 @@ export class EventsConsumer {
   eventIndex: number;
   readonly events: Event[] = [];
   readonly callbacks: EventConsumerCallback[] = [];
-  private onUnconsumedEvent: (event: Event) => void;
+  private onUnconsumedEvent: (event: Event) => boolean | void;
   private getPromiseQueue: () => Promise<void>;
   private pendingUnconsumedCheck: Promise<void> | null = null;
   private pendingUnconsumedTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -127,7 +131,12 @@ export class EventsConsumer {
           this.pendingUnconsumedTimeout = null;
           if (this.unconsumedCheckVersion === checkVersion) {
             this.pendingUnconsumedCheck = null;
-            this.onUnconsumedEvent(currentEvent);
+            const shouldSkip = this.onUnconsumedEvent(currentEvent);
+            if (shouldSkip) {
+              // Skip past this event and continue processing
+              this.eventIndex++;
+              process.nextTick(this.consume);
+            }
           }
         }, 100);
       });
