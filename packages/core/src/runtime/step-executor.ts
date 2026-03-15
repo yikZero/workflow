@@ -174,8 +174,12 @@ export async function executeStep(
 
     let result: unknown;
 
-    // Check max retries AFTER step_started (attempt was just incremented)
-    if (step.attempt > maxRetries + 1) {
+    // Check max retries AFTER step_started (attempt was just incremented).
+    // Only enforce when the step has a previous error — this distinguishes
+    // actual retries (failed → retry) from concurrent starts (V2 inline
+    // execution loop can cause multiple handlers to step_started the same
+    // step simultaneously, inflating the attempt counter without any failure).
+    if (step.attempt > maxRetries + 1 && step.error) {
       const retryCount = step.attempt - 1;
       const errorMessage = `Step "${stepName}" exceeded max retries (${retryCount} ${pluralize('retry', 'retries', retryCount)})`;
       stepLogger.error('Step exceeded max retries', {

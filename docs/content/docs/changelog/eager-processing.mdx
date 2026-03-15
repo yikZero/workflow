@@ -244,3 +244,27 @@ In production (Vercel), this doesn't happen — each function invocation is isol
 When `bundleFinalOutput: true` is used with ESM format, esbuild bundles CJS dependencies (like `debug`) into the output. CJS `require()` calls are wrapped in esbuild's `__require` polyfill, which throws "Dynamic require of X is not supported" in ESM contexts where `require` is undefined. This affected all ESM-based framework builders (Nitro, NestJS, SvelteKit, Astro) that were switched to `bundleFinalOutput: true` during the V2 migration.
 
 **Fix**: ESM builders use `bundleFinalOutput: false` with `externalizeNonSteps: true`, matching the pre-V2 behavior. The framework's own bundler (Vite, Rollup, Turbopack) handles dependency resolution. Only CJS builders (standalone CLI, Vercel Build Output API) use `bundleFinalOutput: true`, where `require()` is natively available.
+
+### Rollup Tree-Shaking of Step Registrations
+
+When `bundleFinalOutput: false` is used with Nitro's rollup pipeline, the step registrations bundle (`steps.mjs`) only contains side-effect code (`registerStepFunction` calls) with no exports. Rollup tree-shakes the entire module because it has no used exports, removing all step registrations from the production bundle. This causes "Step not found" errors at runtime.
+
+**Fix**: The steps bundle now exports a sentinel value (`export const __steps_registered = true`), and the combined route file imports it (`import { __steps_registered } from './steps.mjs'`). This gives rollup a used binding to track, preventing it from dropping the module and its side effects.
+
+### Concurrent Replay Interference with Multi-Batch Workflows
+
+When the V2 inline execution loop advances through multiple suspension points (e.g., completes all steps in batch 1 and creates `step_created` events for batch 2), concurrent continuations from batch 1's background steps may replay the workflow and encounter batch 2's events without matching subscribers. The events have valid correlationIds but the concurrent replay hasn't reached the code path that creates those subscriptions, triggering the "Unconsumed event in event log" error.
+
+**Fix**: The `EventsConsumer`'s `onUnconsumedEvent` callback now returns `true` (skip) for step lifecycle events (`step_created`, `step_started`, `step_completed`, `step_failed`, `step_retrying`) whose correlationId has a corresponding `step_created` event in the log — confirming they're from a legitimate concurrent handler, not corruption. The `EventsConsumer` was extended to support a `boolean` return from `onUnconsumedEvent`: `true` advances past the event, `false`/`undefined` triggers the error. Orphaned events with unknown correlationIds still error as before.
+
+### Stale V1 Artifacts in Build Caches
+
+SvelteKit and Astro's build caches (including Vercel's) may preserve the old V1 `step/` route directory from previous builds. When the V2 builder runs, it no longer generates step routes, but the stale files remain and cause build failures (e.g., importing the removed `stepEntrypoint`). Additionally, SvelteKit's `beforeExit` hook that patches `.vc-config.json` files for Vercel deployments was still trying to configure the non-existent `step.func/` directory.
+
+**Fix**: SvelteKit and Astro builders now clean up stale V1 step route directories during build. SvelteKit's Vercel deployment hook was updated to only configure the combined `flow.func/` directory.
+
+### Next.js Canary Turbopack and Temp Files
+
+The deferred (lazyDiscovery) Next.js builder writes build artifacts with a `.temp` extension to avoid HMR churn, then copies them to their final names. The V2 migration created `__step_registrations.route.js.temp` in the `app/` directory. Canary Turbopack rejects this file as an "Unknown module type" because the `.temp` extension has no associated loader.
+
+**Fix**: The step registrations file is written directly to its final name (`__step_registrations.js`) since it doesn't need the temp-file HMR mechanism. Only the route file uses temp naming.
