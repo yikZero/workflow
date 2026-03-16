@@ -168,7 +168,13 @@ export async function start<TArgs extends unknown[], TResult>(
             deploymentId: deploymentId,
             workflowName: workflowName,
             input: workflowArguments,
-            executionContext: { traceCarrier, workflowCoreVersion },
+            executionContext: {
+              traceCarrier,
+              workflowCoreVersion,
+              ...(process.env.WORKFLOW_RUNTIME
+                ? { workflowRuntime: process.env.WORKFLOW_RUNTIME }
+                : {}),
+            },
           },
         },
         { v1Compat }

@@ -31,7 +31,16 @@ import { getErrorName, getErrorStack, normalizeUnknownError } from './types.js';
 import { buildWorkflowSuspensionMessage } from './util.js';
 import { runWorkflow } from './workflow.js';
 
-const USE_SNAPSHOT_RUNTIME = process.env.WORKFLOW_RUNTIME === 'snapshot';
+/**
+ * Whether to use the snapshot-based workflow runtime for a given run.
+ * The runtime can be selected globally via WORKFLOW_RUNTIME=snapshot env var,
+ * or per-run via executionContext.workflowRuntime (set by the SDK at start()).
+ * The per-run setting allows the same deployment to serve both runtimes.
+ */
+function useSnapshotRuntime(workflowRun: WorkflowRun): boolean {
+  if (process.env.WORKFLOW_RUNTIME === 'snapshot') return true;
+  return workflowRun.executionContext?.workflowRuntime === 'snapshot';
+}
 
 export type { Event, WorkflowRun };
 export { WorkflowSuspension } from './global.js';
@@ -227,7 +236,7 @@ export function workflowEntrypoint(
                 }
 
                 // --- Snapshot runtime (opt-in via WORKFLOW_RUNTIME=snapshot) ---
-                if (USE_SNAPSHOT_RUNTIME) {
+                if (useSnapshotRuntime(workflowRun)) {
                   runtimeLogger.debug('Using snapshot runtime', {
                     workflowRunId: runId,
                   });
