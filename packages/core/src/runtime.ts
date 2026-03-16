@@ -194,6 +194,70 @@ export function workflowEntrypoint(
                   // (the workflow will handle the missing step)
                 }
 
+                // Fetch run state once before the loop. The run_started
+                // transition and status check only matter on the first
+                // iteration; subsequent iterations reuse the cached state.
+                let workflowRun = await world.runs.get(runId);
+                let workflowStartedAt = -1;
+                try {
+                  if (workflowRun.status === 'pending') {
+                    const result = await world.events.create(runId, {
+                      eventType: 'run_started',
+                      specVersion: SPEC_VERSION_CURRENT,
+                    });
+                    if (!result.run) {
+                      throw new WorkflowRuntimeError(
+                        `Event creation for 'run_started' did not return the run entity for run "${runId}"`
+                      );
+                    }
+                    workflowRun = result.run;
+                  }
+
+                  if (!workflowRun.startedAt) {
+                    throw new WorkflowRuntimeError(
+                      `Workflow run "${runId}" has no "startedAt" timestamp`
+                    );
+                  }
+                  workflowStartedAt = +workflowRun.startedAt;
+
+                  if (workflowRun.status !== 'running') {
+                    runtimeLogger.info(
+                      'Workflow already completed or failed, skipping',
+                      { workflowRunId: runId, status: workflowRun.status }
+                    );
+                    return;
+                  }
+                } catch (err) {
+                  if (err instanceof WorkflowRuntimeError) {
+                    runtimeLogger.error(
+                      'Fatal runtime error during workflow setup',
+                      { workflowRunId: runId, error: err.message }
+                    );
+                    try {
+                      await world.events.create(runId, {
+                        eventType: 'run_failed',
+                        specVersion: SPEC_VERSION_CURRENT,
+                        eventData: {
+                          error: {
+                            message: err.message,
+                            stack: err.stack,
+                          },
+                        },
+                      });
+                    } catch (failErr) {
+                      if (
+                        WorkflowAPIError.is(failErr) &&
+                        (failErr.status === 409 || failErr.status === 410)
+                      ) {
+                        return;
+                      }
+                      throw failErr;
+                    }
+                    return;
+                  }
+                  throw err;
+                }
+
                 // Main replay loop
                 // biome-ignore lint/correctness/noConstantCondition: intentional loop
                 while (true) {
@@ -224,39 +288,8 @@ export function workflowEntrypoint(
                     return;
                   }
 
-                  // Standard workflow replay
-                  let workflowRun = await world.runs.get(runId);
-                  let workflowStartedAt = -1;
                   let replayStart = 0;
                   try {
-                    if (workflowRun.status === 'pending') {
-                      const result = await world.events.create(runId, {
-                        eventType: 'run_started',
-                        specVersion: SPEC_VERSION_CURRENT,
-                      });
-                      if (!result.run) {
-                        throw new WorkflowRuntimeError(
-                          `Event creation for 'run_started' did not return the run entity for run "${runId}"`
-                        );
-                      }
-                      workflowRun = result.run;
-                    }
-
-                    if (!workflowRun.startedAt) {
-                      throw new WorkflowRuntimeError(
-                        `Workflow run "${runId}" has no "startedAt" timestamp`
-                      );
-                    }
-                    workflowStartedAt = +workflowRun.startedAt;
-
-                    if (workflowRun.status !== 'running') {
-                      runtimeLogger.info(
-                        'Workflow already completed or failed, skipping',
-                        { workflowRunId: runId, status: workflowRun.status }
-                      );
-                      return;
-                    }
-
                     // Load events — use cached events with incremental fetch on subsequent iterations.
                     // The server always returns a cursor when there are events (even on the
                     // final page), so we can reliably use it for incremental loading.
