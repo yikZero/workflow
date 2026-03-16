@@ -14,7 +14,7 @@
  */
 
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
-import { QuickJS } from 'quickjs-wasi';
+import { JSException, QuickJS } from 'quickjs-wasi';
 import seedrandom from 'seedrandom';
 import { runtimeLogger } from '../logger.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
@@ -494,19 +494,19 @@ export async function runSnapshotWorkflow(
     }
 
     // Evaluate the VM serde bundle
-    vm.unwrapResult(vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js')).dispose();
+    vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js').dispose();
 
     // Bootstrap workflow primitives
-    vm.unwrapResult(vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js')).dispose();
+    vm.evalCode(VM_BOOTSTRAP, 'bootstrap.js').dispose();
 
     // Execute the workflow bundle — use the workflowId as the eval filename
     // so QuickJS stack traces reference the workflow name, enabling source map
     // remapping by remapErrorStack (which matches frames by filename).
-    const evalResult = vm.evalCode(workflowCode, workflowId || 'workflow.js');
-    if (evalResult.isException) {
-      return extractError(vm, evalResult, 'Workflow evaluation failed');
+    try {
+      vm.evalCode(workflowCode, workflowId || 'workflow.js').dispose();
+    } catch (err) {
+      return extractError(vm, err, 'Workflow evaluation failed');
     }
-    evalResult.dispose();
 
     // Extract workflow arguments from the run_created event
     const runCreatedEvent = events.find((e) => e.eventType === 'run_created');
@@ -534,38 +534,36 @@ export async function runSnapshotWorkflow(
           ? `https://${process.env.VERCEL_URL}`
           : `http://localhost:${process.env.PORT ?? 3000}`,
       };
-      vm.unwrapResult(
-        vm.evalCode(
-          `globalThis[Symbol.for("WORKFLOW_CONTEXT")] = ${JSON.stringify(metadata)};` +
-            `globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowStartedAt = new Date(${JSON.stringify(metadata.workflowStartedAt.toISOString())});`
-        )
+      vm.evalCode(
+        `globalThis[Symbol.for("WORKFLOW_CONTEXT")] = ${JSON.stringify(metadata)};` +
+          `globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowStartedAt = new Date(${JSON.stringify(metadata.workflowStartedAt.toISOString())});`
       ).dispose();
     }
 
     // Start the workflow function
-    const startResult = vm.evalCode(`
-      var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
-      if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
-      var __args = globalThis.__wdk_input
-        ? globalThis.__wdk_deserialize(globalThis.__wdk_input)
-        : [];
-      delete globalThis.__wdk_input;
-      if (!Array.isArray(__args)) __args = [__args];
-      __wfn.apply(null, __args).then(
-        function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
-        function(error) {
-          globalThis.__workflowError = {
-            message: error.message || String(error),
-            stack: error.stack || "",
-            name: error.name || "Error"
-          };
-        }
-      );
-    `);
-    if (startResult.isException) {
-      return extractError(vm, startResult, 'Failed to start workflow');
+    try {
+      vm.evalCode(`
+        var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
+        if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
+        var __args = globalThis.__wdk_input
+          ? globalThis.__wdk_deserialize(globalThis.__wdk_input)
+          : [];
+        delete globalThis.__wdk_input;
+        if (!Array.isArray(__args)) __args = [__args];
+        __wfn.apply(null, __args).then(
+          function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
+          function(error) {
+            globalThis.__workflowError = {
+              message: error.message || String(error),
+              stack: error.stack || "",
+              name: error.name || "Error"
+            };
+          }
+        );
+      `).dispose();
+    } catch (err) {
+      return extractError(vm, err, 'Failed to start workflow');
     }
-    startResult.dispose();
 
     // Process events and drain jobs in a loop (same as restore path)
     {
@@ -604,9 +602,7 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
     switch (event.eventType) {
       case 'step_completed': {
         const hasResolver = vm.dump(
-          vm.unwrapResult(
-            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-          )
+          vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         const rawOutput = eventData?.result ?? eventData?.output;
         if (hasResolver) {
@@ -614,21 +610,17 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
             const bytesHandle = vm.newUint8Array(rawOutput);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
-            vm.unwrapResult(
-              vm.evalCode(
-                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
-                  `delete globalThis.__resolvers["${escapedCid}"];` +
-                  `delete globalThis.__tmp_result;`
-              )
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+                `delete globalThis.__resolvers["${escapedCid}"];` +
+                `delete globalThis.__tmp_result;`
             ).dispose();
           } else {
             const serialized =
               rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
-            vm.unwrapResult(
-              vm.evalCode(
-                `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
-                  `delete globalThis.__resolvers["${escapedCid}"];`
-              )
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
+                `delete globalThis.__resolvers["${escapedCid}"];`
             ).dispose();
           }
           // Drain ALL microtasks after resolve
@@ -645,9 +637,7 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
       }
       case 'step_failed': {
         const hasResolver = vm.dump(
-          vm.unwrapResult(
-            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-          )
+          vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         if (hasResolver) {
           const errorData = eventData?.error;
@@ -670,12 +660,10 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
           const stackAssignment = errorStack
             ? `e.stack=${JSON.stringify(errorStack)};`
             : '';
-          vm.unwrapResult(
-            vm.evalCode(
-              `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;${stackAssignment}` +
-                `globalThis.__resolvers["${escapedCid}"].reject(e);` +
-                `delete globalThis.__resolvers["${escapedCid}"];})()`
-            )
+          vm.evalCode(
+            `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;${stackAssignment}` +
+              `globalThis.__resolvers["${escapedCid}"].reject(e);` +
+              `delete globalThis.__resolvers["${escapedCid}"];})()`
           ).dispose();
           {
             resolved = true;
@@ -690,16 +678,12 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
       }
       case 'wait_completed': {
         const hasResolver = vm.dump(
-          vm.unwrapResult(
-            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-          )
+          vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         if (hasResolver) {
-          vm.unwrapResult(
-            vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].resolve();` +
-                `delete globalThis.__resolvers["${escapedCid}"];`
-            )
+          vm.evalCode(
+            `globalThis.__resolvers["${escapedCid}"].resolve();` +
+              `delete globalThis.__resolvers["${escapedCid}"];`
           ).dispose();
           {
             resolved = true;
@@ -719,10 +703,8 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
         // outer loop re-scans events.
         const alreadyProcessed = event.eventId
           ? vm.dump(
-              vm.unwrapResult(
-                vm.evalCode(
-                  `!!(globalThis.__hookPayloadBuffer.__processedEventIds && globalThis.__hookPayloadBuffer.__processedEventIds[${JSON.stringify(event.eventId)}])`
-                )
+              vm.evalCode(
+                `!!(globalThis.__hookPayloadBuffer.__processedEventIds && globalThis.__hookPayloadBuffer.__processedEventIds[${JSON.stringify(event.eventId)}])`
               )
             )
           : false;
@@ -731,9 +713,7 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
           break;
         }
         const hasResolver = vm.dump(
-          vm.unwrapResult(
-            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-          )
+          vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         const rawPayload = eventData?.payload ?? eventData?.result;
         if (hasResolver) {
@@ -741,32 +721,26 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
             const bytesHandle = vm.newUint8Array(rawPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
-            vm.unwrapResult(
-              vm.evalCode(
-                `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
-                  `delete globalThis.__resolvers["${escapedCid}"];` +
-                  `delete globalThis.__tmp_result;`
-              )
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+                `delete globalThis.__resolvers["${escapedCid}"];` +
+                `delete globalThis.__tmp_result;`
             ).dispose();
           } else {
             const serialized =
               rawPayload !== undefined
                 ? JSON.stringify(rawPayload)
                 : 'undefined';
-            vm.unwrapResult(
-              vm.evalCode(
-                `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
-                  `delete globalThis.__resolvers["${escapedCid}"];`
-              )
+            vm.evalCode(
+              `globalThis.__resolvers["${escapedCid}"].resolve(${serialized});` +
+                `delete globalThis.__resolvers["${escapedCid}"];`
             ).dispose();
           }
           // Mark this event as processed in the VM heap to prevent
           // double-delivery on re-scan or snapshot restore.
           if (event.eventId) {
-            vm.unwrapResult(
-              vm.evalCode(
-                `(globalThis.__hookPayloadBuffer.__processedEventIds = globalThis.__hookPayloadBuffer.__processedEventIds || {})[${JSON.stringify(event.eventId)}] = true;`
-              )
+            vm.evalCode(
+              `(globalThis.__hookPayloadBuffer.__processedEventIds = globalThis.__hookPayloadBuffer.__processedEventIds || {})[${JSON.stringify(event.eventId)}] = true;`
             ).dispose();
           }
           {
@@ -794,21 +768,19 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
             const bytesHandle = vm.newUint8Array(rawPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
-            vm.unwrapResult(
-              vm.evalCode(
-                bufferAndTrack.replace(
-                  '%PAYLOAD%',
-                  'globalThis.__wdk_deserialize(globalThis.__tmp_result)'
-                ) + 'delete globalThis.__tmp_result;'
-              )
+            vm.evalCode(
+              bufferAndTrack.replace(
+                '%PAYLOAD%',
+                'globalThis.__wdk_deserialize(globalThis.__tmp_result)'
+              ) + 'delete globalThis.__tmp_result;'
             ).dispose();
           } else {
             const serialized =
               rawPayload !== undefined
                 ? JSON.stringify(rawPayload)
                 : 'undefined';
-            vm.unwrapResult(
-              vm.evalCode(bufferAndTrack.replace('%PAYLOAD%', serialized))
+            vm.evalCode(
+              bufferAndTrack.replace('%PAYLOAD%', serialized)
             ).dispose();
           }
         }
@@ -817,17 +789,13 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
       }
       case 'hook_conflict': {
         const hasResolver = vm.dump(
-          vm.unwrapResult(
-            vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
-          )
+          vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         if (hasResolver) {
           const conflictToken = (eventData?.token as string) ?? 'unknown';
-          vm.unwrapResult(
-            vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(`Hook token "${conflictToken}" is already in use by another workflow`)}));` +
-                `delete globalThis.__resolvers["${escapedCid}"];`
-            )
+          vm.evalCode(
+            `globalThis.__resolvers["${escapedCid}"].reject(new Error(${JSON.stringify(`Hook token "${conflictToken}" is already in use by another workflow`)}));` +
+              `delete globalThis.__resolvers["${escapedCid}"];`
           ).dispose();
           {
             resolved = true;
@@ -855,11 +823,9 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
 }
 
 function markCreated(vm: QuickJS, escapedCid: string): void {
-  vm.unwrapResult(
-    vm.evalCode(
-      `var __p=globalThis.__pending.find(function(p){return p.correlationId==="${escapedCid}";});` +
-        `if(__p)__p.hasCreatedEvent=true;`
-    )
+  vm.evalCode(
+    `var __p=globalThis.__pending.find(function(p){return p.correlationId==="${escapedCid}";});` +
+      `if(__p)__p.hasCreatedEvent=true;`
   ).dispose();
 }
 
@@ -868,7 +834,7 @@ function markCreated(vm: QuickJS, escapedCid: string): void {
 function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
   // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
-    using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowResult'));
+    using h = vm.evalCode('globalThis.__workflowResult');
     if (!h.isUndefined) {
       const resultBytes = h.toUint8Array();
       vm.dispose();
@@ -878,7 +844,7 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
 
   // Check failed
   {
-    using h = vm.unwrapResult(vm.evalCode('globalThis.__workflowError'));
+    using h = vm.evalCode('globalThis.__workflowError');
     if (!h.isUndefined) {
       const errorObj = vm.dump(h) as
         | { message: string; stack?: string; name?: string }
@@ -905,16 +871,12 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
   // OR pending operations that haven't been created yet (e.g. hooks created
   // upfront but not yet awaited)
   {
-    using h = vm.unwrapResult(
-      vm.evalCode(
-        'Object.keys(globalThis.__resolvers).length > 0 || globalThis.__pending.some(function(p){return!p.hasCreatedEvent;})'
-      )
+    using h = vm.evalCode(
+      'Object.keys(globalThis.__resolvers).length > 0 || globalThis.__pending.some(function(p){return!p.hasCreatedEvent;})'
     );
     if (vm.dump(h)) {
-      using pendingH = vm.unwrapResult(
-        vm.evalCode(
-          `globalThis.__pending.filter(function(p){return!!globalThis.__resolvers[p.correlationId] || !p.hasCreatedEvent;})`
-        )
+      using pendingH = vm.evalCode(
+        `globalThis.__pending.filter(function(p){return!!globalThis.__resolvers[p.correlationId] || !p.hasCreatedEvent;})`
       );
       const pendingOps = vm.dump(pendingH) as PendingOperation[];
 
@@ -939,20 +901,28 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
 
 function extractError(
   vm: QuickJS,
-  result: ReturnType<QuickJS['evalCode']>,
+  err: unknown,
   fallbackMessage: string
 ): SnapshotRuntimeResult {
-  const exc = vm.getException();
-  const error = vm.dump(exc) as Error | null;
-  exc.dispose();
-  result.dispose();
+  let message = fallbackMessage;
+  let stack: string | undefined;
+  let name: string | undefined;
+
+  if (err instanceof JSException) {
+    const error = vm.dump(err.handle) as Record<string, unknown> | null;
+    err.handle.dispose();
+    message = (error?.message as string) ?? err.message ?? fallbackMessage;
+    stack = (error?.stack as string) ?? err.stack;
+    name = (error?.name as string) ?? err.name;
+  } else if (err instanceof Error) {
+    message = err.message ?? fallbackMessage;
+    stack = err.stack;
+    name = err.name;
+  }
+
   vm.dispose();
   return {
-    failed: {
-      message: error?.message ?? fallbackMessage,
-      stack: error?.stack,
-      name: error?.name,
-    },
+    failed: { message, stack, name },
   };
 }
 

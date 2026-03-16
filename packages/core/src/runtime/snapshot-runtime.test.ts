@@ -271,8 +271,7 @@ describe('raw QuickJS proof of concept', () => {
   it('should run, snapshot, restore, and complete', async () => {
     const vm = await QuickJS.create();
 
-    vm.unwrapResult(
-      vm.evalCode(`
+    vm.evalCode(`
       globalThis.__private_workflows = new Map();
       globalThis.__resolvers = {};
       globalThis.__pending = [];
@@ -294,34 +293,23 @@ describe('raw QuickJS proof of concept', () => {
       async function simple(i) { var a = await add(i, 7); var b = await add(a, 8); return b; }
       globalThis.__private_workflows.set("test", simple);
       globalThis.__private_workflows.get("test")(10).then(function(r) { globalThis.__workflowResult = r; });
-    `)
-    ).dispose();
+    `).dispose();
     vm.executePendingJobs();
 
     const snap1 = vm.snapshot();
     vm.dispose();
 
     const vm2 = await QuickJS.restore(snap1);
-    vm2
-      .unwrapResult(
-        vm2.evalCode('globalThis.__resolvers["step_0"].resolve(17);')
-      )
-      .dispose();
+    vm2.evalCode('globalThis.__resolvers["step_0"].resolve(17);').dispose();
     vm2.executePendingJobs();
     const snap2 = vm2.snapshot();
     vm2.dispose();
 
     const vm3 = await QuickJS.restore(snap2);
-    vm3
-      .unwrapResult(
-        vm3.evalCode('globalThis.__resolvers["step_1"].resolve(25);')
-      )
-      .dispose();
+    vm3.evalCode('globalThis.__resolvers["step_1"].resolve(25);').dispose();
     vm3.executePendingJobs();
 
-    expect(
-      vm3.dump(vm3.unwrapResult(vm3.evalCode('globalThis.__workflowResult')))
-    ).toBe(25);
+    expect(vm3.dump(vm3.evalCode('globalThis.__workflowResult'))).toBe(25);
     vm3.dispose();
   });
 });
