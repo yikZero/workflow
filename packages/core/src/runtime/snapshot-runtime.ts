@@ -16,7 +16,9 @@
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 import { JSException, QuickJS } from 'quickjs-wasi';
 import seedrandom from 'seedrandom';
+import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
+import { decrypt as decryptData } from '../serialization/encryption.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
 // ---- Types ----
@@ -91,6 +93,8 @@ export interface SnapshotRuntimeOptions {
     data: Uint8Array;
     metadata: SnapshotMetadata;
   } | null;
+  /** Encryption key for decrypting event payloads (undefined if unencrypted) */
+  encryptionKey?: CryptoKey;
   /** The WASM module bytes for quickjs-wasi (optional, auto-loaded if omitted) */
   wasm?: ArrayBuffer | Uint8Array;
 }
@@ -470,7 +474,7 @@ export async function runSnapshotWorkflow(
     let maxIterations = 100;
     let madeProgress: boolean;
     do {
-      madeProgress = processEvents(vm, events);
+      madeProgress = await processEvents(vm, events, options.encryptionKey);
       let batch: number;
       do {
         batch = vm.executePendingJobs();
@@ -515,9 +519,14 @@ export async function runSnapshotWorkflow(
         ? (runCreatedEvent.eventData as Record<string, unknown>)?.input
         : undefined;
 
-    // Pass the serialized input into the VM for deserialization
+    // Pass the serialized input into the VM for deserialization.
+    // Decrypt first if encrypted — the VM only understands 'devl' format.
     if (runInput instanceof Uint8Array) {
-      const inputHandle = vm.newUint8Array(runInput);
+      const decryptedInput = (await decryptData(
+        runInput,
+        options.encryptionKey
+      )) as Uint8Array;
+      const inputHandle = vm.newUint8Array(decryptedInput);
       vm.setProp(vm.global, '__wdk_input', inputHandle);
       inputHandle.dispose();
     }
@@ -570,7 +579,7 @@ export async function runSnapshotWorkflow(
       let maxIterations = 100;
       let madeProgress: boolean;
       do {
-        madeProgress = processEvents(vm, events);
+        madeProgress = await processEvents(vm, events, options.encryptionKey);
         let batch: number;
         do {
           batch = vm.executePendingJobs();
@@ -586,7 +595,11 @@ export async function runSnapshotWorkflow(
 
 // ---- Event Processing ----
 
-function processEvents(vm: QuickJS, events: Event[]): boolean {
+async function processEvents(
+  vm: QuickJS,
+  events: Event[],
+  encryptionKey?: CryptoKey
+): Promise<boolean> {
   let resolved = false;
   for (const event of events) {
     const cid = event.correlationId;
@@ -607,7 +620,12 @@ function processEvents(vm: QuickJS, events: Event[]): boolean {
         const rawOutput = eventData?.result ?? eventData?.output;
         if (hasResolver) {
           if (rawOutput instanceof Uint8Array) {
-            const bytesHandle = vm.newUint8Array(rawOutput);
+            // Decrypt if encrypted — the VM only understands 'devl' format
+            const decryptedOutput = (await decryptData(
+              rawOutput,
+              encryptionKey
+            )) as Uint8Array;
+            const bytesHandle = vm.newUint8Array(decryptedOutput);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.evalCode(

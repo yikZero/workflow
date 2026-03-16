@@ -12,6 +12,7 @@ import {
   SPEC_VERSION_CURRENT,
   type WorkflowRun,
 } from '@workflow/world';
+import { importKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import { remapErrorStack } from '../source-map.js';
 import { queueMessage } from './helpers.js';
@@ -125,6 +126,10 @@ export async function runWorkflowWithSnapshots(params: {
     }
   }
 
+  // Resolve the encryption key for this run's deployment
+  const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
+  const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
+
   // Run the snapshot runtime
   runtimeLogger.debug('Snapshot runtime: invoking VM', {
     workflowRunId: runId,
@@ -139,6 +144,7 @@ export async function runWorkflowWithSnapshots(params: {
     workflowRun,
     events,
     existingSnapshot,
+    encryptionKey,
   });
 
   runtimeLogger.debug('Snapshot runtime: VM returned', {
