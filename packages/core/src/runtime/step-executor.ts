@@ -7,8 +7,8 @@ import {
 } from '@workflow/errors';
 import { pluralize } from '@workflow/utils';
 import { getPort } from '@workflow/utils/get-port';
-import { SPEC_VERSION_CURRENT } from '@workflow/world';
 import type { World } from '@workflow/world';
+import { SPEC_VERSION_CURRENT } from '@workflow/world';
 import type { CryptoKey } from '../encryption.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger, stepLogger } from '../logger.js';
@@ -116,7 +116,7 @@ export async function executeStep(
             1,
             typeof err.retryAfter === 'number' ? err.retryAfter : 1
           );
-          runtimeLogger.warn('Throttled on step_started, deferring', {
+          runtimeLogger.info('Throttled on step_started, deferring', {
             retryAfterSeconds: retryAfter,
           });
           return { type: 'throttled', timeoutSeconds: retryAfter };
@@ -199,7 +199,7 @@ export async function executeStep(
         });
       } catch (err) {
         if (WorkflowAPIError.is(err) && err.status === 409) {
-          runtimeLogger.warn(
+          runtimeLogger.info(
             'Tried failing step, but step has already finished.',
             {
               workflowRunId,
@@ -328,7 +328,7 @@ export async function executeStep(
         })
         .catch((err) => {
           if (WorkflowAPIError.is(err) && err.status === 409) {
-            runtimeLogger.warn(
+            runtimeLogger.info(
               'Tried completing step, but step has already finished.',
               {
                 workflowRunId,
@@ -421,7 +421,7 @@ export async function executeStep(
           });
         } catch (stepFailErr) {
           if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
-            runtimeLogger.warn(
+            runtimeLogger.info(
               'Tried failing step, but step has already finished.',
               {
                 workflowRunId,
@@ -472,7 +472,7 @@ export async function executeStep(
           });
         } catch (stepFailErr) {
           if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
-            runtimeLogger.warn(
+            runtimeLogger.info(
               'Tried failing step, but step has already finished.',
               {
                 workflowRunId,
@@ -494,14 +494,14 @@ export async function executeStep(
 
       // Retries remaining
       if (RetryableError.is(err)) {
-        stepLogger.warn('Encountered RetryableError, step will be retried', {
+        stepLogger.info('Encountered RetryableError, step will be retried', {
           workflowRunId,
           stepName,
           attempt: currentAttempt,
           message: err.message,
         });
       } else {
-        stepLogger.warn('Encountered Error, step will be retried', {
+        stepLogger.info('Encountered Error, step will be retried', {
           workflowRunId,
           stepName,
           attempt: currentAttempt,
@@ -522,7 +522,7 @@ export async function executeStep(
         });
       } catch (stepRetryErr) {
         if (WorkflowAPIError.is(stepRetryErr) && stepRetryErr.status === 409) {
-          runtimeLogger.warn(
+          runtimeLogger.info(
             'Tried retrying step, but step has already finished.',
             {
               workflowRunId,
