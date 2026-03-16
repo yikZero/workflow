@@ -142,10 +142,17 @@ export function pollWritableLock(
 
     // Check if lock is released (not closed) and no pending ops
     if (isWritableUnlockedNotClosed(writable) && state.pendingOps === 0) {
-      state.doneResolved = true;
-      state.resolve();
       clearInterval(intervalId);
       state.writablePollingInterval = undefined;
+      // Delay resolution briefly to allow any scheduled sink flush timers
+      // (e.g., WorkflowServerWritableStream's 10ms buffer flush) to fire
+      // before the V2 inline loop considers the ops settled.
+      setTimeout(() => {
+        if (!state.doneResolved && !state.streamEnded) {
+          state.doneResolved = true;
+          state.resolve();
+        }
+      }, 20);
     }
   }, LOCK_POLL_INTERVAL_MS);
 
