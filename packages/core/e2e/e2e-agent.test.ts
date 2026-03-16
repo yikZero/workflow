@@ -35,7 +35,7 @@ beforeAll(async () => {
 // Core agent tests
 // ============================================================================
 
-describe.skip('DurableAgent e2e', { timeout: 120_000 }, () => {
+describe('DurableAgent e2e', { timeout: 120_000 }, () => {
   describe('core', () => {
     it('basic text response', async () => {
       const run = await start(await agentE2e('agentBasicE2e'), ['hello world']);
