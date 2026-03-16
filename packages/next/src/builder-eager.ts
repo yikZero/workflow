@@ -23,6 +23,17 @@ export async function getNextBuilderEager() {
   )) as typeof import('@workflow/builders');
 
   class NextBuilder extends BaseBuilderClass {
+    /**
+     * Returns ALL files from configured dirs without the App/Pages Router
+     * entrypoint filter. Used for workflow/step discovery so that files in
+     * `workflows/` and `src/workflows/` are found even when import-chain
+     * resolution fails in the discovery esbuild build (e.g. when path
+     * aliases like `@/*` cannot be resolved).
+     */
+    private async getAllInputFiles(): Promise<string[]> {
+      return super.getInputFiles();
+    }
+
     async build() {
       const outputDir = await this.findAppDirectory();
       const workflowGeneratedDir = join(outputDir, '.well-known/workflow/v1');
@@ -36,10 +47,25 @@ export async function getNextBuilderEager() {
       const inputFiles = await this.getInputFiles();
       const tsconfigPath = await this.findTsConfigPath();
 
+      // Discover workflow/step files from ALL files in configured dirs, not
+      // just the filtered App/Pages Router entrypoints. The discovery esbuild
+      // build follows import chains from entry points, but when path alias
+      // resolution fails (e.g. `@/_workflows`) files in `workflows/` are
+      // silently dropped. Using all files as entry points ensures every
+      // workflow/step file is directly loaded by the discovery plugin.
+      const allFiles = await this.getAllInputFiles();
+      const stepsRouteDir = join(workflowGeneratedDir, 'step');
+      await mkdir(stepsRouteDir, { recursive: true });
+      const discoveredEntries = await this.discoverEntries(
+        allFiles,
+        stepsRouteDir
+      );
+
       const options = {
         inputFiles,
         workflowGeneratedDir,
         tsconfigPath,
+        discoveredEntries,
       };
 
       const { manifest: stepsManifest, context: stepsBuildContext } =
@@ -191,7 +217,12 @@ export async function getNextBuilderEager() {
 
         const fullRebuild = async () => {
           const newInputFiles = await this.getInputFiles();
+          const newAllFiles = await this.getAllInputFiles();
           options.inputFiles = newInputFiles;
+          options.discoveredEntries = await this.discoverEntries(
+            newAllFiles,
+            join(workflowGeneratedDir, 'step')
+          );
 
           await stepsCtx.dispose();
           const { context: newStepsCtx } =
@@ -435,10 +466,12 @@ export async function getNextBuilderEager() {
       inputFiles,
       workflowGeneratedDir,
       tsconfigPath,
+      discoveredEntries,
     }: {
       inputFiles: string[];
       workflowGeneratedDir: string;
       tsconfigPath?: string;
+      discoveredEntries?: Awaited<ReturnType<NextBuilder['discoverEntries']>>;
     }) {
       // Create steps bundle
       const stepsRouteDir = join(workflowGeneratedDir, 'step');
@@ -454,6 +487,7 @@ export async function getNextBuilderEager() {
         outfile: join(stepsRouteDir, 'route.js'),
         externalizeNonSteps: true,
         tsconfigPath,
+        discoveredEntries,
       });
     }
 
@@ -461,10 +495,12 @@ export async function getNextBuilderEager() {
       inputFiles,
       workflowGeneratedDir,
       tsconfigPath,
+      discoveredEntries,
     }: {
       inputFiles: string[];
       workflowGeneratedDir: string;
       tsconfigPath?: string;
+      discoveredEntries?: Awaited<ReturnType<NextBuilder['discoverEntries']>>;
     }) {
       const workflowsRouteDir = join(workflowGeneratedDir, 'flow');
       await mkdir(workflowsRouteDir, { recursive: true });
@@ -474,6 +510,7 @@ export async function getNextBuilderEager() {
         bundleFinalOutput: false,
         inputFiles,
         tsconfigPath,
+        discoveredEntries,
       });
     }
 
