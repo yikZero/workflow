@@ -134,6 +134,12 @@ export function workflowEntrypoint(
                   ...Attribute.WorkflowTracePropagated(!!traceContext),
                 });
 
+                runtimeLogger.debug('Queue handler invoked', {
+                  workflowRunId: runId,
+                  workflowName,
+                  queueName: metadata.queueName,
+                });
+
                 let workflowStartedAt = -1;
                 let workflowRun = await world.runs.get(runId);
 
@@ -222,13 +228,19 @@ export function workflowEntrypoint(
 
                 // --- Snapshot runtime (opt-in via WORKFLOW_RUNTIME=snapshot) ---
                 if (USE_SNAPSHOT_RUNTIME) {
-                  runtimeLogger.info('Using snapshot runtime', {
+                  runtimeLogger.debug('Using snapshot runtime', {
                     workflowRunId: runId,
                   });
                   const snapshotResult = await runWorkflowWithSnapshots({
                     workflowCode,
                     workflowName,
                     workflowRun,
+                  });
+                  runtimeLogger.debug('Snapshot runtime returned', {
+                    workflowRunId: runId,
+                    hasTimeoutSeconds:
+                      snapshotResult?.timeoutSeconds !== undefined,
+                    timeoutSeconds: snapshotResult?.timeoutSeconds,
                   });
                   if (snapshotResult?.timeoutSeconds !== undefined) {
                     return {

@@ -126,12 +126,27 @@ export async function runWorkflowWithSnapshots(params: {
   }
 
   // Run the snapshot runtime
+  runtimeLogger.debug('Snapshot runtime: invoking VM', {
+    workflowRunId: runId,
+    workflowId,
+    eventCount: events.length,
+    hasSnapshot: !!existingSnapshot,
+  });
+
   const result = await runSnapshotWorkflow({
     workflowCode,
     workflowId,
     workflowRun,
     events,
     existingSnapshot,
+  });
+
+  runtimeLogger.debug('Snapshot runtime: VM returned', {
+    workflowRunId: runId,
+    completed: !!result.completed,
+    suspended: !!result.suspended,
+    failed: !!result.failed,
+    pendingOpsCount: result.suspended?.pendingOperations?.length,
   });
 
   if (result.completed) {
@@ -313,9 +328,33 @@ export async function runWorkflowWithSnapshots(params: {
           if (WorkflowAPIError.is(err) && err.status === 409) continue;
           throw err;
         }
+      }
+    }
 
-        // Calculate timeout for re-queuing the workflow
-        const resumeMs = new Date(wait.resumeAt).getTime() - Date.now();
+    // Handle pending waits — both newly created and pre-existing from the
+    // snapshot. For each wait, either create a wait_completed event (if
+    // elapsed) or schedule a timeout for re-queuing.
+    let needsRequeue = false;
+    for (const op of pendingOperations) {
+      if (op.type !== 'wait') continue;
+      const wait = op as PendingWait;
+      const resumeMs = new Date(wait.resumeAt).getTime() - Date.now();
+
+      if (resumeMs <= 0) {
+        // Wait has elapsed — create wait_completed and re-queue
+        try {
+          await world.events.create(runId, {
+            eventType: 'wait_completed',
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: wait.correlationId,
+          });
+          needsRequeue = true;
+        } catch (err) {
+          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          throw err;
+        }
+      } else {
+        // Wait hasn't elapsed yet — schedule a timeout
         const timeoutSeconds = Math.max(1, Math.ceil(resumeMs / 1000));
         if (
           minTimeoutSeconds === undefined ||
@@ -324,6 +363,12 @@ export async function runWorkflowWithSnapshots(params: {
           minTimeoutSeconds = timeoutSeconds;
         }
       }
+    }
+
+    if (needsRequeue) {
+      // An elapsed wait was completed — re-queue immediately so the
+      // snapshot runtime can process the wait_completed event.
+      return { timeoutSeconds: 0 };
     }
 
     if (minTimeoutSeconds !== undefined) {
@@ -342,6 +387,7 @@ export async function runWorkflowWithSnapshots(params: {
       workflowRunId: runId,
       errorName: result.failed.name,
       errorMessage: result.failed.message,
+      errorStack,
     });
 
     // Delete the snapshot

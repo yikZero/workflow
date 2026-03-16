@@ -4,6 +4,7 @@ import type { WorkflowInvokePayload, World } from '@workflow/world';
 import { isLegacySpecVersion, SPEC_VERSION_CURRENT } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
 import { importKey } from '../encryption.js';
+import { runtimeLogger } from '../logger.js';
 import type { Serializable } from '../schemas.js';
 import { dehydrateWorkflowArguments } from '../serialization.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
@@ -202,8 +203,15 @@ export async function start<TArgs extends unknown[], TResult>(
         ...Attribute.DeploymentId(deploymentId),
       });
 
+      const queueName = getWorkflowQueueName(workflowName);
+      runtimeLogger.debug('Queuing workflow execution', {
+        workflowRunId: runId,
+        queueName,
+        deploymentId,
+      });
+
       await world.queue(
-        getWorkflowQueueName(workflowName),
+        queueName,
         {
           runId,
           traceCarrier,
@@ -212,6 +220,11 @@ export async function start<TArgs extends unknown[], TResult>(
           deploymentId,
         }
       );
+
+      runtimeLogger.debug('Workflow execution queued', {
+        workflowRunId: runId,
+        queueName,
+      });
 
       return new Run<TResult>(runId);
     });

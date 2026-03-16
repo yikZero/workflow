@@ -131,10 +131,10 @@ export function getCommonReducers(): Partial<Reducers> {
         return { bodyInit };
       }
       // Preserve stream name if present (opaque pointer for passing to steps)
-      const name = value[Symbol.for('STREAM_NAME')];
+      const name = value[Symbol.for('WORKFLOW_STREAM_NAME')];
       if (name) {
         const s: any = { name };
-        const type = value[Symbol.for('STREAM_TYPE')];
+        const type = value[Symbol.for('WORKFLOW_STREAM_TYPE')];
         if (type) s.type = type;
         return s;
       }
@@ -148,7 +148,7 @@ export function getCommonReducers(): Partial<Reducers> {
         !(value instanceof WS || Object.getPrototypeOf(value) === WS.prototype)
       )
         return false;
-      const name = value[Symbol.for('STREAM_NAME')];
+      const name = value[Symbol.for('WORKFLOW_STREAM_NAME')];
       return { name: name || '__empty' };
     }) as any,
     Set: (value) => value instanceof Set && Array.from(value),
@@ -261,8 +261,8 @@ export function getCommonRevivers(): Partial<Revivers> {
         // Named stream reference — preserve the name/type for re-serialization.
         // Streams are opaque pointers in the VM — they can be passed to steps
         // but not consumed directly.
-        stream[Symbol.for('STREAM_NAME')] = value.name;
-        if (value.type) stream[Symbol.for('STREAM_TYPE')] = value.type;
+        stream[Symbol.for('WORKFLOW_STREAM_NAME')] = value.name;
+        if (value.type) stream[Symbol.for('WORKFLOW_STREAM_TYPE')] = value.type;
       }
       return stream;
     },
@@ -270,7 +270,7 @@ export function getCommonRevivers(): Partial<Revivers> {
       const WS = (globalThis as any).WritableStream;
       const stream = Object.create(WS ? WS.prototype : {});
       if (value && 'name' in value) {
-        stream[Symbol.for('STREAM_NAME')] = value.name;
+        stream[Symbol.for('WORKFLOW_STREAM_NAME')] = value.name;
       }
       return stream;
     },

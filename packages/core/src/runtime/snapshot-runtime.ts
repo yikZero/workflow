@@ -404,6 +404,34 @@ globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
 
   return hook;
 };
+
+// WORKFLOW_GET_STREAM_ID — generates a stream ID for a workflow run.
+// Replicates getWorkflowRunStreamId() from util.ts inside the QuickJS VM.
+// Needs a base64url encoder since Buffer is not available in QuickJS.
+(function() {
+  var BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function base64url(str) {
+    var bytes = new TextEncoder().encode(str);
+    var result = "";
+    for (var i = 0; i < bytes.length; i += 3) {
+      var b0 = bytes[i], b1 = bytes[i+1] || 0, b2 = bytes[i+2] || 0;
+      result += BASE64_CHARS[b0 >> 2];
+      result += BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+      if (i + 1 < bytes.length) result += BASE64_CHARS[((b1 & 15) << 2) | (b2 >> 6)];
+      if (i + 2 < bytes.length) result += BASE64_CHARS[b2 & 63];
+    }
+    // base64url: replace + with -, / with _, strip padding
+    return result.replace(/\\+/g, "-").replace(/\\//g, "_");
+  }
+  globalThis[Symbol.for("WORKFLOW_GET_STREAM_ID")] = function(namespace) {
+    var runId = globalThis[Symbol.for("WORKFLOW_CONTEXT")]
+      ? globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowRunId
+      : "";
+    var streamId = runId.replace("wrun_", "strm_") + "_user";
+    if (!namespace) return streamId;
+    return streamId + "_" + base64url(namespace);
+  };
+})();
 `;
 
 // ---- Runtime ----
@@ -866,6 +894,7 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
       runtimeLogger.error('Snapshot runtime: workflow failed in VM', {
         errorMessage: failed.message,
         errorName: failed.name,
+        errorStack: failed.stack,
       });
       vm.dispose();
       return { failed };
