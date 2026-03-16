@@ -320,14 +320,14 @@ export async function executeStep(
             err?.name === 'AbortError' || err?.name === 'ResponseAborted';
           if (!isAbortError) throw err;
         });
+        // Always register with waitUntil to extend function lifetime.
+        // Even after the ops promise resolves, there may be in-flight
+        // HTTP responses (S3 write acks) that need the function alive.
+        waitUntil(opsPromise);
         opsSettled = await Promise.race([
           opsPromise.then(() => true as const),
           new Promise<false>((r) => setTimeout(() => r(false), 500)),
         ]);
-        if (!opsSettled) {
-          // Ops didn't settle in 500ms — hand off to waitUntil
-          waitUntil(opsPromise);
-        }
       }
 
       // Create step_completed event
