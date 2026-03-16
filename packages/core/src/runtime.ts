@@ -227,6 +227,7 @@ export function workflowEntrypoint(
                   // Standard workflow replay
                   let workflowRun = await world.runs.get(runId);
                   let workflowStartedAt = -1;
+                  let replayStart = 0;
                   try {
                     if (workflowRun.status === 'pending') {
                       const result = await world.events.create(runId, {
@@ -337,12 +338,23 @@ export function workflowEntrypoint(
                     const encryptionKey = rawKey
                       ? await importKey(rawKey)
                       : undefined;
+                    runtimeLogger.debug('Starting workflow replay', {
+                      workflowRunId: runId,
+                      loopIteration,
+                      eventCount: events.length,
+                    });
+                    replayStart = Date.now();
                     const result = await runWorkflow(
                       workflowCode,
                       workflowRun,
                       events,
                       encryptionKey
                     );
+                    runtimeLogger.debug('Workflow replay completed', {
+                      workflowRunId: runId,
+                      loopIteration,
+                      replayMs: Date.now() - replayStart,
+                    });
 
                     // Workflow completed
                     try {
@@ -371,6 +383,14 @@ export function workflowEntrypoint(
                     return;
                   } catch (err) {
                     if (WorkflowSuspension.is(err)) {
+                      runtimeLogger.debug('Workflow suspended', {
+                        workflowRunId: runId,
+                        loopIteration,
+                        replayMs: Date.now() - replayStart,
+                        steps: err.stepCount,
+                        hooks: err.hookCount,
+                        waits: err.waitCount,
+                      });
                       const suspensionMessage = buildWorkflowSuspensionMessage(
                         runId,
                         err.stepCount,
@@ -382,11 +402,19 @@ export function workflowEntrypoint(
                       }
 
                       // V2: handle suspension without queuing steps
+                      const suspensionStart = Date.now();
                       const suspensionResult = await handleSuspension({
                         suspension: err,
                         world,
                         run: workflowRun,
                         span,
+                      });
+                      runtimeLogger.debug('Suspension handled', {
+                        workflowRunId: runId,
+                        suspensionMs: Date.now() - suspensionStart,
+                        pendingSteps: suspensionResult.pendingSteps.length,
+                        timeoutSeconds: suspensionResult.timeoutSeconds,
+                        hasHookConflict: suspensionResult.hasHookConflict,
                       });
 
                       // Hook conflict: break loop, re-invoke via queue
