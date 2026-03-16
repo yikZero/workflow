@@ -14,6 +14,7 @@
  */
 
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
+import * as nanoid from 'nanoid';
 import { JSException, QuickJS } from 'quickjs-wasi';
 import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
@@ -327,7 +328,7 @@ if (typeof Request === "undefined") {
 // The promise is resolved when a hook_received event arrives.
 globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
   options = options || {};
-  var token = options.token || ("tok_" + globalThis.__generateUlid());
+  var token = options.token || globalThis.__generateNanoid();
   var correlationId = "hook_" + globalThis.__generateUlid();
   var isDisposed = false;
   var hasCreatedEvent = false;
@@ -453,6 +454,12 @@ export async function runSnapshotWorkflow(
 
   let vm: QuickJS;
 
+  // Seeded nanoid generator — uses the same nanoid package and seeded PRNG
+  // as the event-replay runtime for consistent token generation.
+  const generateNanoid = nanoid.customRandom(nanoid.urlAlphabet, 21, (size) =>
+    new Uint8Array(size).map(() => 256 * rng())
+  );
+
   if (existingSnapshot) {
     // ---- RESTORE from snapshot ----
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
@@ -462,6 +469,17 @@ export async function runSnapshotWorkflow(
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
     });
+
+    // Re-register host callbacks after restore. Host functions (Math.random,
+    // __generateNanoid) are backed by callback IDs stored in the WASM heap.
+    // After restore, the callback registry is empty — we must re-register
+    // each callback with the same ID it had during the original creation.
+    // IDs are assigned sequentially by newFunction() starting from
+    // vm.nextCallbackId (which is 1 in quickjs-wasi). We must use the same
+    // base + offset as the first-run registration order.
+    const baseId = 1; // quickjs-wasi starts nextCallbackId at 1
+    vm.registerHostCallback(baseId, () => vm.newNumber(rng()));
+    vm.registerHostCallback(baseId + 1, () => vm.newString(generateNanoid()));
 
     // Note: __wdk_serialize/__wdk_deserialize are JS functions in the VM
     // (set by the serde bundle), so they survive snapshot/restore as part
@@ -490,11 +508,19 @@ export async function runSnapshotWorkflow(
       interruptHandler: createInterruptHandler(),
     });
 
-    // Seeded Math.random
+    // Seeded Math.random — host callback ID = baseId
     {
       using randomFn = vm.newFunction('random', () => vm.newNumber(rng()));
       using math = vm.global.getProp('Math');
       math.setProp('random', randomFn);
+    }
+
+    // Seeded nanoid generator — host callback ID = baseId + 1
+    {
+      using nanoidFn = vm.newFunction('__generateNanoid', () =>
+        vm.newString(generateNanoid())
+      );
+      vm.setProp(vm.global, '__generateNanoid', nanoidFn);
     }
 
     // Evaluate the VM serde bundle
@@ -901,6 +927,12 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
       const snapshot = vm.snapshot();
       const serialized = QuickJS.serializeSnapshot(snapshot);
       vm.dispose();
+
+      runtimeLogger.debug('Snapshot runtime: serialized snapshot', {
+        type: typeof serialized,
+        byteLength: serialized?.byteLength,
+        length: serialized?.length,
+      });
 
       return {
         suspended: {

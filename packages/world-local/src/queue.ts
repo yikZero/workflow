@@ -329,6 +329,10 @@ export function createQueue(config: Partial<Config>): LocalQueue {
 
         return Response.json({ ok: true });
       } catch (error) {
+        console.error(
+          '[local world] Queue handler error:',
+          error instanceof Error ? error.stack : String(error)
+        );
         return Response.json(String(error), { status: 500 });
       }
     };

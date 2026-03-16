@@ -210,6 +210,14 @@ export async function runWorkflowWithSnapshots(params: {
     });
 
     // Save the snapshot
+    runtimeLogger.debug('Snapshot runtime: saving snapshot', {
+      workflowRunId: runId,
+      snapshotType: typeof snapshot,
+      snapshotIsUint8Array: snapshot instanceof Uint8Array,
+      snapshotLength: snapshot?.length,
+      snapshotByteLength: snapshot?.byteLength,
+      eventsCursor: lastEventsCursor,
+    });
     await world.snapshots.save(runId, snapshot, {
       eventsCursor: lastEventsCursor,
       createdAt: new Date(),
@@ -261,6 +269,13 @@ export async function runWorkflowWithSnapshots(params: {
         );
       } else if (op.type === 'hook' && !op.hasCreatedEvent) {
         const hook = op as PendingHook;
+        runtimeLogger.debug('Snapshot runtime: creating hook_created event', {
+          workflowRunId: runId,
+          correlationId: hook.correlationId,
+          token: hook.token,
+          tokenType: typeof hook.token,
+          isWebhook: hook.isWebhook,
+        });
 
         // Create hook_created event.
         // First check if our hook entity already exists (stale-snapshot race
