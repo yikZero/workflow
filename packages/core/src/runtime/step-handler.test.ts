@@ -1,5 +1,5 @@
-import { FatalError, WorkflowAPIError } from '@workflow/errors';
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { WorkflowAPIError } from '@workflow/errors';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Use vi.hoisted so these are available in mock factories
 const {
@@ -96,7 +96,6 @@ vi.mock('./helpers.js', async () => {
     withHealthCheck: (handler: unknown) => handler,
     parseHealthCheckPayload: vi.fn().mockReturnValue(null),
     handleHealthCheckMessage: vi.fn(),
-    withServerErrorRetry: async (fn: () => Promise<unknown>) => fn(),
   };
 });
 
@@ -145,9 +144,9 @@ vi.mock('@workflow/utils/get-port', () => ({
 import './step-handler.js';
 import { getStepFunction } from '../private.js';
 import {
-  normalizeUnknownError,
   getErrorName,
   getErrorStack,
+  normalizeUnknownError,
 } from '../types.js';
 import { getWorld } from './world.js';
 
@@ -263,7 +262,7 @@ describe('step-handler 409 handling', () => {
       // Should not throw, should return undefined (early return)
       expect(result).toBeUndefined();
       // Should have logged a warning, not an error
-      expect(mockRuntimeLogger.warn).toHaveBeenCalledWith(
+      expect(mockRuntimeLogger.info).toHaveBeenCalledWith(
         'Tried completing step, but step has already finished.',
         expect.objectContaining({
           workflowRunId: 'wrun_test123',
@@ -313,7 +312,7 @@ describe('step-handler 409 handling', () => {
       );
 
       expect(result).toBeUndefined();
-      expect(mockRuntimeLogger.warn).toHaveBeenCalledWith(
+      expect(mockRuntimeLogger.info).toHaveBeenCalledWith(
         'Tried failing step, but step has already finished.',
         expect.objectContaining({
           workflowRunId: 'wrun_test123',
@@ -360,7 +359,7 @@ describe('step-handler 409 handling', () => {
       );
 
       expect(result).toBeUndefined();
-      expect(mockRuntimeLogger.warn).toHaveBeenCalledWith(
+      expect(mockRuntimeLogger.info).toHaveBeenCalledWith(
         'Tried failing step, but step has already finished.',
         expect.objectContaining({
           workflowRunId: 'wrun_test123',
@@ -410,7 +409,7 @@ describe('step-handler 409 handling', () => {
       );
 
       expect(result).toBeUndefined();
-      expect(mockRuntimeLogger.warn).toHaveBeenCalledWith(
+      expect(mockRuntimeLogger.info).toHaveBeenCalledWith(
         'Tried retrying step, but step has already finished.',
         expect.objectContaining({
           workflowRunId: 'wrun_test123',
