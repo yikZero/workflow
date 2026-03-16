@@ -140,28 +140,12 @@ export function pollWritableLock(
       return;
     }
 
-    // Check if lock is released (not closed) and no pending ops.
-    // Close the writable to signal the transform to flush remaining
-    // data. The flushablePipe will read the flushed data, write it
-    // to the server sink (including awaiting the S3 HTTP round-trip),
-    // call sink.close() (which flushes any buffered chunks), and
-    // then resolve state.promise via the stream-ended path.
-    // This ensures data is actually on the server before the ops
-    // promise settles, avoiding the V2 inline loop racing ahead.
+    // Check if lock is released (not closed) and no pending ops
     if (isWritableUnlockedNotClosed(writable) && state.pendingOps === 0) {
+      state.doneResolved = true;
+      state.resolve();
       clearInterval(intervalId);
       state.writablePollingInterval = undefined;
-      try {
-        const writer = writable.getWriter();
-        writer.close().catch(() => {});
-        writer.releaseLock();
-      } catch {
-        // Stream may already be errored/closed — resolve directly
-        if (!state.doneResolved) {
-          state.doneResolved = true;
-          state.resolve();
-        }
-      }
     }
   }, LOCK_POLL_INTERVAL_MS);
 

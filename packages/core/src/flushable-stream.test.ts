@@ -58,10 +58,8 @@ describe('flushable stream behavior', () => {
     expect(chunks).toContain('chunk1');
     expect(chunks).toContain('chunk2');
 
-    // Stream IS closed — pollWritableLock closes the writable after lock
-    // release to trigger the transform flush, ensuring data reaches the
-    // server sink before the ops promise settles.
-    expect(streamClosed).toBe(true);
+    // Stream should NOT be closed (user only released lock)
+    expect(streamClosed).toBe(false);
   });
 
   it('promise should resolve when writable stream closes naturally', async () => {

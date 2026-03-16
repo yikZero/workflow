@@ -307,28 +307,13 @@ export async function executeStep(
         return dehydrated;
       });
 
-      // Flush pending ops (stream writes, etc.) with a short inline wait.
-      // Most ops resolve within ~200ms (flushable pipe detects lock release
-      // via 100ms polling). Awaiting inline keeps the V2 loop going without
-      // a queue round-trip. If ops don't resolve in 500ms (e.g., a
-      // WritableStream kept open across steps), waitUntil handles the rest
-      // and the caller can decide to break the loop via hasPendingOps.
-      let opsSettled = true;
-      if (ops.length > 0) {
-        const opsPromise = Promise.all(ops).catch((err) => {
+      waitUntil(
+        Promise.all(ops).catch((err) => {
           const isAbortError =
             err?.name === 'AbortError' || err?.name === 'ResponseAborted';
           if (!isAbortError) throw err;
-        });
-        // Always register with waitUntil to extend function lifetime.
-        // Even after the ops promise resolves, there may be in-flight
-        // HTTP responses (S3 write acks) that need the function alive.
-        waitUntil(opsPromise);
-        opsSettled = await Promise.race([
-          opsPromise.then(() => true as const),
-          new Promise<false>((r) => setTimeout(() => r(false), 500)),
-        ]);
-      }
+        })
+      );
 
       // Create step_completed event
       let stepCompleted409 = false;
@@ -368,17 +353,15 @@ export async function executeStep(
       });
 
       if (ops.length > 0) {
-        stepLogger.debug('Step ops status', {
+        stepLogger.debug('Step has pending ops', {
           workflowRunId,
           stepName,
           opsCount: ops.length,
-          settled: opsSettled,
         });
       }
-      // hasPendingOps = true only when ops didn't settle within the
-      // inline timeout. This tells the V2 handler to break the loop
+      // hasPendingOps signals the V2 handler to break the loop
       // and queue a continuation so waitUntil can flush them.
-      return { type: 'completed', hasPendingOps: !opsSettled };
+      return { type: 'completed', hasPendingOps: ops.length > 0 };
     } catch (err: unknown) {
       const normalizedError = await normalizeUnknownError(err);
       const normalizedStack = normalizedError.stack || getErrorStack(err) || '';
