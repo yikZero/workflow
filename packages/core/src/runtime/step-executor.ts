@@ -307,13 +307,28 @@ export async function executeStep(
         return dehydrated;
       });
 
-      waitUntil(
-        Promise.all(ops).catch((err) => {
+      // Flush pending ops (stream writes, etc.) with a short inline wait.
+      // Most ops resolve within ~200ms (flushable pipe detects lock release
+      // via 100ms polling). Awaiting inline keeps the V2 loop going without
+      // a queue round-trip. If ops don't resolve in 500ms (e.g., a
+      // WritableStream kept open across steps), waitUntil handles the rest
+      // and the caller can decide to break the loop via hasPendingOps.
+      let opsSettled = true;
+      if (ops.length > 0) {
+        const opsPromise = Promise.all(ops).catch((err) => {
           const isAbortError =
             err?.name === 'AbortError' || err?.name === 'ResponseAborted';
           if (!isAbortError) throw err;
-        })
-      );
+        });
+        opsSettled = await Promise.race([
+          opsPromise.then(() => true as const),
+          new Promise<false>((r) => setTimeout(() => r(false), 500)),
+        ]);
+        if (!opsSettled) {
+          // Ops didn't settle in 500ms — hand off to waitUntil
+          waitUntil(opsPromise);
+        }
+      }
 
       // Create step_completed event
       let stepCompleted409 = false;
@@ -353,13 +368,17 @@ export async function executeStep(
       });
 
       if (ops.length > 0) {
-        stepLogger.debug('Step has pending ops', {
+        stepLogger.debug('Step ops status', {
           workflowRunId,
           stepName,
           opsCount: ops.length,
+          settled: opsSettled,
         });
       }
-      return { type: 'completed', hasPendingOps: ops.length > 0 };
+      // hasPendingOps = true only when ops didn't settle within the
+      // inline timeout. This tells the V2 handler to break the loop
+      // and queue a continuation so waitUntil can flush them.
+      return { type: 'completed', hasPendingOps: !opsSettled };
     } catch (err: unknown) {
       const normalizedError = await normalizeUnknownError(err);
       const normalizedStack = normalizedError.stack || getErrorStack(err) || '';
