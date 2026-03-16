@@ -7,28 +7,9 @@ import {
 import { getHook, getHookByToken, listHooks } from './hooks.js';
 import { instrumentObject } from './instrumentObject.js';
 import { getWorkflowRun, listWorkflowRuns } from './runs.js';
+import { createSnapshotsStorage } from './snapshots.js';
 import { getStep, listWorkflowRunSteps } from './steps.js';
 import type { APIConfig } from './utils.js';
-
-function createSnapshotsStorage(): Storage['snapshots'] {
-  return {
-    async save() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-vercel'
-      );
-    },
-    async load() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-vercel'
-      );
-    },
-    async delete() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-vercel'
-      );
-    },
-  };
-}
 
 export function createStorage(config?: APIConfig): Storage {
   const storage: Storage = {
@@ -57,7 +38,7 @@ export function createStorage(config?: APIConfig): Storage {
       getByToken: (token) => getHookByToken(token, config),
       list: (params) => listHooks(params, config),
     },
-    snapshots: createSnapshotsStorage(),
+    snapshots: createSnapshotsStorage(config),
   };
 
   // Instrument all storage methods with tracing
