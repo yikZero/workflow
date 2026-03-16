@@ -279,8 +279,15 @@ This is the same known limitation described in "Convergence After Parallel Steps
 
 ### Inline Step Execution with Pending Stream Operations
 
-When a step writes to a `WritableStream` (e.g., via `getWritable()`), the stream data is piped to S3 through a background `flushablePipe` operation registered with `waitUntil()`. In V1, each step ran in a separate function invocation — the function returned after the step, and `waitUntil` flushed the stream data to S3 before the function was garbage collected. The test's stream reader could then read the committed data.
+When a step's arguments or return value include serialized streams (e.g., `WritableStream` from `getWritable()`, or AI SDK streaming steps), the serialization layer creates background `flushablePipe` operations that pipe data to S3. These ops are tracked in an `ops` array and need to complete before the stream data is readable by external consumers.
 
-In V2, the inline execution loop continues after the step completes (replay → next sleep → etc.), keeping the function alive and competing for event loop time with the background stream ops. The `waitUntil` ops don't get exclusive event loop time to flush, so the stream data never reaches S3 within the test's 60-second timeout. This caused `outputStreamWorkflow` and `outputStreamInsideStepWorkflow` to consistently time out on Vercel Prod.
+In V1, each step ran in a separate function invocation. After the step completed, `waitUntil(ops)` kept the function alive to flush the ops. The function then returned, giving `waitUntil` exclusive event loop time.
 
-**Fix**: `executeStep()` now returns `hasPendingOps: true` when the step had background operations (stream pipes). The V2 handler checks this flag after inline step execution: if pending ops exist, it breaks the inline loop, queues a workflow continuation, and returns — giving `waitUntil` exclusive control to flush the ops. This matches V1 behavior where each step was a separate function invocation. Steps without stream ops continue to execute inline without the extra queue round-trip.
+In V2, the inline execution loop continues after each step. If ops are fire-and-forget (pure `waitUntil`), the loop competes for event loop time and stream data may never reach S3 before consumers try to read it. Conversely, if the loop unconditionally breaks whenever ops exist, every step with stream serialization (including all AI agent steps that pass `WritableStream` arguments) forces a queue round-trip — defeating inline execution entirely.
+
+**Fix**: `executeStep()` awaits ops inline with a **500ms timeout**. The `flushablePipe` detects lock release via 100ms polling, so most ops settle within ~200ms. If ops settle within the timeout, `hasPendingOps` is `false` and the V2 loop continues inline. If ops don't settle (e.g., a `WritableStream` kept open across multiple step calls), `hasPendingOps` is `true`, `waitUntil` takes over, and the V2 handler breaks the loop and queues a continuation.
+
+This means:
+- **AI agent steps** (WritableStream closed after each step): ops settle inline in ~200ms, loop continues — workflow completes in 1 invocation
+- **Streaming output steps** (WritableStream kept open across steps): ops don't settle, loop breaks — matches V1's per-step invocation model
+- **Simple steps** (no stream ops): no timeout, no overhead — loop continues immediately
