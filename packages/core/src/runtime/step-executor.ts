@@ -352,6 +352,13 @@ export async function executeStep(
         ...Attribute.StepResultType(typeof result),
       });
 
+      if (ops.length > 0) {
+        stepLogger.debug('Step has pending ops', {
+          workflowRunId,
+          stepName,
+          opsCount: ops.length,
+        });
+      }
       return { type: 'completed', hasPendingOps: ops.length > 0 };
     } catch (err: unknown) {
       const normalizedError = await normalizeUnknownError(err);

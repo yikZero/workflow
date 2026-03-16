@@ -511,6 +511,14 @@ export function workflowEntrypoint(
                         stepResult.type === 'completed' &&
                         stepResult.hasPendingOps
                       ) {
+                        runtimeLogger.debug(
+                          'Breaking loop: step has pending ops',
+                          {
+                            workflowRunId: runId,
+                            loopIteration,
+                            stepName: inlineStep.stepName,
+                          }
+                        );
                         await queueMessage(
                           world,
                           getWorkflowQueueName(workflowName),
