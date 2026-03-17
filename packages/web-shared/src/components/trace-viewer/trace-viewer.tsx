@@ -24,6 +24,7 @@ import {
 } from './util/constants';
 import { parseTrace } from './util/tree';
 import { useStreamingSpans } from './util/use-streaming-spans';
+import { TraceViewer2 } from '../trace-2';
 
 interface TraceViewerProps {
   trace?: Trace;
@@ -422,135 +423,138 @@ export function TraceViewerTimeline({
   const inert = Boolean(state.isMobile && state.selected);
 
   return (
-    <div
-      className={clsx(
-        styles.traceViewer,
-        isSkeleton && styles.skeleton,
-        className
-      )}
-      onClickCapture={onClick}
-      ref={ref}
-      style={
-        {
-          height,
-          '--timeline-padding': `${TIMELINE_PADDING}px`,
-          '--row-height': `${ROW_HEIGHT}px`,
-          '--row-padding': `${ROW_PADDING}px`,
-          '--search-height': `${!hideSearchBar ? SEARCH_HEIGHT : 0}px`,
-          '--search-gap': `${!hideSearchBar ? SEARCH_GAP : 2}px`,
-          '--map-height': `${MAP_HEIGHT}px`,
-          '--timeline-width': `${state.timelineWidth}px`,
-          '--timeline-height': `${state.timelineHeight}px`,
-          '--timeline-scroll-width': `${Math.round(state.root.duration * state.scale)}px`,
-          '--panel-width': `${state.panelWidth}px`,
-          '--panel-height': `${state.panelHeight}px`,
-          '--height': `${state.height}px`,
-          '--scrollbar-width': `${state.scrollbarWidth}px`,
-          '--marker-height': `${MARKER_HEIGHT}px`,
-          '--marker-notch-height': `${MARKER_NOTCH_HEIGHT}px`,
-        } as CSSProperties
-      }
-    >
-      {!hideSearchBar ? <SearchBar /> : null}
-      <MiniMap rows={rows} scale={scale} timelineRef={timelineRef} />
-      <div className={clsx(styles.traceViewerContent, inert && styles.inert)}>
-        <div className={styles.timeline} ref={timelineRef}>
-          <div
-            style={{
-              position: 'relative',
-              width: state.timelineWidth,
-              minHeight: state.timelineHeight - TIMELINE_PADDING * 2,
-              padding: TIMELINE_PADDING,
-              paddingBottom: 0,
-            }}
-          >
+    <>
+      <TraceViewer2 trace={trace} />
+      <div
+        className={clsx(
+          styles.traceViewer,
+          isSkeleton && styles.skeleton,
+          className
+        )}
+        onClickCapture={onClick}
+        ref={ref}
+        style={
+          {
+            height,
+            '--timeline-padding': `${TIMELINE_PADDING}px`,
+            '--row-height': `${ROW_HEIGHT}px`,
+            '--row-padding': `${ROW_PADDING}px`,
+            '--search-height': `${!hideSearchBar ? SEARCH_HEIGHT : 0}px`,
+            '--search-gap': `${!hideSearchBar ? SEARCH_GAP : 2}px`,
+            '--map-height': `${MAP_HEIGHT}px`,
+            '--timeline-width': `${state.timelineWidth}px`,
+            '--timeline-height': `${state.timelineHeight}px`,
+            '--timeline-scroll-width': `${Math.round(state.root.duration * state.scale)}px`,
+            '--panel-width': `${state.panelWidth}px`,
+            '--panel-height': `${state.panelHeight}px`,
+            '--height': `${state.height}px`,
+            '--scrollbar-width': `${state.scrollbarWidth}px`,
+            '--marker-height': `${MARKER_HEIGHT}px`,
+            '--marker-notch-height': `${MARKER_NOTCH_HEIGHT}px`,
+          } as CSSProperties
+        }
+      >
+        {!hideSearchBar ? <SearchBar /> : null}
+        <MiniMap rows={rows} scale={scale} timelineRef={timelineRef} />
+        <div className={clsx(styles.traceViewerContent, inert && styles.inert)}>
+          <div className={styles.timeline} ref={timelineRef}>
             <div
-              className={styles.traceNode}
               style={{
-                width: state.root.duration * scale || undefined,
-                height: timelineHeight - TIMELINE_PADDING * 2,
+                position: 'relative',
+                width: state.timelineWidth,
+                minHeight: state.timelineHeight - TIMELINE_PADDING * 2,
+                padding: TIMELINE_PADDING,
+                paddingBottom: 0,
               }}
             >
-              <Markers scale={scale} isLive={isLive} />
-              <EventMarkers events={events} root={state.root} scale={scale} />
-              <CursorMarker
-                dispatch={dispatch}
-                events={events}
-                memoCacheRef={state.memoCacheRef}
-                root={state.root}
-                scale={scale}
-                scrollSnapshotRef={scrollSnapshotRef}
-                spans={spans}
-                timelineRef={timelineRef}
-              />
-              <SpanNodes
-                cacheKey={memoCache.get('')}
-                cache={memoCache}
-                customSpanClassNameFunc={state.customSpanClassNameFunc}
-                customSpanEventClassNameFunc={
-                  state.customSpanEventClassNameFunc
-                }
-                isLive={isLive}
-                root={state.root}
-                scale={scale}
-                scrollSnapshotRef={scrollSnapshotRef}
-                spans={spans}
-              />
-              {/* Horizontal "unknown time" overlay — covers the region to the
+              <div
+                className={styles.traceNode}
+                style={{
+                  width: state.root.duration * scale || undefined,
+                  height: timelineHeight - TIMELINE_PADDING * 2,
+                }}
+              >
+                <Markers scale={scale} isLive={isLive} />
+                <EventMarkers events={events} root={state.root} scale={scale} />
+                <CursorMarker
+                  dispatch={dispatch}
+                  events={events}
+                  memoCacheRef={state.memoCacheRef}
+                  root={state.root}
+                  scale={scale}
+                  scrollSnapshotRef={scrollSnapshotRef}
+                  spans={spans}
+                  timelineRef={timelineRef}
+                />
+                <SpanNodes
+                  cacheKey={memoCache.get('')}
+                  cache={memoCache}
+                  customSpanClassNameFunc={state.customSpanClassNameFunc}
+                  customSpanEventClassNameFunc={
+                    state.customSpanEventClassNameFunc
+                  }
+                  isLive={isLive}
+                  root={state.root}
+                  scale={scale}
+                  scrollSnapshotRef={scrollSnapshotRef}
+                  spans={spans}
+                />
+                {/* Horizontal "unknown time" overlay — covers the region to the
                   right of the latest known event, indicating data beyond this
                   point hasn't been loaded yet. */}
-              {knownDurationMs != null &&
-                knownDurationMs > 0 &&
-                (hasMoreData || isLive) &&
-                state.root.duration > 0 &&
-                (() => {
-                  const knownPx = knownDurationMs * scale;
-                  const totalPx = state.root.duration * scale;
-                  const unknownWidth = totalPx - knownPx;
-                  // Only show if the unknown region is meaningfully wide
-                  if (unknownWidth < 4) return null;
-                  // Offset ~5% into the unknown region so it doesn't touch spans
-                  const insetPx = Math.min(unknownWidth * 0.05, 20);
-                  return (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: knownPx + insetPx,
-                        width: unknownWidth - insetPx,
-                        height: '100%',
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                        maskImage:
-                          'linear-gradient(to right, transparent 1%, black 3%)',
-                        WebkitMaskImage:
-                          'linear-gradient(to right, transparent 1%, black 3%)',
-                        background:
-                          'repeating-linear-gradient(-45deg, var(--ds-background-200) 0, var(--ds-background-200) 11px, var(--ds-gray-200) 11px, var(--ds-gray-200) 12px)',
-                      }}
-                    />
-                  );
-                })()}
+                {knownDurationMs != null &&
+                  knownDurationMs > 0 &&
+                  (hasMoreData || isLive) &&
+                  state.root.duration > 0 &&
+                  (() => {
+                    const knownPx = knownDurationMs * scale;
+                    const totalPx = state.root.duration * scale;
+                    const unknownWidth = totalPx - knownPx;
+                    // Only show if the unknown region is meaningfully wide
+                    if (unknownWidth < 4) return null;
+                    // Offset ~5% into the unknown region so it doesn't touch spans
+                    const insetPx = Math.min(unknownWidth * 0.05, 20);
+                    return (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: knownPx + insetPx,
+                          width: unknownWidth - insetPx,
+                          height: '100%',
+                          pointerEvents: 'none',
+                          zIndex: 1,
+                          maskImage:
+                            'linear-gradient(to right, transparent 1%, black 3%)',
+                          WebkitMaskImage:
+                            'linear-gradient(to right, transparent 1%, black 3%)',
+                          background:
+                            'repeating-linear-gradient(-45deg, var(--ds-background-200) 0, var(--ds-background-200) 11px, var(--ds-gray-200) 11px, var(--ds-gray-200) 12px)',
+                        }}
+                      />
+                    );
+                  })()}
+              </div>
             </div>
+            {footer}
           </div>
-          {footer}
+          <div className={styles.zoomButtonTraceViewer}>
+            <ZoomButton />
+          </div>
         </div>
-        <div className={styles.zoomButtonTraceViewer}>
-          <ZoomButton />
-        </div>
+        {withPanel ? (
+          <div
+            className={clsx(
+              styles.spanDetailPanelTraceViewer,
+              !state.selected && styles.hidden,
+              state.isMobile && styles.mobile
+            )}
+          >
+            <SpanDetailPanel attached />
+          </div>
+        ) : null}
       </div>
-      {withPanel ? (
-        <div
-          className={clsx(
-            styles.spanDetailPanelTraceViewer,
-            !state.selected && styles.hidden,
-            state.isMobile && styles.mobile
-          )}
-        >
-          <SpanDetailPanel attached />
-        </div>
-      ) : null}
-    </div>
+    </>
   );
 }
 
