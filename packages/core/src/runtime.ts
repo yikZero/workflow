@@ -107,6 +107,7 @@ export function workflowEntrypoint(
         requestedAt,
         stepId: incomingStepId,
       } = WorkflowInvokePayloadSchema.parse(message_);
+      const { requestId } = metadata;
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
       const spanLinks = await linkToCurrentContext();
 
@@ -215,10 +216,14 @@ export function workflowEntrypoint(
                 let workflowStartedAt = -1;
                 try {
                   if (workflowRun.status === 'pending') {
-                    const result = await world.events.create(runId, {
-                      eventType: 'run_started',
-                      specVersion: SPEC_VERSION_CURRENT,
-                    });
+                    const result = await world.events.create(
+                      runId,
+                      {
+                        eventType: 'run_started',
+                        specVersion: SPEC_VERSION_CURRENT,
+                      },
+                      { requestId }
+                    );
                     if (!result.run) {
                       throw new WorkflowRuntimeError(
                         `Event creation for 'run_started' did not return the run entity for run "${runId}"`
@@ -248,16 +253,20 @@ export function workflowEntrypoint(
                       { workflowRunId: runId, error: err.message }
                     );
                     try {
-                      await world.events.create(runId, {
-                        eventType: 'run_failed',
-                        specVersion: SPEC_VERSION_CURRENT,
-                        eventData: {
-                          error: {
-                            message: err.message,
-                            stack: err.stack,
+                      await world.events.create(
+                        runId,
+                        {
+                          eventType: 'run_failed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: {
+                            error: {
+                              message: err.message,
+                              stack: err.stack,
+                            },
                           },
                         },
-                      });
+                        { requestId }
+                      );
                     } catch (failErr) {
                       if (
                         WorkflowAPIError.is(failErr) &&
@@ -379,7 +388,8 @@ export function workflowEntrypoint(
                       try {
                         const result = await world.events.create(
                           runId,
-                          waitEvent
+                          waitEvent,
+                          { requestId }
                         );
                         events.push(result.event!);
                       } catch (err) {
@@ -419,11 +429,15 @@ export function workflowEntrypoint(
 
                     // Workflow completed
                     try {
-                      await world.events.create(runId, {
-                        eventType: 'run_completed',
-                        specVersion: SPEC_VERSION_CURRENT,
-                        eventData: { output: result },
-                      });
+                      await world.events.create(
+                        runId,
+                        {
+                          eventType: 'run_completed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: { output: result },
+                        },
+                        { requestId }
+                      );
                     } catch (err) {
                       if (
                         WorkflowAPIError.is(err) &&
@@ -469,6 +483,7 @@ export function workflowEntrypoint(
                         world,
                         run: workflowRun,
                         span,
+                        requestId,
                       });
                       runtimeLogger.debug('Suspension handled', {
                         workflowRunId: runId,
@@ -631,16 +646,20 @@ export function workflowEntrypoint(
                       });
 
                       try {
-                        await world.events.create(runId, {
-                          eventType: 'run_failed',
-                          specVersion: SPEC_VERSION_CURRENT,
-                          eventData: {
-                            error: {
-                              message: errorMessage,
-                              stack: errorStack,
+                        await world.events.create(
+                          runId,
+                          {
+                            eventType: 'run_failed',
+                            specVersion: SPEC_VERSION_CURRENT,
+                            eventData: {
+                              error: {
+                                message: errorMessage,
+                                stack: errorStack,
+                              },
                             },
                           },
-                        });
+                          { requestId }
+                        );
                       } catch (failErr) {
                         if (
                           WorkflowAPIError.is(failErr) &&

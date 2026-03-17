@@ -481,29 +481,34 @@ export async function runWorkflow(
       blob!: () => Promise<Blob>;
       formData!: () => Promise<FormData>;
 
-      async arrayBuffer() {
-        return resArrayBuffer(this);
-      }
+      arrayBuffer!: () => Promise<ArrayBuffer>;
+      json!: () => Promise<any>;
+      text!: () => Promise<string>;
 
       async bytes() {
-        return new Uint8Array(await resArrayBuffer(this));
-      }
-
-      async json() {
-        return resJson(this);
-      }
-
-      async text() {
-        return resText(this);
+        return new Uint8Array(await this.arrayBuffer());
       }
     }
     vmGlobalThis.Request = Request;
 
-    const resJson = useStep<[any], any>('__builtin_response_json');
-    const resText = useStep<[any], string>('__builtin_response_text');
-    const resArrayBuffer = useStep<[any], ArrayBuffer>(
-      '__builtin_response_array_buffer'
-    );
+    Object.defineProperties(Request.prototype, {
+      arrayBuffer: {
+        value: useStep<[], ArrayBuffer>('__builtin_response_array_buffer'),
+        writable: true,
+        configurable: true,
+      },
+      json: {
+        value: useStep<[], any>('__builtin_response_json'),
+        writable: true,
+        configurable: true,
+      },
+      text: {
+        value: useStep<[], string>('__builtin_response_text'),
+        writable: true,
+        configurable: true,
+      },
+    });
+
     class Response implements globalThis.Response {
       type!: globalThis.Response['type'];
       url!: string;
@@ -561,16 +566,12 @@ export async function runWorkflow(
         return false;
       }
 
-      async arrayBuffer() {
-        return resArrayBuffer(this);
-      }
+      arrayBuffer!: () => Promise<ArrayBuffer>;
+      json!: () => Promise<any>;
+      text!: () => Promise<string>;
 
       async bytes() {
-        return new Uint8Array(await resArrayBuffer(this));
-      }
-
-      async json() {
-        return resJson(this);
+        return new Uint8Array(await this.arrayBuffer());
       }
 
       static json(data: any, init?: ResponseInit): Response {
@@ -580,10 +581,6 @@ export async function runWorkflow(
           headers.set('content-type', 'application/json');
         }
         return new Response(body, { ...init, headers });
-      }
-
-      async text() {
-        return resText(this);
       }
 
       static error(): Response {
@@ -615,6 +612,24 @@ export async function runWorkflow(
       }
     }
     vmGlobalThis.Response = Response;
+
+    Object.defineProperties(Response.prototype, {
+      arrayBuffer: {
+        value: useStep<[], ArrayBuffer>('__builtin_response_array_buffer'),
+        writable: true,
+        configurable: true,
+      },
+      json: {
+        value: useStep<[], any>('__builtin_response_json'),
+        writable: true,
+        configurable: true,
+      },
+      text: {
+        value: useStep<[], string>('__builtin_response_text'),
+        writable: true,
+        configurable: true,
+      },
+    });
 
     class ReadableStream<T> implements globalThis.ReadableStream<T> {
       constructor() {

@@ -24,6 +24,7 @@ export interface SuspensionHandlerParams {
   world: World;
   run: WorkflowRun;
   span?: Span;
+  requestId?: string;
 }
 
 /**
@@ -53,6 +54,7 @@ export async function handleSuspension({
   world,
   run,
   span,
+  requestId,
 }: SuspensionHandlerParams): Promise<SuspensionHandlerResult> {
   const runId = run.runId;
   // Separate queue items by type
@@ -107,7 +109,9 @@ export async function handleSuspension({
     await Promise.all(
       hookEvents.map(async (hookEvent) => {
         try {
-          const result = await world.events.create(runId, hookEvent);
+          const result = await world.events.create(runId, hookEvent, {
+            requestId,
+          });
           if (result.event!.eventType === 'hook_conflict') {
             hasHookConflict = true;
           }
@@ -139,7 +143,7 @@ export async function handleSuspension({
           correlationId: queueItem.correlationId,
         };
         try {
-          await world.events.create(runId, hookDisposedEvent);
+          await world.events.create(runId, hookDisposedEvent, { requestId });
         } catch (err) {
           if (WorkflowAPIError.is(err)) {
             if (err.status === 410) {
@@ -201,7 +205,7 @@ export async function handleSuspension({
             },
           };
           try {
-            await world.events.create(runId, stepEvent);
+            await world.events.create(runId, stepEvent, { requestId });
           } catch (err) {
             if (WorkflowAPIError.is(err) && err.status === 409) {
               runtimeLogger.info('Step already exists, continuing', {
@@ -232,7 +236,7 @@ export async function handleSuspension({
             },
           };
           try {
-            await world.events.create(runId, waitEvent);
+            await world.events.create(runId, waitEvent, { requestId });
           } catch (err) {
             if (WorkflowAPIError.is(err) && err.status === 409) {
               runtimeLogger.info('Wait already exists, continuing', {
