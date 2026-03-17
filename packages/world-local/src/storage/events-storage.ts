@@ -31,7 +31,7 @@ import {
   writeExclusive,
   writeJSON,
 } from '../fs.js';
-import { filterEventData } from './filters.js';
+import { stripEventDataRefs } from './filters.js';
 import { getObjectCreatedAt, hashToken, monotonicUlid } from './helpers.js';
 import { deleteAllHooksForRun } from './hooks-storage.js';
 import { handleLegacyEvent } from './legacy.js';
@@ -177,7 +177,7 @@ export function createEventsStorage(
           const resolveData =
             params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
           return {
-            event: filterEventData(event, resolveData),
+            event: stripEventDataRefs(event, resolveData),
             run: currentRun,
           };
         }
@@ -635,7 +635,7 @@ export function createEventsStorage(
 
           const resolveData =
             params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
-          const filteredEvent = filterEventData(conflictEvent, resolveData);
+          const filteredEvent = stripEventDataRefs(conflictEvent, resolveData);
 
           // Return EventResult with conflict event (no hook entity created)
           return {
@@ -767,7 +767,7 @@ export function createEventsStorage(
       await writeJSON(taggedPath(basedir, 'events', compositeKey, tag), event);
 
       const resolveData = params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
-      const filteredEvent = filterEventData(event, resolveData);
+      const filteredEvent = stripEventDataRefs(event, resolveData);
 
       // Return EventResult with event and any created/updated entity
       return {
@@ -792,7 +792,7 @@ export function createEventsStorage(
         throw new Error(`Event ${eventId} in run ${runId} not found`);
       }
       const resolveData = params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
-      return filterEventData(event, resolveData);
+      return stripEventDataRefs(event, resolveData);
     },
 
     async list(params) {
@@ -815,10 +815,9 @@ export function createEventsStorage(
       if (resolveData === 'none') {
         return {
           ...result,
-          data: result.data.map((event) => {
-            const { eventData: _eventData, ...rest } = event as any;
-            return rest;
-          }),
+          data: result.data.map((event) =>
+            stripEventDataRefs(event, resolveData)
+          ),
         };
       }
 
@@ -846,10 +845,9 @@ export function createEventsStorage(
       if (resolveData === 'none') {
         return {
           ...result,
-          data: result.data.map((event) => {
-            const { eventData: _eventData, ...rest } = event as any;
-            return rest;
-          }),
+          data: result.data.map((event) =>
+            stripEventDataRefs(event, resolveData)
+          ),
         };
       }
 
