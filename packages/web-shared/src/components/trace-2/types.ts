@@ -22,6 +22,8 @@ export interface FlatSpan {
   activeStartTime?: number;
   /** Whether this span has an error status */
   isErrored: boolean;
+  /** Whether this run span is still executing (no run_completed/run_failed events) */
+  isRunning: boolean;
   /** Whether this is the last child of its parent at the same depth */
   isLastChild: boolean;
   /** Depth values of ancestors that are NOT last children (for drawing vertical connector lines) */

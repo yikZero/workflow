@@ -1,38 +1,34 @@
 'use client';
 
+import { clsx } from 'clsx';
 import type { ReactNode } from 'react';
 import { memo, useMemo } from 'react';
 import styles from './trace-2.module.css';
 import type { FlatSpan } from './types';
-import { computeTimeMarkers, RESOURCE_COLORS } from './utils';
-import { cva } from 'class-variance-authority';
-
-const barSpan = cva(['rounded-xs', 'bg-gray-200', 'h-4', 'w-full', 'mt-1'], {
-  variants: {
-    color: {
-      blue: 'bg-blue-200',
-      green: 'bg-green-200',
-      amber: 'bg-amber-200',
-      purple: 'bg-purple-200',
-      gray: 'bg-gray-200',
-    },
-  },
-});
+import type { TimeCompression } from './utils';
+import {
+  computeCompressedTimeMarkers,
+  computeTimeMarkers,
+  RESOURCE_COLORS,
+} from './utils';
 
 const TimelineBar = memo(function TimelineBar({
   span,
-  viewStart,
-  viewDuration,
+  compression,
+  isSelected,
+  onClick,
 }: {
   span: FlatSpan;
-  viewStart: number;
-  viewDuration: number;
+  compression: TimeCompression;
+  isSelected: boolean;
+  onClick: () => void;
 }): ReactNode {
-  if (viewDuration <= 0) return null;
+  const leftFrac = compression.toVisual(span.startTime);
+  const rightFrac = compression.toVisual(span.endTime);
+  const widthFrac = rightFrac - leftFrac;
 
-  const relStart = span.startTime - viewStart;
-  const leftPct = (relStart / viewDuration) * 100;
-  const widthPct = (span.duration / viewDuration) * 100;
+  const leftPct = leftFrac * 100;
+  const widthPct = widthFrac * 100;
 
   const colors = RESOURCE_COLORS[span.resourceType];
   const barColor = span.isErrored
@@ -41,17 +37,20 @@ const TimelineBar = memo(function TimelineBar({
 
   const hasQueued =
     span.activeStartTime != null && span.activeStartTime > span.startTime;
-  const queuedDuration = hasQueued ? span.activeStartTime! - span.startTime : 0;
-  const activeDuration = hasQueued
-    ? span.duration - queuedDuration
-    : span.duration;
-  const queuedPct =
-    viewDuration > 0 ? (queuedDuration / viewDuration) * 100 : 0;
-  const activePct =
-    viewDuration > 0 ? (activeDuration / viewDuration) * 100 : 0;
+
+  let queuedBarPct = 0;
+  let activeBarPct = 100;
+  if (hasQueued && widthFrac > 0) {
+    const activeFrac = compression.toVisual(span.activeStartTime!);
+    queuedBarPct = ((activeFrac - leftFrac) / widthFrac) * 100;
+    activeBarPct = 100 - queuedBarPct;
+  }
 
   return (
-    <div className={styles.timelineRow}>
+    <div
+      className={clsx(styles.timelineRow, isSelected && styles.selected)}
+      onClick={onClick}
+    >
       <div
         className={styles.timelineBarContainer}
         style={{
@@ -62,13 +61,13 @@ const TimelineBar = memo(function TimelineBar({
         {hasQueued ? (
           <div className="flex gap-0.5 w-full">
             <div
-              className={barSpan({ color: 'gray' })}
-              style={{ width: `${(queuedPct / widthPct) * 100}%`, minWidth: 4 }}
+              className={styles.barQueued}
+              style={{ width: `${queuedBarPct}%`, minWidth: 4 }}
             />
             <div
               className={styles.barActive}
               style={{
-                width: `${(activePct / widthPct) * 100}%`,
+                width: `${activeBarPct}%`,
                 minWidth: 4,
                 background: barColor,
               }}
@@ -94,27 +93,43 @@ export function Timeline({
   viewStart,
   viewDuration,
   rootStart,
+  compression,
   isZoomed,
   onResetZoom,
+  selectedId,
+  onSelect,
 }: {
   spans: FlatSpan[];
   viewStart: number;
   viewDuration: number;
   rootStart: number;
+  compression: TimeCompression;
   isZoomed: boolean;
   onResetZoom: () => void;
+  selectedId: string | null;
+  onSelect: (spanId: string) => void;
 }): ReactNode {
+  const viewEnd = viewStart + viewDuration;
+
   const markers = useMemo(
-    () => computeTimeMarkers(viewDuration, viewStart - rootStart),
-    [viewDuration, viewStart, rootStart]
+    () =>
+      compression.isCompressed
+        ? computeCompressedTimeMarkers(
+            compression,
+            viewStart,
+            viewEnd,
+            rootStart
+          )
+        : computeTimeMarkers(viewDuration, viewStart - rootStart),
+    [compression, viewStart, viewEnd, viewDuration, rootStart]
   );
 
   return (
     <>
       <div className={styles.timelineHeader}>
-        {markers.map((m) => (
+        {markers.map((m, i) => (
           <span
-            key={m.label}
+            key={i}
             className={styles.timeMarker}
             style={{ left: `${m.position * 100}%` }}
           >
@@ -132,23 +147,17 @@ export function Timeline({
         )}
       </div>
       <div className={styles.timelineBody}>
-        <div className={styles.gridLines}>
-          {markers.map((m) => (
-            <div
-              key={m.label}
-              className={styles.gridLine}
-              style={{ left: `${m.position * 100}%` }}
+        {spans.map((span) => {
+          return (
+            <TimelineBar
+              key={span.spanId}
+              span={span}
+              compression={compression}
+              isSelected={selectedId === span.spanId}
+              onClick={() => onSelect(span.spanId)}
             />
-          ))}
-        </div>
-        {spans.map((span) => (
-          <TimelineBar
-            key={span.spanId}
-            span={span}
-            viewStart={viewStart}
-            viewDuration={viewDuration}
-          />
-        ))}
+          );
+        })}
       </div>
     </>
   );

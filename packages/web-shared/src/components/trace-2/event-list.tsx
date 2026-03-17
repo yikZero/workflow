@@ -131,14 +131,16 @@ export function EventList({
     <>
       <div className={styles.eventListHeader} />
       <div className={styles.eventListBody}>
-        {spans.map((span) => (
-          <EventRow
-            key={span.spanId}
-            span={span}
-            isSelected={selectedId === span.spanId}
-            onClick={() => onSelect(span.spanId)}
-          />
-        ))}
+        {spans.map((span) => {
+          return (
+            <EventRow
+              key={span.spanId}
+              span={span}
+              isSelected={selectedId === span.spanId}
+              onClick={() => onSelect(span.spanId)}
+            />
+          );
+        })}
       </div>
     </>
   );

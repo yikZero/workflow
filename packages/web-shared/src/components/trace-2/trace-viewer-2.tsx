@@ -8,7 +8,7 @@ import { EventList } from './event-list';
 import { Timeline } from './timeline';
 import styles from './trace-2.module.css';
 import type { Trace } from './types';
-import { flattenTrace } from './utils';
+import { buildTimeCompression, flattenTrace } from './utils';
 
 export interface TraceViewer2Props {
   trace?: Trace;
@@ -50,6 +50,12 @@ export function TraceViewer2({
   }, [root.startTime, root.duration]);
 
   const viewDuration = viewport.end - viewport.start;
+
+  const timeCompression = useMemo(
+    () => buildTimeCompression(spans, viewport.start, viewport.end),
+    [spans, viewport.start, viewport.end]
+  );
+
   const isZoomed =
     viewport.start > root.startTime + 0.01 ||
     viewport.end < root.startTime + root.duration - 0.01;
@@ -82,43 +88,7 @@ export function TraceViewer2({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const eventListRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const isSyncing = useRef(false);
-
-  const syncScroll = useCallback((source: 'list' | 'timeline') => {
-    if (isSyncing.current) return;
-    isSyncing.current = true;
-
-    const sourceEl =
-      source === 'list' ? eventListRef.current : timelineRef.current;
-    const targetEl =
-      source === 'list' ? timelineRef.current : eventListRef.current;
-
-    if (sourceEl && targetEl) {
-      targetEl.scrollTop = sourceEl.scrollTop;
-    }
-
-    requestAnimationFrame(() => {
-      isSyncing.current = false;
-    });
-  }, []);
-
-  useEffect(() => {
-    const listEl = eventListRef.current;
-    const timelineEl = timelineRef.current;
-
-    const onListScroll = (): void => syncScroll('list');
-    const onTimelineScroll = (): void => syncScroll('timeline');
-
-    listEl?.addEventListener('scroll', onListScroll, { passive: true });
-    timelineEl?.addEventListener('scroll', onTimelineScroll, { passive: true });
-
-    return () => {
-      listEl?.removeEventListener('scroll', onListScroll);
-      timelineEl?.removeEventListener('scroll', onTimelineScroll);
-    };
-  }, [syncScroll]);
 
   useEffect(() => {
     const el = timelineRef.current;
@@ -205,9 +175,11 @@ export function TraceViewer2({
   if (!trace || spans.length === 0) {
     return (
       <div className={clsx(styles.container, className)}>
-        <div className={styles.eventList} />
-        <div className={styles.divider} />
-        <div className={styles.timeline} />
+        <div className={styles.mainPane}>
+          <div className={styles.eventList} />
+          <div className={styles.divider} />
+          <div className={styles.timeline} />
+        </div>
       </div>
     );
   }
@@ -220,23 +192,32 @@ export function TraceViewer2({
         className
       )}
     >
-      <div ref={eventListRef} className={styles.eventList}>
-        <EventList spans={spans} selectedId={selectedId} onSelect={onSelect} />
-      </div>
-      <div className={styles.divider} />
-      <div
-        ref={timelineRef}
-        className={styles.timeline}
-        onDoubleClick={resetZoom}
-      >
-        <Timeline
-          spans={spans}
-          viewStart={viewport.start}
-          viewDuration={viewDuration}
-          rootStart={root.startTime}
-          isZoomed={isZoomed}
-          onResetZoom={resetZoom}
-        />
+      <div className={styles.mainPane}>
+        <div className={styles.eventList}>
+          <EventList
+            spans={spans}
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
+        </div>
+        <div className={styles.divider} />
+        <div
+          ref={timelineRef}
+          className={styles.timeline}
+          onDoubleClick={resetZoom}
+        >
+          <Timeline
+            spans={spans}
+            viewStart={viewport.start}
+            viewDuration={viewDuration}
+            rootStart={root.startTime}
+            compression={timeCompression}
+            isZoomed={isZoomed}
+            onResetZoom={resetZoom}
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
+        </div>
       </div>
       {selectedSpan ? (
         <DetailPanel

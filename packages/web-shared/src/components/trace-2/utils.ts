@@ -282,6 +282,15 @@ function isSpanErrored(span: SpanNode): boolean {
   return false;
 }
 
+function isRunSpanRunning(node: SpanNode): boolean {
+  if (getResourceType(node) !== 'run') return false;
+  return (
+    !hasSpanEvent(node, 'run_completed') &&
+    !hasSpanEvent(node, 'run_failed') &&
+    !hasSpanEvent(node, 'run_cancelled')
+  );
+}
+
 function flattenNode(
   node: SpanNode,
   result: FlatSpan[],
@@ -291,11 +300,11 @@ function flattenNode(
   activeConnectors: number[],
   parentDepth: number,
   parentIsRoot: boolean,
-  parentIsRun: boolean
+  parentIndentsChildren: boolean
 ): void {
   const isParallelSibling = parallelSiblingIds.has(node.span.spanId);
   const shouldIndentFromParent =
-    parentIsRoot || parentIsRun || isParallelSibling;
+    parentIsRoot || parentIndentsChildren || isParallelSibling;
   const depth = parentDepth + (shouldIndentFromParent ? 1 : 0);
   const isLastParallelSibling =
     !isParallelSibling ||
@@ -315,6 +324,7 @@ function flattenNode(
     duration: node.duration,
     activeStartTime: node.activeStartTime,
     isErrored: isSpanErrored(node),
+    isRunning: isRunSpanRunning(node),
     isLastChild: isLastParallelSibling,
     activeConnectors: [...activeConnectors],
     attributes: node.span.attributes || {},
@@ -344,7 +354,7 @@ function flattenNode(
       nextConnectors,
       depth,
       false,
-      resourceType === 'run'
+      resourceType === 'run' || resourceType === 'hook'
     );
   });
 }
@@ -406,6 +416,269 @@ export function computeTimeMarkers(
     });
   }
   return markers;
+}
+
+// ─── Time Compression ──────────────────────────────────────────────────
+// Compresses idle regions (where only hooks/runs are executing, no steps or
+// sleeps) so that step bars are more visible relative to long-running hooks.
+
+interface TimeSegment {
+  realStart: number;
+  realEnd: number;
+  visualStart: number;
+  visualEnd: number;
+  compressed: boolean;
+}
+
+export interface TimeCompression {
+  segments: TimeSegment[];
+  toVisual: (realTime: number) => number;
+  toReal: (visualFraction: number) => number;
+  breakPoints: number[];
+  isCompressed: boolean;
+}
+
+const COMPRESSION_RATIO = 0.15;
+const HOOK_COMPRESSION_RATIO = 0.02;
+const COMPRESSION_THRESHOLD = 5;
+const ACTIVE_PADDING_MS = 500;
+
+function mergeIntervals(
+  intervals: { start: number; end: number }[]
+): { start: number; end: number }[] {
+  if (intervals.length === 0) return [];
+  intervals.sort((a, b) => a.start - b.start);
+  const merged = [{ ...intervals[0] }];
+  for (let i = 1; i < intervals.length; i++) {
+    const last = merged[merged.length - 1];
+    if (intervals[i].start <= last.end) {
+      last.end = Math.max(last.end, intervals[i].end);
+    } else {
+      merged.push({ ...intervals[i] });
+    }
+  }
+  return merged;
+}
+
+export function buildTimeCompression(
+  spans: FlatSpan[],
+  viewStart: number,
+  viewEnd: number,
+  expandedHookIds?: Set<string>
+): TimeCompression {
+  const viewDuration = viewEnd - viewStart;
+
+  const identity: TimeCompression = {
+    segments: [],
+    toVisual(realTime: number): number {
+      if (viewDuration <= 0) return 0;
+      return Math.max(0, Math.min(1, (realTime - viewStart) / viewDuration));
+    },
+    toReal(visualFraction: number): number {
+      return viewStart + visualFraction * viewDuration;
+    },
+    breakPoints: [],
+    isCompressed: false,
+  };
+
+  if (viewDuration <= 0) return identity;
+
+  const hasCollapsedHooks =
+    expandedHookIds != null &&
+    spans.some(
+      (s) => s.resourceType === 'hook' && !expandedHookIds.has(s.spanId)
+    );
+
+  const compressionRatio = hasCollapsedHooks
+    ? HOOK_COMPRESSION_RATIO
+    : COMPRESSION_RATIO;
+
+  const rawIntervals: { start: number; end: number }[] = [];
+  for (const span of spans) {
+    const isActiveType =
+      span.resourceType === 'step' || span.resourceType === 'sleep';
+    const isExpandedHook =
+      span.resourceType === 'hook' && expandedHookIds?.has(span.spanId);
+    if (!isActiveType && !isExpandedHook) continue;
+    if (span.endTime <= viewStart || span.startTime >= viewEnd) continue;
+    rawIntervals.push({
+      start: Math.max(span.startTime - ACTIVE_PADDING_MS, viewStart),
+      end: Math.min(span.endTime + ACTIVE_PADDING_MS, viewEnd),
+    });
+  }
+
+  if (rawIntervals.length === 0) return identity;
+
+  const merged = mergeIntervals(rawIntervals);
+
+  let totalActive = 0;
+  let totalIdle = 0;
+  let cursor = viewStart;
+  for (const interval of merged) {
+    if (interval.start > cursor) totalIdle += interval.start - cursor;
+    totalActive += interval.end - interval.start;
+    cursor = interval.end;
+  }
+  if (cursor < viewEnd) totalIdle += viewEnd - cursor;
+
+  if (hasCollapsedHooks) {
+    if (totalActive <= 0 || totalIdle <= 0) return identity;
+  } else {
+    if (totalActive <= 0 || totalIdle / totalActive < COMPRESSION_THRESHOLD)
+      return identity;
+  }
+
+  const segments: TimeSegment[] = [];
+  let visualCursor = 0;
+  cursor = viewStart;
+
+  for (const interval of merged) {
+    if (interval.start > cursor) {
+      const realDur = interval.start - cursor;
+      const visualDur = realDur * compressionRatio;
+      segments.push({
+        realStart: cursor,
+        realEnd: interval.start,
+        visualStart: visualCursor,
+        visualEnd: visualCursor + visualDur,
+        compressed: true,
+      });
+      visualCursor += visualDur;
+    }
+    const realDur = interval.end - interval.start;
+    segments.push({
+      realStart: interval.start,
+      realEnd: interval.end,
+      visualStart: visualCursor,
+      visualEnd: visualCursor + realDur,
+      compressed: false,
+    });
+    visualCursor += realDur;
+    cursor = interval.end;
+  }
+
+  if (cursor < viewEnd) {
+    const realDur = viewEnd - cursor;
+    const visualDur = realDur * compressionRatio;
+    segments.push({
+      realStart: cursor,
+      realEnd: viewEnd,
+      visualStart: visualCursor,
+      visualEnd: visualCursor + visualDur,
+      compressed: true,
+    });
+    visualCursor += visualDur;
+  }
+
+  const totalVisual = visualCursor;
+  if (totalVisual <= 0) return identity;
+
+  const breakPoints: number[] = [];
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (segments[i].compressed !== segments[i + 1].compressed) {
+      const position = segments[i].visualEnd / totalVisual;
+      if (position > 0.01 && position < 0.99) {
+        breakPoints.push(position);
+      }
+    }
+  }
+
+  const segs = segments;
+
+  function toVisual(realTime: number): number {
+    if (realTime <= viewStart) return 0;
+    if (realTime >= viewEnd) return 1;
+
+    let lo = 0;
+    let hi = segs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (segs[mid].realEnd <= realTime) lo = mid + 1;
+      else hi = mid;
+    }
+
+    const seg = segs[lo];
+    const realDur = seg.realEnd - seg.realStart;
+    if (realDur <= 0) return seg.visualStart / totalVisual;
+
+    const fraction = (realTime - seg.realStart) / realDur;
+    return (
+      (seg.visualStart + fraction * (seg.visualEnd - seg.visualStart)) /
+      totalVisual
+    );
+  }
+
+  function toReal(visualFraction: number): number {
+    if (visualFraction <= 0) return viewStart;
+    if (visualFraction >= 1) return viewEnd;
+
+    const visualTime = visualFraction * totalVisual;
+    let lo = 0;
+    let hi = segs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (segs[mid].visualEnd <= visualTime) lo = mid + 1;
+      else hi = mid;
+    }
+
+    const seg = segs[lo];
+    const visualDur = seg.visualEnd - seg.visualStart;
+    if (visualDur <= 0) return seg.realStart;
+
+    const fraction = (visualTime - seg.visualStart) / visualDur;
+    return seg.realStart + fraction * (seg.realEnd - seg.realStart);
+  }
+
+  return { segments, toVisual, toReal, breakPoints, isCompressed: true };
+}
+
+export function computeCompressedTimeMarkers(
+  compression: TimeCompression,
+  viewStart: number,
+  viewEnd: number,
+  rootStart: number
+): { label: string; position: number }[] {
+  if (!compression.isCompressed) {
+    return computeTimeMarkers(viewEnd - viewStart, viewStart - rootStart);
+  }
+
+  const durationMs = viewEnd - viewStart;
+  if (durationMs <= 0) return [];
+
+  const intervals = [
+    1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000,
+    60000, 120000, 300000, 600000,
+  ];
+  let interval = intervals[intervals.length - 1];
+  for (const candidate of intervals) {
+    if (durationMs / candidate <= 10) {
+      interval = candidate;
+      break;
+    }
+  }
+
+  const startMs = viewStart - rootStart;
+  const endMs = startMs + durationMs;
+  const firstMarker = Math.ceil(startMs / interval) * interval;
+
+  const candidates: { label: string; position: number }[] = [];
+  for (let t = firstMarker; t < endMs; t += interval) {
+    const realTime = rootStart + t;
+    const position = compression.toVisual(realTime);
+    if (position < 0.02 || position > 0.98) continue;
+    candidates.push({ label: formatDuration(t, true), position });
+  }
+
+  const MIN_GAP = 0.1;
+  const filtered: typeof candidates = [];
+  for (const m of candidates) {
+    const prev = filtered[filtered.length - 1];
+    if (!prev || m.position - prev.position >= MIN_GAP) {
+      filtered.push(m);
+    }
+  }
+
+  return filtered;
 }
 
 export const RESOURCE_COLORS: Record<
