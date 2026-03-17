@@ -453,7 +453,9 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
  * Default flush interval in milliseconds for buffered stream writes.
  * Chunks are accumulated and flushed together to reduce network overhead.
  */
-const STREAM_FLUSH_INTERVAL_MS = 10;
+// Previously used for deferred flushing (setTimeout). Now writes flush
+// synchronously so the V2 inline loop can accurately track pending ops.
+// const STREAM_FLUSH_INTERVAL_MS = 10;
 
 export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
   constructor(name: string, runId: string) {
@@ -501,15 +503,6 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
       buffer = [];
     };
 
-    const scheduleFlush = (): void => {
-      if (flushTimer) return; // Already scheduled
-
-      flushTimer = setTimeout(() => {
-        flushTimer = null;
-        flushPromise = flush();
-      }, STREAM_FLUSH_INTERVAL_MS);
-    };
-
     super({
       async write(chunk) {
         // Wait for any in-progress flush to complete before adding to buffer
@@ -519,7 +512,14 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
         }
 
         buffer.push(chunk);
-        scheduleFlush();
+
+        // Flush synchronously instead of via setTimeout. The V2 inline
+        // execution loop tracks pending ops via flushablePipe. With
+        // deferred flushing (setTimeout), pendingOps reaches 0 before
+        // data hits the server — the ops appear settled prematurely.
+        // Flushing here ensures the HTTP write completes before the
+        // flushablePipe's await writer.write() returns.
+        await flush();
       },
       async close() {
         // Wait for any in-progress flush to complete

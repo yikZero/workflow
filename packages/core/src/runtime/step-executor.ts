@@ -307,13 +307,26 @@ export async function executeStep(
         return dehydrated;
       });
 
-      waitUntil(
-        Promise.all(ops).catch((err) => {
+      // Flush pending ops (stream writes, etc.) with a short inline wait.
+      // Now that WorkflowServerWritableStream flushes synchronously on
+      // each write (not via setTimeout), the flushablePipe's pendingOps
+      // accurately reflects whether data has reached the server. Most ops
+      // settle within ~200ms (100ms lock-release polling + HTTP flush).
+      // If ops don't settle in 500ms (e.g., WritableStream kept open
+      // across steps), waitUntil handles the rest.
+      let opsSettled = true;
+      if (ops.length > 0) {
+        const opsPromise = Promise.all(ops).catch((err) => {
           const isAbortError =
             err?.name === 'AbortError' || err?.name === 'ResponseAborted';
           if (!isAbortError) throw err;
-        })
-      );
+        });
+        waitUntil(opsPromise);
+        opsSettled = await Promise.race([
+          opsPromise.then(() => true as const),
+          new Promise<false>((r) => setTimeout(() => r(false), 500)),
+        ]);
+      }
 
       // Create step_completed event
       let stepCompleted409 = false;
@@ -361,7 +374,7 @@ export async function executeStep(
       }
       // hasPendingOps signals the V2 handler to break the loop
       // and queue a continuation so waitUntil can flush them.
-      return { type: 'completed', hasPendingOps: ops.length > 0 };
+      return { type: 'completed', hasPendingOps: !opsSettled };
     } catch (err: unknown) {
       const normalizedError = await normalizeUnknownError(err);
       const normalizedStack = normalizedError.stack || getErrorStack(err) || '';
