@@ -96,6 +96,13 @@ export function createFetcher(control: Control) {
       });
       return data;
     },
+    async getFlowInvocationCount(runId: string): Promise<number> {
+      const x = await fetch(
+        `http://localhost:${control.info.port}/_flow-invocations/${encodeURIComponent(runId)}`
+      );
+      const data = (await x.json()) as { count: number };
+      return data.count;
+    },
     async getRun(id: string) {
       const x = await fetch(
         `http://localhost:${control.info.port}/runs/${encodeURIComponent(id)}`

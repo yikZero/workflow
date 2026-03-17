@@ -41,9 +41,32 @@ const Invoke = z
     };
   });
 
+// Track flow handler invocations per run for testing inline execution
+const flowInvocationCounts = new Map<string, number>();
+
 const app = new Hono()
-  .post('/.well-known/workflow/v1/flow', (ctx) => {
-    return flow.POST(ctx.req.raw);
+  .post('/.well-known/workflow/v1/flow', async (ctx) => {
+    // Clone the request to read the body for tracking without consuming it
+    const cloned = ctx.req.raw.clone();
+    const response = await flow.POST(ctx.req.raw);
+    // Extract runId from the request body (queue message payload)
+    try {
+      const body = (await cloned.json()) as Record<string, unknown>;
+      const runId = body?.runId as string | undefined;
+      if (runId) {
+        flowInvocationCounts.set(
+          runId,
+          (flowInvocationCounts.get(runId) ?? 0) + 1
+        );
+      }
+    } catch {
+      // Health check or non-JSON messages — ignore
+    }
+    return response;
+  })
+  .get('/_flow-invocations/:runId', (ctx) => {
+    const count = flowInvocationCounts.get(ctx.req.param('runId')) ?? 0;
+    return ctx.json({ count });
   })
   .get('/_manifest', (ctx) => ctx.json(manifest))
   .post('/invoke', async (ctx) => {
