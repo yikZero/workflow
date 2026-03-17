@@ -887,7 +887,13 @@ export const POST = workflowEntrypoint(workflowCode);`;
       await this.createStepsBundle({
         inputFiles,
         outfile: stepsOutfile,
-        format,
+        // When bundleFinalOutput is true, use ESM for the steps bundle
+        // regardless of the final output format. The final esbuild pass
+        // converts everything to the target format. Using CJS here causes
+        // a module.exports collision: the steps bundle's top-level
+        // module.exports overwrites the combined route's module.exports
+        // when esbuild inlines the steps without a __commonJS wrapper.
+        format: bundleFinalOutput ? 'esm' : format,
         externalizeNonSteps,
         tsconfigPath,
       });
