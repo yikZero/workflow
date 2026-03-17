@@ -326,14 +326,41 @@ The CLI `health` command defaults to `http://localhost:3000` when `WORKFLOW_LOCA
 
 **Fix**: Added `WORKFLOW_LOCAL_BASE_URL` to the CLI's `getEnvVars()` return object.
 
+### Synchronous Stream Flush
+
+`WorkflowServerWritableStream` previously buffered writes and flushed via a 10ms `setTimeout`. This caused the V2 inline loop to break on every step with `WritableStream` serialization (including all AI agent steps), since the `flushablePipe`'s `pendingOps` counter reached 0 before data actually reached the server.
+
+**Fix**: `write()` now calls `flush()` synchronously (inline HTTP round-trip) instead of scheduling via `setTimeout`. This makes `pendingOps` accurately reflect server-side data state. The 500ms inline ops await can distinguish between:
+- **Steps where ops settle** (data on server, ~200ms) → continue loop inline
+- **Steps where ops don't settle** (WritableStream kept open) → break loop
+
+### Event Consumer Skip Logic for Wait/Hook Events
+
+The V2 handler creates `wait_completed` events before replay (for elapsed waits). The event consumer may encounter these before the VM creates the sleep subscriber, triggering false "unconsumed event" errors. Same timing issue as the step event skip logic.
+
+**Fix**: Extended `onUnconsumedEvent` to also skip `wait_created`, `wait_completed`, and hook lifecycle events (`hook_created`, `hook_completed`, `hook_conflict`, `hook_disposed`) when they have a matching creation event in the log.
+
+## Inline Execution Verification Tests
+
+The `@workflow/world-testing` package includes invocation-counting tests that verify the V2 inline loop behavior for each workflow pattern:
+
+| Workflow Pattern | Expected Invocations | Why |
+|-----------------|---------------------|-----|
+| Sequential steps (3 adds) | **1** | All steps execute inline |
+| Sequential steps + WritableStream | **1** | Ops settle via synchronous flush |
+| Sleep (1s) + step | **2** | Sleep requires queue round-trip |
+| Promise.all (2 steps) | **2-3** | Background step + continuation |
+
+The test server tracks flow handler invocations per `runId` via an internal counter. Each test asserts the exact invocation count after the workflow completes.
+
 ## Final Status
 
 All framework integrations pass across all test environments:
 
 | Test Suite | Frameworks | Status |
 |-----------|-----------|--------|
-| Unit Tests | core | 465/465 |
-| Embedded Tests | world-testing | 5/5 |
+| Unit Tests | core | 462/462 |
+| Embedded Tests | world-testing | 9/9 (including inline execution) |
 | Local Dev | 13 frameworks | All pass |
 | Local Prod | 14 configurations | All pass |
 | Postgres | 13 frameworks | All pass |
