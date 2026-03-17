@@ -154,6 +154,13 @@ export function workflowEntrypoint(
                   );
                   if (stepName) {
                     const workflowRun = await world.runs.get(runId);
+                    if (workflowRun.status !== 'running') {
+                      runtimeLogger.debug(
+                        'Run already finished, skipping background step',
+                        { workflowRunId: runId, status: workflowRun.status }
+                      );
+                      return;
+                    }
                     const workflowStartedAt = workflowRun.startedAt
                       ? +workflowRun.startedAt
                       : Date.now();
@@ -172,7 +179,14 @@ export function workflowEntrypoint(
                       return { timeoutSeconds: stepResult.timeoutSeconds };
                     }
                     // Step completed/failed/skipped/gone — queue workflow
-                    // continuation so it can replay with the new events
+                    // continuation so it can replay with the new events.
+                    // Use the step's correlationId as idempotency key so
+                    // that concurrent background step completions from the
+                    // same batch don't each queue a separate continuation.
+                    // Each step completion still queues its own continuation
+                    // (different idempotency keys), but the event-sourced
+                    // replay is convergence-safe — multiple replays produce
+                    // the same result.
                     if (
                       stepResult.type === 'completed' ||
                       stepResult.type === 'failed' ||
@@ -262,6 +276,20 @@ export function workflowEntrypoint(
                 // biome-ignore lint/correctness/noConstantCondition: intentional loop
                 while (true) {
                   loopIteration++;
+
+                  // On subsequent iterations, re-check run status to detect
+                  // concurrent completion. This avoids expensive event loading
+                  // + replay when another handler already completed the run.
+                  if (loopIteration > 1) {
+                    const freshRun = await world.runs.get(runId);
+                    if (freshRun.status !== 'running') {
+                      runtimeLogger.debug(
+                        'Run completed by concurrent handler, exiting',
+                        { workflowRunId: runId, status: freshRun.status }
+                      );
+                      return;
+                    }
+                  }
 
                   // Check timeout before replay
                   if (
