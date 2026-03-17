@@ -1263,6 +1263,7 @@ export const OPTIONS = handler;`;
       architecture?: string;
       shouldAddHelpers?: boolean;
       shouldAddSourcemapSupport?: boolean;
+      maxDuration?: number | 'max';
       experimentalTriggers?: Array<{
         type: 'queue/v2beta';
         topic: string;
@@ -1279,6 +1280,9 @@ export const OPTIONS = handler;`;
       launcherType: config.launcherType ?? 'Nodejs',
       architecture: config.architecture ?? 'arm64',
       shouldAddHelpers: config.shouldAddHelpers ?? true,
+      ...(config.maxDuration !== undefined && {
+        maxDuration: config.maxDuration,
+      }),
       ...(config.shouldAddSourcemapSupport !== undefined && {
         shouldAddSourcemapSupport: config.shouldAddSourcemapSupport,
       }),

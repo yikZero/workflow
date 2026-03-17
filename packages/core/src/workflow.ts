@@ -168,7 +168,7 @@ export async function runWorkflow(
         // Hook lifecycle events: same pattern as steps/waits
         if (
           event.eventType === 'hook_created' ||
-          event.eventType === 'hook_completed' ||
+          event.eventType === 'hook_received' ||
           event.eventType === 'hook_conflict' ||
           event.eventType === 'hook_disposed'
         ) {
