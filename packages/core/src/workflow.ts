@@ -132,6 +132,7 @@ export async function runWorkflow(
         // We only skip events whose correlationId appears in a step_created
         // event in the log — this confirms the step was legitimately created
         // by a handler. Orphaned events with unknown correlationIds still error.
+        // Step lifecycle events: skip if the step was legitimately created
         if (
           event.eventType === 'step_created' ||
           event.eventType === 'step_started' ||
@@ -147,6 +148,31 @@ export async function runWorkflow(
           if (hasStepCreated || event.eventType === 'step_created') {
             return true; // skip past this event
           }
+        }
+        // Wait lifecycle events: the V2 handler creates wait_completed
+        // events before replay (for elapsed waits). The event consumer
+        // may encounter these before the VM creates the sleep subscriber.
+        if (
+          event.eventType === 'wait_created' ||
+          event.eventType === 'wait_completed'
+        ) {
+          const hasWaitCreated = events.some(
+            (e) =>
+              e.eventType === 'wait_created' &&
+              e.correlationId === event.correlationId
+          );
+          if (hasWaitCreated || event.eventType === 'wait_created') {
+            return true;
+          }
+        }
+        // Hook lifecycle events: same pattern as steps/waits
+        if (
+          event.eventType === 'hook_created' ||
+          event.eventType === 'hook_completed' ||
+          event.eventType === 'hook_conflict' ||
+          event.eventType === 'hook_disposed'
+        ) {
+          return true;
         }
         workflowDiscontinuation.reject(
           new WorkflowRuntimeError(

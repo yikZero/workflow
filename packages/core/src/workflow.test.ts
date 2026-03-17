@@ -3355,7 +3355,7 @@ describe('runWorkflow', () => {
       ).toEqual('sleep with date completed');
     });
 
-    it('should reject with WorkflowRuntimeError when event log has duplicate wait_completed', async () => {
+    it('should tolerate duplicate wait_completed in event log (V2 skip logic)', async () => {
       const ops: Promise<any>[] = [];
       const workflowRunId = 'test-run-123';
       const workflowRun: WorkflowRun = {
@@ -3419,19 +3419,22 @@ describe('runWorkflow', () => {
         },
       ];
 
-      await expect(
-        runWorkflow(
-          `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
+      // V2: duplicate wait_completed is tolerated (skipped via onUnconsumedEvent)
+      // because the server's 409 idempotency prevents this in practice, and
+      // the skip logic is needed to handle timing differences between event
+      // creation and VM subscriber registration.
+      // Should complete without throwing — duplicate wait_completed is skipped
+      await runWorkflow(
+        `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
           const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
           async function workflow() {
             await sleep('5s');
             const result = await doWork();
             return result;
           }${getWorkflowTransformCode('workflow')}`,
-          workflowRun,
-          events
-        )
-      ).rejects.toThrow(WorkflowRuntimeError);
+        workflowRun,
+        events
+      );
     });
 
     it('should reject with WorkflowRuntimeError for duplicate step_completed blocking subsequent events', async () => {
