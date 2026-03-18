@@ -16,7 +16,6 @@ import {
   parseHealthCheckPayload,
   withHealthCheck,
 } from './runtime/helpers.js';
-import { runWorkflowWithSnapshots } from './runtime/snapshot-entrypoint.js';
 import { handleSuspension } from './runtime/suspension-handler.js';
 import { getWorld, getWorldHandlers } from './runtime/world.js';
 import { remapErrorStack } from './source-map.js';
@@ -261,6 +260,14 @@ export function workflowEntrypoint(
                   runtimeLogger.debug('Using snapshot runtime', {
                     workflowRunId: runId,
                   });
+                  // Dynamic import to avoid pulling quickjs-wasi (WASM + native
+                  // extensions) into the workflow bundle's static dependency graph.
+                  // The variable indirection prevents esbuild from resolving it
+                  // at bundle time.
+                  const snapshotEntrypoint = './runtime/snapshot-entrypoint.js';
+                  const { runWorkflowWithSnapshots } = await import(
+                    /* webpackIgnore: true */ snapshotEntrypoint
+                  );
                   const snapshotResult = await runWorkflowWithSnapshots({
                     workflowCode,
                     workflowName,

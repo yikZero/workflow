@@ -61,6 +61,14 @@ export function withWorkflow(
     // shallow clone to avoid read-only on top-level
     nextConfig = Object.assign({}, nextConfig);
 
+    // Externalize quickjs-wasi from the Next.js server bundle — it uses
+    // import.meta.url to locate WASM and native extension .so files, which
+    // breaks when bundled by webpack/turbopack.
+    nextConfig.serverExternalPackages = [
+      ...(nextConfig.serverExternalPackages || []),
+      'quickjs-wasi',
+    ];
+
     // configure the loader if turbopack is being used
     if (!nextConfig.turbopack) {
       nextConfig.turbopack = {};

@@ -34,10 +34,16 @@ export default {
       nitro.options.alias['debug'] ??= 'debug';
     }
 
+    // Externalize quickjs-wasi — it uses import.meta.url to locate its
+    // WASM and native extension .so files, which breaks when bundled into CJS.
+    nitro.options.externals ||= {};
+    nitro.options.externals.external ||= [];
+    nitro.options.externals.external.push(
+      (id) => id === 'quickjs-wasi' || id.startsWith('quickjs-wasi/')
+    );
+
     // NOTE: Externalize .nitro/workflow to prevent dev reloads
     if (nitro.options.dev) {
-      nitro.options.externals ||= {};
-      nitro.options.externals.external ||= [];
       const outDir = join(nitro.options.buildDir, 'workflow');
       nitro.options.externals.external.push((id) => id.startsWith(outDir));
     }
