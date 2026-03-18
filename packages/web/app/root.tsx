@@ -22,6 +22,7 @@ import { getPublicServerConfig } from '~/server/workflow-server-actions.server';
 
 import type { Route } from './+types/root';
 import './globals.css';
+import '../../web-shared/src/styles.css';
 
 // Server-side loader: provides config data on initial render and navigation
 export async function loader() {
