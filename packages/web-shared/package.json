@@ -38,7 +38,7 @@
     "directory": "packages/web-shared"
   },
   "scripts": {
-    "build": "tsc && cp -r src/components/trace-viewer/*.css dist/components/trace-viewer/ && mkdir -p dist/components/trace-2 && cp -r src/components/trace-2/*.css dist/components/trace-2/ && cp src/styles.css dist/styles.css",
+    "build": "tsc && rsync -a --include='*/' --include='*.css' --exclude='*' src/ dist/",
     "dev": "tsc --watch",
     "clean": "tsc --build --clean && rm -r dist ||:",
     "test": "vitest run",
