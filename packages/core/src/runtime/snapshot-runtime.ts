@@ -16,6 +16,11 @@
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 import * as nanoid from 'nanoid';
 import { JSException, QuickJS } from 'quickjs-wasi';
+import { base64Extension } from 'quickjs-wasi/base64';
+import { encodingExtension } from 'quickjs-wasi/encoding';
+import { headersExtension } from 'quickjs-wasi/headers';
+import { structuredCloneExtension } from 'quickjs-wasi/structured-clone';
+import { urlExtension } from 'quickjs-wasi/url';
 import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
@@ -131,11 +136,9 @@ globalThis.__workflowError = undefined;
 globalThis.__hookPayloadBuffer = {};
 
 // Stubs for Web APIs that the workflow bundle may reference but are not
-// available in QuickJS. These are lightweight polyfills, not full
-// Web API implementations.
-
-// NOTE: Headers polyfill is provided by the VM serde bundle (via esbuild inject),
-// which is evaluated before this bootstrap code.
+// available in QuickJS. Native C extensions (encoding, base64, headers,
+// url, structuredClone) provide the real implementations; these are
+// minimal stubs for APIs that don't have native extensions yet.
 
 if (typeof ReadableStream === "undefined") {
   // Minimal ReadableStream that stores body data for Response.json()/text()
@@ -151,18 +154,13 @@ if (typeof TransformStream === "undefined") {
   globalThis.TransformStream = function() {};
 }
 
-if (typeof URL === "undefined") {
-  globalThis.URL = function(u) { this.href = u; this.toString = function() { return u; }; };
-}
-
 if (typeof console === "undefined") {
   globalThis.console = { log: function(){}, error: function(){}, warn: function(){}, info: function(){} };
 }
 // Stub exports/module for CJS bundle format
 globalThis.exports = {};
 globalThis.module = { exports: globalThis.exports };
-// NOTE: TextEncoder/TextDecoder polyfills are provided by the VM serde bundle,
-// which is evaluated before this bootstrap code.
+// NOTE: TextEncoder/TextDecoder are provided by the native encoding extension.
 
 globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   var fn = function() {
@@ -412,31 +410,17 @@ globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
 
 // WORKFLOW_GET_STREAM_ID — generates a stream ID for a workflow run.
 // Replicates getWorkflowRunStreamId() from util.ts inside the QuickJS VM.
-// Needs a base64url encoder since Buffer is not available in QuickJS.
-(function() {
-  var BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  function base64url(str) {
-    var bytes = new TextEncoder().encode(str);
-    var result = "";
-    for (var i = 0; i < bytes.length; i += 3) {
-      var b0 = bytes[i], b1 = bytes[i+1] || 0, b2 = bytes[i+2] || 0;
-      result += BASE64_CHARS[b0 >> 2];
-      result += BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
-      if (i + 1 < bytes.length) result += BASE64_CHARS[((b1 & 15) << 2) | (b2 >> 6)];
-      if (i + 2 < bytes.length) result += BASE64_CHARS[b2 & 63];
-    }
-    // base64url: replace + with -, / with _, strip padding
-    return result.replace(/\\+/g, "-").replace(/\\//g, "_");
-  }
-  globalThis[Symbol.for("WORKFLOW_GET_STREAM_ID")] = function(namespace) {
-    var runId = globalThis[Symbol.for("WORKFLOW_CONTEXT")]
-      ? globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowRunId
-      : "";
-    var streamId = runId.replace("wrun_", "strm_") + "_user";
-    if (!namespace) return streamId;
-    return streamId + "_" + base64url(namespace);
-  };
-})();
+// Uses native btoa() from the base64 extension for base64url encoding.
+globalThis[Symbol.for("WORKFLOW_GET_STREAM_ID")] = function(namespace) {
+  var runId = globalThis[Symbol.for("WORKFLOW_CONTEXT")]
+    ? globalThis[Symbol.for("WORKFLOW_CONTEXT")].workflowRunId
+    : "";
+  var streamId = runId.replace("wrun_", "strm_") + "_user";
+  if (!namespace) return streamId;
+  // base64url: btoa then replace + with -, / with _, strip =
+  var b64 = btoa(namespace).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+  return streamId + "_" + b64;
+};
 `;
 
 // ---- Runtime ----
@@ -468,18 +452,23 @@ export async function runSnapshotWorkflow(
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
+      extensions: [
+        encodingExtension,
+        base64Extension,
+        headersExtension,
+        urlExtension,
+        structuredCloneExtension,
+      ],
     });
 
-    // Re-register host callbacks after restore. Host functions (Math.random,
-    // __generateNanoid) are backed by callback IDs stored in the WASM heap.
-    // After restore, the callback registry is empty — we must re-register
-    // each callback with the same ID it had during the original creation.
-    // IDs are assigned sequentially by newFunction() starting from
-    // vm.nextCallbackId (which is 1 in quickjs-wasi). We must use the same
-    // base + offset as the first-run registration order.
-    const baseId = 1; // quickjs-wasi starts nextCallbackId at 1
-    vm.registerHostCallback(baseId, () => vm.newNumber(rng()));
-    vm.registerHostCallback(baseId + 1, () => vm.newString(generateNanoid()));
+    // Re-register host callbacks after restore. Host functions are stored
+    // in the WASM heap by name. After restore, the host callback registry
+    // is empty — we must re-register each callback with the same name
+    // used during newFunction() in the first-run path.
+    vm.registerHostCallback('random', () => vm.newNumber(rng()));
+    vm.registerHostCallback('__generateNanoid', () =>
+      vm.newString(generateNanoid())
+    );
 
     // Note: __wdk_serialize/__wdk_deserialize are JS functions in the VM
     // (set by the serde bundle), so they survive snapshot/restore as part
@@ -506,6 +495,13 @@ export async function runSnapshotWorkflow(
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
+      extensions: [
+        encodingExtension,
+        base64Extension,
+        headersExtension,
+        urlExtension,
+        structuredCloneExtension,
+      ],
     });
 
     // Seeded Math.random — host callback ID = baseId

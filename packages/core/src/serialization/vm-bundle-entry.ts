@@ -5,24 +5,11 @@
  * sets up serialize/deserialize on globalThis. The bundled output
  * is evaluated inside the QuickJS VM during bootstrap.
  *
- * It includes the TextEncoder/TextDecoder polyfills since QuickJS
- * doesn't have them natively.
+ * TextEncoder, TextDecoder, and Headers are provided by native C
+ * extensions in quickjs-wasi, so no polyfills are needed.
  */
 
-import { TextDecoder as TextDecoderPolyfill } from '../polyfills/text-decoder.js';
-// Polyfills MUST be installed before any other imports, because
-// the devalue codec uses `new TextEncoder()` at module scope.
-import { TextEncoder as TextEncoderPolyfill } from '../polyfills/text-encoder.js';
-
-if (typeof globalThis.TextEncoder === 'undefined') {
-  (globalThis as any).TextEncoder = TextEncoderPolyfill;
-}
-if (typeof globalThis.TextDecoder === 'undefined') {
-  (globalThis as any).TextDecoder = TextDecoderPolyfill;
-}
-
 import { monotonicFactory } from 'ulid';
-// Now it's safe to import the serializer (uses TextEncoder/TextDecoder)
 import { deserialize, serialize } from './workflow-vm.js';
 
 // Install on global scope

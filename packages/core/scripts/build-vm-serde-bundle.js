@@ -1,14 +1,12 @@
 /**
  * Build script: generates the VM serialization bundle.
  *
- * Uses esbuild to bundle workflow-vm.ts + TextEncoder/TextDecoder polyfills
- * into a self-contained IIFE. The output is written as a TypeScript file
- * containing the bundle as a string constant, which can be imported by
- * the snapshot runtime.
+ * Uses esbuild to bundle workflow-vm.ts into a self-contained IIFE.
+ * The output is written as a TypeScript file containing the bundle as
+ * a string constant, which can be imported by the snapshot runtime.
  *
- * The polyfills are injected via esbuild's `inject` option to ensure they
- * run before any other code (including module-level TextEncoder/TextDecoder
- * instantiation).
+ * TextEncoder, TextDecoder, and Headers are provided by native C
+ * extensions in quickjs-wasi, so no JS polyfills are needed.
  */
 
 import { buildSync } from 'esbuild';
@@ -21,7 +19,9 @@ const srcDir = resolve(__dirname, '../src');
 
 const result = buildSync({
   entryPoints: [resolve(srcDir, 'serialization/vm-bundle-entry.ts')],
-  inject: [resolve(srcDir, 'polyfills/install-text-coding.ts')],
+  // NOTE: TextEncoder, TextDecoder, and Headers are provided by native
+  // C extensions (encoding, headers) in quickjs-wasi, so the polyfill
+  // injection that was previously here has been removed.
   bundle: true,
   format: 'iife',
   platform: 'neutral',
