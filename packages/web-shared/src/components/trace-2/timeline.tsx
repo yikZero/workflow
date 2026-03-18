@@ -1,9 +1,8 @@
 'use client';
 
-import { clsx } from 'clsx';
 import type { ReactNode } from 'react';
 import { memo, useMemo } from 'react';
-import styles from './trace-2.module.css';
+import { cn } from '../../lib/utils';
 import type { FlatSpan } from './types';
 import type { TimeCompression } from './utils';
 import {
@@ -11,6 +10,9 @@ import {
   computeTimeMarkers,
   RESOURCE_COLORS,
 } from './utils';
+
+const QUEUED_BACKGROUND =
+  'radial-gradient(circle at center, var(--ds-gray-800) 0 2.5px, transparent 2.6px) center / 52px 100% repeat-x, var(--ds-gray-300)';
 
 const TimelineBar = memo(function TimelineBar({
   span,
@@ -48,11 +50,14 @@ const TimelineBar = memo(function TimelineBar({
 
   return (
     <div
-      className={clsx(styles.timelineRow, isSelected && styles.selected)}
+      className={cn(
+        'h-9 relative flex items-center cursor-pointer transition-[background-color] duration-[120ms] ease-in-out',
+        isSelected ? 'bg-gray-alpha-200' : 'hover:bg-gray-alpha-100'
+      )}
       onClick={onClick}
     >
       <div
-        className={styles.timelineBarContainer}
+        className="absolute h-6 top-1.5 flex items-center rounded-sm"
         style={{
           left: `${leftPct}%`,
           width: `max(${widthPct}%, 4px)`,
@@ -61,11 +66,15 @@ const TimelineBar = memo(function TimelineBar({
         {hasQueued ? (
           <div className="flex gap-0.5 w-full">
             <div
-              className={styles.barQueued}
-              style={{ width: `${queuedBarPct}%`, minWidth: 4 }}
+              className="h-4 rounded-[2px] mt-1"
+              style={{
+                width: `${queuedBarPct}%`,
+                minWidth: 4,
+                background: QUEUED_BACKGROUND,
+              }}
             />
             <div
-              className={styles.barActive}
+              className="h-4 rounded-[2px] mt-1"
               style={{
                 width: `${activeBarPct}%`,
                 minWidth: 4,
@@ -75,7 +84,7 @@ const TimelineBar = memo(function TimelineBar({
           </div>
         ) : (
           <div
-            className={styles.barActive}
+            className="h-4 rounded-[2px] mt-1"
             style={{
               width: '100%',
               minWidth: 4,
@@ -126,11 +135,11 @@ export function Timeline({
 
   return (
     <>
-      <div className={styles.timelineHeader}>
+      <div className="sticky top-0 z-[4] bg-background-100 border-b border-gray-alpha-400 h-8 min-h-8 flex items-end px-4 pb-1">
         {markers.map((m, i) => (
           <span
             key={i}
-            className={styles.timeMarker}
+            className="absolute bottom-1 font-mono text-xs font-normal leading-4 text-gray-900 whitespace-nowrap -translate-x-1/2"
             style={{ left: `${m.position * 100}%` }}
           >
             {m.label}
@@ -139,14 +148,14 @@ export function Timeline({
         {isZoomed && (
           <button
             type="button"
-            className={styles.resetZoomButton}
+            className="absolute right-2 top-1/2 -translate-y-1/2 z-[5] flex items-center py-0.5 px-2 border border-gray-alpha-400 rounded-md bg-background-100 font-sans text-[11px] font-medium text-gray-900 cursor-pointer whitespace-nowrap transition-[color,border-color] duration-[120ms] ease-in-out hover:text-gray-1000 hover:border-gray-600"
             onClick={onResetZoom}
           >
             Reset zoom
           </button>
         )}
       </div>
-      <div className={styles.timelineBody}>
+      <div className="relative px-4">
         {spans.map((span) => {
           return (
             <TimelineBar

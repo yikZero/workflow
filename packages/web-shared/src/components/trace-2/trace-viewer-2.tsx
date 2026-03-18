@@ -1,12 +1,11 @@
 'use client';
 
-import { clsx } from 'clsx';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cn } from '../../lib/utils';
 import { DetailPanel } from './detail-panel';
 import { EventList } from './event-list';
 import { Timeline } from './timeline';
-import styles from './trace-2.module.css';
 import type { Trace } from './types';
 import { buildTimeCompression, flattenTrace } from './utils';
 
@@ -174,11 +173,16 @@ export function TraceViewer2({
 
   if (!trace || spans.length === 0) {
     return (
-      <div className={clsx(styles.container, className)}>
-        <div className={styles.mainPane}>
-          <div className={styles.eventList} />
-          <div className={styles.divider} />
-          <div className={styles.timeline} />
+      <div
+        className={cn(
+          'grid grid-cols-[1fr] grid-rows-[1fr] h-full min-h-0 overflow-hidden bg-background-100 border border-gray-400 rounded-lg relative',
+          className
+        )}
+      >
+        <div className="grid grid-cols-[1fr_1px_1fr] h-full min-h-0 overflow-y-auto overflow-x-hidden content-start">
+          <div className="block min-h-0 overflow-visible" />
+          <div className="bg-gray-alpha-400 h-full" />
+          <div className="block min-h-0 overflow-visible relative" />
         </div>
       </div>
     );
@@ -186,24 +190,24 @@ export function TraceViewer2({
 
   return (
     <div
-      className={clsx(
-        styles.container,
-        selectedSpan && styles.withDetailPanel,
+      className={cn(
+        'grid grid-rows-[1fr] h-full min-h-0 overflow-hidden bg-background-100 border border-gray-400 rounded-lg relative',
+        selectedSpan ? 'grid-cols-[1fr_400px]' : 'grid-cols-[1fr]',
         className
       )}
     >
-      <div className={styles.mainPane}>
-        <div className={styles.eventList}>
+      <div className="grid grid-cols-[1fr_1px_1fr] h-full min-h-0 overflow-y-auto overflow-x-hidden content-start">
+        <div className="block min-h-0 overflow-visible">
           <EventList
             spans={spans}
             selectedId={selectedId}
             onSelect={onSelect}
           />
         </div>
-        <div className={styles.divider} />
+        <div className="bg-gray-alpha-400 h-full" />
         <div
           ref={timelineRef}
-          className={styles.timeline}
+          className="block min-h-0 overflow-visible relative"
           onDoubleClick={resetZoom}
         >
           <Timeline

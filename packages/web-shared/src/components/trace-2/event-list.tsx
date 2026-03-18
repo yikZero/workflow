@@ -1,10 +1,9 @@
 'use client';
 
-import { clsx } from 'clsx';
 import { Code, Moon, Workflow, Webhook } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
-import styles from './trace-2.module.css';
+import { cn } from '../../lib/utils';
 import type { FlatSpan, ResourceType } from './types';
 import { formatDuration, RESOURCE_COLORS } from './utils';
 
@@ -40,7 +39,10 @@ function ResourceIcon({
   }
 
   return (
-    <div className={styles.eventRowIcon} style={{ background: bg }}>
+    <div
+      className="flex items-center justify-center size-[22px] min-w-[22px] rounded-sm shrink-0"
+      style={{ background: bg }}
+    >
       {icon}
     </div>
   );
@@ -63,29 +65,29 @@ function Connectors({ span }: { span: FlatSpan }): ReactNode {
       shouldRenderParentConnector && depth === span.depth;
     if (isParentConnectorSlot) {
       slots.push(
-        <div
-          key={depth}
-          className={clsx(
-            styles.connectorSlot,
-            span.isLastChild ? styles.elbow : styles.tee
-          )}
-        />
+        <div key={depth} className="w-5 min-w-5 relative h-9">
+          <div
+            className={cn(
+              'absolute top-0 left-[10px] w-px bg-gray-400',
+              span.isLastChild ? 'h-1/2' : 'h-full'
+            )}
+          />
+          <div className="absolute top-1/2 left-[10px] w-[10px] h-px bg-gray-400" />
+        </div>
       );
       continue;
     }
 
     slots.push(
-      <div
-        key={depth}
-        className={clsx(
-          styles.connectorSlot,
-          activeConnectorSet.has(depth) && styles.active
+      <div key={depth} className="w-5 min-w-5 relative h-9">
+        {activeConnectorSet.has(depth) && (
+          <div className="absolute top-0 left-[10px] w-px h-full bg-gray-400" />
         )}
-      />
+      </div>
     );
   }
 
-  return <div className={styles.connectorArea}>{slots}</div>;
+  return <div className="flex items-stretch h-full shrink-0">{slots}</div>;
 }
 
 const EventRow = memo(function EventRow({
@@ -99,18 +101,29 @@ const EventRow = memo(function EventRow({
 }): ReactNode {
   return (
     <div
-      className={clsx(
-        styles.eventRow,
-        isSelected && styles.selected,
-        span.isErrored && styles.errored
+      className={cn(
+        'flex items-center h-9 cursor-pointer select-none pr-3 relative transition-[background-color] duration-[120ms] ease-in-out',
+        isSelected ? 'bg-gray-alpha-200' : 'hover:bg-gray-alpha-100'
       )}
       onClick={onClick}
     >
       <Connectors span={span} />
-      <div className={styles.eventRowContent}>
+      <div className="flex items-center gap-2 flex-1 min-w-0">
         <ResourceIcon type={span.resourceType} isErrored={span.isErrored} />
-        <span className={styles.eventRowName}>{span.name}</span>
-        <span className={styles.eventRowDuration}>
+        <span
+          className={cn(
+            'font-sans text-sm font-normal leading-5 truncate flex-1 min-w-0',
+            span.isErrored ? 'text-red-900' : 'text-gray-1000'
+          )}
+        >
+          {span.name}
+        </span>
+        <span
+          className={cn(
+            'font-mono text-xs font-normal leading-4 whitespace-nowrap shrink-0',
+            span.isErrored ? 'text-red-800' : 'text-gray-900'
+          )}
+        >
           {formatDuration(span.duration)}
         </span>
       </div>
@@ -129,8 +142,8 @@ export function EventList({
 }): ReactNode {
   return (
     <>
-      <div className={styles.eventListHeader} />
-      <div className={styles.eventListBody}>
+      <div className="sticky top-0 z-[4] bg-background-100 border-b border-gray-alpha-400 h-8 min-h-8 flex items-center px-4" />
+      <div className="block">
         {spans.map((span) => {
           return (
             <EventRow
