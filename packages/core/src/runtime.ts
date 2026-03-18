@@ -110,6 +110,7 @@ export function workflowEntrypoint(
         traceCarrier: traceContext,
         requestedAt,
       } = WorkflowInvokePayloadSchema.parse(message_);
+      const { requestId } = metadata;
       // Extract the workflow name from the topic name
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
       const spanLinks = await linkToCurrentContext();
@@ -159,10 +160,14 @@ export function workflowEntrypoint(
                 try {
                   if (workflowRun.status === 'pending') {
                     // Transition run to 'running' via event (event-sourced architecture)
-                    const result = await world.events.create(runId, {
-                      eventType: 'run_started',
-                      specVersion: SPEC_VERSION_CURRENT,
-                    });
+                    const result = await world.events.create(
+                      runId,
+                      {
+                        eventType: 'run_started',
+                        specVersion: SPEC_VERSION_CURRENT,
+                      },
+                      { requestId }
+                    );
                     // Use the run entity from the event response (no extra get call needed)
                     if (!result.run) {
                       throw new WorkflowRuntimeError(
@@ -180,22 +185,38 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
+                  // 409/410: run was concurrently completed/failed/cancelled
+                  // between the GET and the run_started event creation
+                  if (
+                    WorkflowAPIError.is(err) &&
+                    (err.status === 409 || err.status === 410)
+                  ) {
+                    runtimeLogger.info(
+                      'Run already finished during setup, skipping',
+                      { workflowRunId: runId, message: err.message }
+                    );
+                    return;
+                  }
                   if (err instanceof WorkflowRuntimeError) {
                     runtimeLogger.error(
                       'Fatal runtime error during workflow setup',
                       { workflowRunId: runId, error: err.message }
                     );
                     try {
-                      await world.events.create(runId, {
-                        eventType: 'run_failed',
-                        specVersion: SPEC_VERSION_CURRENT,
-                        eventData: {
-                          error: {
-                            message: err.message,
-                            stack: err.stack,
+                      await world.events.create(
+                        runId,
+                        {
+                          eventType: 'run_failed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: {
+                            error: {
+                              message: err.message,
+                              stack: err.stack,
+                            },
                           },
                         },
-                      });
+                        { requestId }
+                      );
                     } catch (failErr) {
                       if (
                         WorkflowAPIError.is(failErr) &&
@@ -292,7 +313,9 @@ export function workflowEntrypoint(
                 // Create all wait_completed events
                 for (const waitEvent of waitsToComplete) {
                   try {
-                    const result = await world.events.create(runId, waitEvent);
+                    const result = await world.events.create(runId, waitEvent, {
+                      requestId,
+                    });
                     // Add the event to the events array so the workflow can see it
                     events.push(result.event!);
                   } catch (err) {
@@ -353,6 +376,7 @@ export function workflowEntrypoint(
                       world,
                       run: workflowRun,
                       span,
+                      requestId,
                     });
 
                     if (result.timeoutSeconds !== undefined) {
@@ -396,17 +420,21 @@ export function workflowEntrypoint(
 
                   // Fail the workflow run via event (event-sourced architecture)
                   try {
-                    await world.events.create(runId, {
-                      eventType: 'run_failed',
-                      specVersion: SPEC_VERSION_CURRENT,
-                      eventData: {
-                        error: {
-                          message: errorMessage,
-                          stack: errorStack,
+                    await world.events.create(
+                      runId,
+                      {
+                        eventType: 'run_failed',
+                        specVersion: SPEC_VERSION_CURRENT,
+                        eventData: {
+                          error: {
+                            message: errorMessage,
+                            stack: errorStack,
+                          },
+                          // TODO: include error codes when we define them
                         },
-                        // TODO: include error codes when we define them
                       },
-                    });
+                      { requestId }
+                    );
                   } catch (failErr) {
                     if (
                       WorkflowAPIError.is(failErr) &&
@@ -443,13 +471,17 @@ export function workflowEntrypoint(
                 // This is outside the user-code try/catch so that failures
                 // here (e.g., network errors) propagate to the queue handler.
                 try {
-                  await world.events.create(runId, {
-                    eventType: 'run_completed',
-                    specVersion: SPEC_VERSION_CURRENT,
-                    eventData: {
-                      output: workflowResult,
+                  await world.events.create(
+                    runId,
+                    {
+                      eventType: 'run_completed',
+                      specVersion: SPEC_VERSION_CURRENT,
+                      eventData: {
+                        output: workflowResult,
+                      },
                     },
-                  });
+                    { requestId }
+                  );
                 } catch (err) {
                   if (
                     WorkflowAPIError.is(err) &&

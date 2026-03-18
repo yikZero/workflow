@@ -414,7 +414,11 @@ export async function createWorkflowRunEvent(
     const wireResult = await makeRequest({
       endpoint: `/v2/runs/${runIdPath}/events`,
       options: { method: 'POST' },
-      data: { ...data, remoteRefBehavior },
+      data: {
+        ...data,
+        remoteRefBehavior,
+        ...(params?.requestId ? { vercelId: params.requestId } : {}),
+      },
       config,
       schema: EventResultResolveWireSchema,
     });
@@ -430,7 +434,11 @@ export async function createWorkflowRunEvent(
   const wireResult = await makeRequest({
     endpoint: `/v2/runs/${runIdPath}/events`,
     options: { method: 'POST' },
-    data: { ...data, remoteRefBehavior },
+    data: {
+      ...data,
+      remoteRefBehavior,
+      ...(params?.requestId ? { vercelId: params.requestId } : {}),
+    },
     config,
     schema: EventResultLazyWireSchema,
   });

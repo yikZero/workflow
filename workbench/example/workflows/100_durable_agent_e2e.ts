@@ -427,3 +427,128 @@ export async function agentToolApprovalE2e() {
     firstToolCallName: result.toolCalls[0]?.toolName,
   };
 }
+
+// ============================================================================
+// prepareStep on constructor
+// ============================================================================
+
+async function prepareStepStep(input: { n: number }): Promise<string> {
+  'use step';
+  return `prepared-${input.n}`;
+}
+
+/** Agent-level prepareStep should be used when stream does not provide one. */
+export async function agentConstructorPrepareStepE2e() {
+  'use workflow';
+  const stepNumbers: number[] = [];
+
+  const agent = new DurableAgent({
+    model: mockSequenceModel([
+      { type: 'tool-call', toolName: 'greet', input: JSON.stringify({ n: 1 }) },
+      { type: 'text', text: 'done' },
+    ]),
+    tools: {
+      greet: {
+        description: 'Greet',
+        inputSchema: z.object({ n: z.number() }),
+        execute: prepareStepStep,
+      },
+    },
+    prepareStep: ({ stepNumber }) => {
+      stepNumbers.push(stepNumber);
+      return {};
+    },
+  });
+
+  const result = await agent.stream({
+    messages: [{ role: 'user', content: 'go' }],
+    writable: getWritable(),
+  });
+
+  return {
+    stepCount: result.steps.length,
+    // prepareStep should have been called for each LLM step
+    prepareStepCallCount: stepNumbers.length,
+    prepareStepNumbers: stepNumbers,
+  };
+}
+
+/** Stream-level prepareStep should override constructor-level. */
+export async function agentStreamPrepareStepOverrideE2e() {
+  'use workflow';
+  const source: string[] = [];
+
+  const agent = new DurableAgent({
+    model: mockTextModel('ok'),
+    prepareStep: () => {
+      source.push('constructor');
+      return {};
+    },
+  });
+
+  await agent.stream({
+    messages: [{ role: 'user', content: 'go' }],
+    writable: getWritable(),
+    prepareStep: () => {
+      source.push('stream');
+      return {};
+    },
+  });
+
+  return {
+    // Only 'stream' should appear — constructor-level is overridden
+    source,
+  };
+}
+
+// ============================================================================
+// Multimodal tool results (#848)
+// ============================================================================
+
+async function multimodalToolStep(): Promise<{
+  type: 'content';
+  value: Array<{
+    type: string;
+    text?: string;
+    data?: string;
+    mediaType?: string;
+  }>;
+}> {
+  'use step';
+  return {
+    type: 'content',
+    value: [
+      { type: 'text', text: 'Here is the image' },
+      { type: 'file-data', data: 'iVBORw0KGgo=', mediaType: 'image/png' },
+    ],
+  };
+}
+
+/** Tools returning LanguageModelV3ToolResultOutput should pass through. */
+export async function agentMultimodalToolResultE2e() {
+  'use workflow';
+  const agent = new DurableAgent({
+    model: mockSequenceModel([
+      { type: 'tool-call', toolName: 'vision', input: '{}' },
+      { type: 'text', text: 'I see the image' },
+    ]),
+    tools: {
+      vision: {
+        description: 'Returns multimodal content',
+        inputSchema: z.object({}),
+        execute: multimodalToolStep,
+      },
+    },
+  });
+
+  const result = await agent.stream({
+    messages: [{ role: 'user', content: 'show me' }],
+    writable: getWritable(),
+  });
+
+  return {
+    stepCount: result.steps.length,
+    lastStepText: result.steps[result.steps.length - 1]?.text,
+    toolResults: result.toolResults,
+  };
+}
