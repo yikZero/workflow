@@ -262,11 +262,13 @@ export function workflowEntrypoint(
                   });
                   // Dynamic import to avoid pulling quickjs-wasi (WASM + native
                   // extensions) into the workflow bundle's static dependency graph.
-                  // The variable indirection prevents esbuild from resolving it
-                  // at bundle time.
-                  const snapshotEntrypoint = './runtime/snapshot-entrypoint.js';
+                  // Uses a package subpath export so bundlers (Turbopack, etc.)
+                  // can resolve it correctly regardless of chunking. The variable
+                  // indirection prevents esbuild from resolving it at bundle time.
+                  const snapshotMod =
+                    '@workflow/core/runtime/snapshot-entrypoint';
                   const { runWorkflowWithSnapshots } = await import(
-                    /* webpackIgnore: true */ snapshotEntrypoint
+                    /* webpackIgnore: true */ snapshotMod
                   );
                   const snapshotResult = await runWorkflowWithSnapshots({
                     workflowCode,
