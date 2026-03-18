@@ -88,7 +88,7 @@ Learn more about [SvelteKit Hooks](https://svelte.dev/docs/kit/hooks).
 Create a plugin to start the world on server initialization:
 
 ```ts title="plugins/start-pg-world.ts" lineNumbers
-import { defineNitroPlugin } from "nitro/~internal/runtime/plugin";
+import { definePlugin as defineNitroPlugin } from "nitro";
 
 export default defineNitroPlugin(async () => {
   const { getWorld } = await import("workflow/runtime");

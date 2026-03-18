@@ -1,4 +1,4 @@
-import { defineNitroPlugin } from 'nitro/~internal/runtime/plugin';
+import { definePlugin as defineNitroPlugin } from 'nitro';
 
 // Start the Postgres World
 // Needed since we test this in CI
