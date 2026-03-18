@@ -13,19 +13,62 @@
  * resolve/reject promises.
  */
 
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 import * as nanoid from 'nanoid';
-import { JSException, QuickJS } from 'quickjs-wasi';
-import { base64Extension } from 'quickjs-wasi/base64';
-import { encodingExtension } from 'quickjs-wasi/encoding';
-import { headersExtension } from 'quickjs-wasi/headers';
-import { structuredCloneExtension } from 'quickjs-wasi/structured-clone';
-import { urlExtension } from 'quickjs-wasi/url';
+import { type ExtensionDescriptor, JSException, QuickJS } from 'quickjs-wasi';
 import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import { decrypt as decryptData } from '../serialization/encryption.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
+
+/**
+ * Resolve the quickjs-wasi package directory using require.resolve.
+ * This works in both CJS and ESM contexts, and is recognized by Vercel's
+ * nft (Node File Tracing) for including the binary assets in deployments.
+ *
+ * require.resolve('quickjs-wasi') returns .../quickjs-wasi/dist/index.js
+ * so the package root is two directories up.
+ */
+const require_ = createRequire(import.meta.url);
+const quickjsDir = dirname(dirname(require_.resolve('quickjs-wasi')));
+
+/**
+ * Load the quickjs-wasi WASM binary and native C extension .so files
+ * eagerly at module load time. By reading the files ourselves (rather than
+ * importing quickjs-wasi/base64, quickjs-wasi/encoding, etc.), we avoid
+ * the import.meta.url resolution in those modules which breaks when
+ * bundlers convert ESM to CJS.
+ */
+const quickjsWasm = readFileSync(join(quickjsDir, 'quickjs.wasm'));
+const extensions: ExtensionDescriptor[] = [
+  {
+    name: 'encoding',
+    wasm: readFileSync(join(quickjsDir, 'extensions/encoding/encoding.so')),
+  },
+  {
+    name: 'base64',
+    wasm: readFileSync(join(quickjsDir, 'extensions/base64/base64.so')),
+  },
+  {
+    name: 'headers',
+    wasm: readFileSync(join(quickjsDir, 'extensions/headers/headers.so')),
+  },
+  {
+    name: 'url',
+    wasm: readFileSync(join(quickjsDir, 'extensions/url/url.so')),
+  },
+  {
+    name: 'structured-clone',
+    wasm: readFileSync(
+      join(quickjsDir, 'extensions/structured-clone/structured-clone.so')
+    ),
+    initFn: 'qjs_ext_structured_clone_init',
+  },
+];
 
 // ---- Types ----
 
@@ -101,8 +144,6 @@ export interface SnapshotRuntimeOptions {
   } | null;
   /** Encryption key for decrypting event payloads (undefined if unencrypted) */
   encryptionKey?: CryptoKey;
-  /** The WASM module bytes for quickjs-wasi (optional, auto-loaded if omitted) */
-  wasm?: ArrayBuffer | Uint8Array;
 }
 
 // ---- VM Bootstrap Code ----
@@ -448,17 +489,11 @@ export async function runSnapshotWorkflow(
     // ---- RESTORE from snapshot ----
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
     vm = await QuickJS.restore(snapshot, {
-      wasm: options.wasm,
+      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
-      extensions: [
-        encodingExtension,
-        base64Extension,
-        headersExtension,
-        urlExtension,
-        structuredCloneExtension,
-      ],
+      extensions,
     });
 
     // Re-register host callbacks after restore. Host functions are stored
@@ -491,17 +526,11 @@ export async function runSnapshotWorkflow(
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
-      wasm: options.wasm,
+      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
-      extensions: [
-        encodingExtension,
-        base64Extension,
-        headersExtension,
-        urlExtension,
-        structuredCloneExtension,
-      ],
+      extensions,
     });
 
     // Seeded Math.random — host callback ID = baseId
