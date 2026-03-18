@@ -13,12 +13,14 @@
  * resolve/reject promises.
  */
 
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 import * as nanoid from 'nanoid';
-import { type ExtensionDescriptor, JSException, QuickJS } from 'quickjs-wasi';
+import { JSException, QuickJS } from 'quickjs-wasi';
+import { base64Extension } from 'quickjs-wasi/base64';
+import { encodingExtension } from 'quickjs-wasi/encoding';
+import { headersExtension } from 'quickjs-wasi/headers';
+import { structuredCloneExtension } from 'quickjs-wasi/structured-clone';
+import { urlExtension } from 'quickjs-wasi/url';
 import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
@@ -26,53 +28,18 @@ import { decrypt as decryptData } from '../serialization/encryption.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
 /**
- * Resolve the quickjs-wasi package directory.
- *
- * In ESM (direct dist/ usage, Turbopack, Nitro ESM), import.meta.url is
- * available and we use createRequire. In CJS bundles (esbuild workflow
- * builder), typeof require !== 'undefined' and we use it directly.
- *
- * require.resolve('quickjs-wasi') returns .../quickjs-wasi/dist/index.js
- * so the package root is two directories up.
+ * Native C extensions for the QuickJS VM. These are loaded from
+ * quickjs-wasi subpath imports, which use import.meta.url internally
+ * to locate their .so files. This works because quickjs-wasi is
+ * externalized from the server bundle (Nitro/Next.js), so the
+ * original ESM modules run as-is with import.meta.url intact.
  */
-const resolvePackage =
-  typeof require !== 'undefined'
-    ? require.resolve
-    : createRequire(import.meta.url).resolve;
-const quickjsDir = dirname(dirname(resolvePackage('quickjs-wasi')));
-
-/**
- * Load the quickjs-wasi WASM binary and native C extension .so files
- * eagerly at module load time. By reading the files ourselves (rather than
- * importing quickjs-wasi/base64, quickjs-wasi/encoding, etc.), we avoid
- * the import.meta.url resolution in those modules which breaks when
- * bundlers convert ESM to CJS.
- */
-const quickjsWasm = readFileSync(join(quickjsDir, 'quickjs.wasm'));
-const extensions: ExtensionDescriptor[] = [
-  {
-    name: 'encoding',
-    wasm: readFileSync(join(quickjsDir, 'extensions/encoding/encoding.so')),
-  },
-  {
-    name: 'base64',
-    wasm: readFileSync(join(quickjsDir, 'extensions/base64/base64.so')),
-  },
-  {
-    name: 'headers',
-    wasm: readFileSync(join(quickjsDir, 'extensions/headers/headers.so')),
-  },
-  {
-    name: 'url',
-    wasm: readFileSync(join(quickjsDir, 'extensions/url/url.so')),
-  },
-  {
-    name: 'structured-clone',
-    wasm: readFileSync(
-      join(quickjsDir, 'extensions/structured-clone/structured-clone.so')
-    ),
-    initFn: 'qjs_ext_structured_clone_init',
-  },
+const extensions = [
+  encodingExtension,
+  base64Extension,
+  headersExtension,
+  urlExtension,
+  structuredCloneExtension,
 ];
 
 // ---- Types ----
@@ -494,7 +461,6 @@ export async function runSnapshotWorkflow(
     // ---- RESTORE from snapshot ----
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
     vm = await QuickJS.restore(snapshot, {
-      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
@@ -531,7 +497,6 @@ export async function runSnapshotWorkflow(
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
-      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
