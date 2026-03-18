@@ -26,15 +26,20 @@ import { decrypt as decryptData } from '../serialization/encryption.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
 /**
- * Resolve the quickjs-wasi package directory using require.resolve.
- * This works in both CJS and ESM contexts, and is recognized by Vercel's
- * nft (Node File Tracing) for including the binary assets in deployments.
+ * Resolve the quickjs-wasi package directory.
+ *
+ * In ESM (direct dist/ usage, Turbopack, Nitro ESM), import.meta.url is
+ * available and we use createRequire. In CJS bundles (esbuild workflow
+ * builder), typeof require !== 'undefined' and we use it directly.
  *
  * require.resolve('quickjs-wasi') returns .../quickjs-wasi/dist/index.js
  * so the package root is two directories up.
  */
-const require_ = createRequire(import.meta.url);
-const quickjsDir = dirname(dirname(require_.resolve('quickjs-wasi')));
+const resolvePackage =
+  typeof require !== 'undefined'
+    ? require.resolve
+    : createRequire(import.meta.url).resolve;
+const quickjsDir = dirname(dirname(resolvePackage('quickjs-wasi')));
 
 /**
  * Load the quickjs-wasi WASM binary and native C extension .so files
