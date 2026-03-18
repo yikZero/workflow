@@ -326,13 +326,15 @@ The CLI `health` command defaults to `http://localhost:3000` when `WORKFLOW_LOCA
 
 **Fix**: Added `WORKFLOW_LOCAL_BASE_URL` to the CLI's `getEnvVars()` return object.
 
-### Synchronous Stream Flush
+### Buffered Stream Flush with Waiter Promises
 
-`WorkflowServerWritableStream` previously buffered writes and flushed via a 10ms `setTimeout`. This caused the V2 inline loop to break on every step with `WritableStream` serialization (including all AI agent steps), since the `flushablePipe`'s `pendingOps` counter reached 0 before data actually reached the server.
+`WorkflowServerWritableStream` buffers writes and flushes via a 10ms `setTimeout` for batching. Previously, `write()` returned immediately after buffering, causing the `flushablePipe`'s `pendingOps` counter to reach 0 before data actually reached the server. The V2 inline loop saw ops as settled prematurely and broke on every step with `WritableStream` serialization.
 
-**Fix**: `write()` now calls `flush()` synchronously (inline HTTP round-trip) instead of scheduling via `setTimeout`. This makes `pendingOps` accurately reflect server-side data state. The 500ms inline ops await can distinguish between:
-- **Steps where ops settle** (data on server, ~200ms) → continue loop inline
-- **Steps where ops don't settle** (WritableStream kept open) → break loop
+**Fix**: `write()` now returns a promise that resolves only after the scheduled flush completes. Multiple writes within the 10ms window still share a single batched HTTP request (the batching optimization is preserved). Each write registers a `{resolve, reject}` pair in a `flushWaiters` array. When the `setTimeout` fires and `flush()` completes the HTTP round-trip, all waiters are resolved (or rejected on error). This makes `pendingOps` accurately reflect server-side data state while keeping network-efficient batching.
+
+The 500ms inline ops await in the step executor can now distinguish between:
+- **Steps where ops settle** (data on server, ~200ms after lock release + flush) → continue loop inline
+- **Steps where ops don't settle** (WritableStream kept open across steps) → break loop
 
 ### Event Consumer Skip Logic for Wait/Hook Events
 

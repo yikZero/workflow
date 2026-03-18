@@ -453,9 +453,7 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
  * Default flush interval in milliseconds for buffered stream writes.
  * Chunks are accumulated and flushed together to reduce network overhead.
  */
-// Previously used for deferred flushing (setTimeout). Now writes flush
-// synchronously so the V2 inline loop can accurately track pending ops.
-// const STREAM_FLUSH_INTERVAL_MS = 10;
+const STREAM_FLUSH_INTERVAL_MS = 10;
 
 export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
   constructor(name: string, runId: string) {
@@ -503,6 +501,30 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
       buffer = [];
     };
 
+    /** Resolvers/rejectors waiting for the current scheduled flush */
+    let flushWaiters: Array<{
+      resolve: () => void;
+      reject: (err: unknown) => void;
+    }> = [];
+
+    const scheduleFlush = (): void => {
+      if (flushTimer) return; // Already scheduled
+
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        const currentWaiters = flushWaiters;
+        flushWaiters = [];
+        flushPromise = flush().then(
+          () => {
+            for (const w of currentWaiters) w.resolve();
+          },
+          (err) => {
+            for (const w of currentWaiters) w.reject(err);
+          }
+        );
+      }, STREAM_FLUSH_INTERVAL_MS);
+    };
+
     super({
       async write(chunk) {
         // Wait for any in-progress flush to complete before adding to buffer
@@ -512,14 +534,16 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
         }
 
         buffer.push(chunk);
+        scheduleFlush();
 
-        // Flush synchronously instead of via setTimeout. The V2 inline
-        // execution loop tracks pending ops via flushablePipe. With
-        // deferred flushing (setTimeout), pendingOps reaches 0 before
-        // data hits the server — the ops appear settled prematurely.
-        // Flushing here ensures the HTTP write completes before the
-        // flushablePipe's await writer.write() returns.
-        await flush();
+        // Wait for the scheduled flush to complete so that callers
+        // (like flushablePipe) know data has reached the server
+        // before decrementing pendingOps. Without this, pendingOps
+        // reaches 0 when the buffered write returns (instant), but
+        // the 10ms flush timer hasn't fired yet.
+        await new Promise<void>((resolve, reject) => {
+          flushWaiters.push({ resolve, reject });
+        });
       },
       async close() {
         // Wait for any in-progress flush to complete
