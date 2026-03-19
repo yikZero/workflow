@@ -16,31 +16,12 @@
 import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
 import * as nanoid from 'nanoid';
 import { JSException, QuickJS } from 'quickjs-wasi';
-import { base64Extension } from 'quickjs-wasi/base64';
-import { encodingExtension } from 'quickjs-wasi/encoding';
-import { headersExtension } from 'quickjs-wasi/headers';
-import { structuredCloneExtension } from 'quickjs-wasi/structured-clone';
-import { urlExtension } from 'quickjs-wasi/url';
 import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import { decrypt as decryptData } from '../serialization/encryption.js';
+import { quickjsExtensions, quickjsWasm } from './quickjs-assets.generated.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
-
-/**
- * Native C extensions for the QuickJS VM. These are loaded from
- * quickjs-wasi subpath imports, which use import.meta.url internally
- * to locate their .so files. This works because quickjs-wasi is
- * externalized from the server bundle (Nitro/Next.js), so the
- * original ESM modules run as-is with import.meta.url intact.
- */
-const extensions = [
-  encodingExtension,
-  base64Extension,
-  headersExtension,
-  urlExtension,
-  structuredCloneExtension,
-];
 
 // ---- Types ----
 
@@ -461,10 +442,11 @@ export async function runSnapshotWorkflow(
     // ---- RESTORE from snapshot ----
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
     vm = await QuickJS.restore(snapshot, {
+      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
-      extensions,
+      extensions: quickjsExtensions,
     });
 
     // Re-register host callbacks after restore. Host functions are stored
@@ -497,10 +479,11 @@ export async function runSnapshotWorkflow(
   } else {
     // ---- FIRST RUN ----
     vm = await QuickJS.create({
+      wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
       memoryLimit: 256 * 1024 * 1024,
       interruptHandler: createInterruptHandler(),
-      extensions,
+      extensions: quickjsExtensions,
     });
 
     // Seeded Math.random — host callback ID = baseId
