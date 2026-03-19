@@ -762,7 +762,12 @@ async function processEvents(
         });
         if (hasResolver) {
           if (rawPayload instanceof Uint8Array) {
-            const bytesHandle = vm.newUint8Array(rawPayload);
+            // Decrypt if encrypted — the VM only understands 'devl' format
+            const decryptedPayload = (await decryptData(
+              rawPayload,
+              encryptionKey
+            )) as Uint8Array;
+            const bytesHandle = vm.newUint8Array(decryptedPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.evalCode(
@@ -809,7 +814,12 @@ async function processEvents(
               ? `(globalThis.__hookPayloadBuffer.__processedEventIds = globalThis.__hookPayloadBuffer.__processedEventIds || {})[${eventIdJs}] = true;`
               : '');
           if (rawPayload instanceof Uint8Array) {
-            const bytesHandle = vm.newUint8Array(rawPayload);
+            // Decrypt if encrypted — the VM only understands 'devl' format
+            const decryptedPayload = (await decryptData(
+              rawPayload,
+              encryptionKey
+            )) as Uint8Array;
+            const bytesHandle = vm.newUint8Array(decryptedPayload);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.evalCode(
