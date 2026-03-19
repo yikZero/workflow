@@ -611,11 +611,17 @@ async function processEvents(
         if (hasResolver) {
           if (rawOutput instanceof Uint8Array) {
             // Decrypt if encrypted — the VM only understands 'devl' format
+            runtimeLogger.debug('Snapshot runtime: step result raw', {
+              correlationId: escapedCid,
+              rawPrefix: new TextDecoder().decode(rawOutput.subarray(0, 4)),
+              rawByteLength: rawOutput.byteLength,
+              isBuffer: Buffer.isBuffer(rawOutput),
+            });
             const decryptedOutput = (await decryptData(
               rawOutput,
               encryptionKey
             )) as Uint8Array;
-            runtimeLogger.debug('Snapshot runtime: step result format', {
+            runtimeLogger.debug('Snapshot runtime: step result decrypted', {
               correlationId: escapedCid,
               prefix: new TextDecoder().decode(decryptedOutput.subarray(0, 4)),
               byteLength: decryptedOutput.byteLength,
@@ -629,6 +635,13 @@ async function processEvents(
                 `delete globalThis.__tmp_result;`
             ).dispose();
           } else {
+            runtimeLogger.debug('Snapshot runtime: step result non-binary', {
+              correlationId: escapedCid,
+              type: typeof rawOutput,
+              isNull: rawOutput === null,
+              isUndefined: rawOutput === undefined,
+              constructor: rawOutput?.constructor?.name,
+            });
             const serialized =
               rawOutput !== undefined ? JSON.stringify(rawOutput) : 'undefined';
             vm.evalCode(
