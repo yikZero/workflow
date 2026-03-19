@@ -512,6 +512,10 @@ export async function runSnapshotWorkflow(
         runInput,
         options.encryptionKey
       )) as Uint8Array;
+      runtimeLogger.debug('Snapshot runtime: run input format', {
+        prefix: new TextDecoder().decode(decryptedInput.subarray(0, 4)),
+        byteLength: decryptedInput.byteLength,
+      });
       const inputHandle = vm.newUint8Array(decryptedInput);
       vm.setProp(vm.global, '__wdk_input', inputHandle);
       inputHandle.dispose();
@@ -611,6 +615,11 @@ async function processEvents(
               rawOutput,
               encryptionKey
             )) as Uint8Array;
+            runtimeLogger.debug('Snapshot runtime: step result format', {
+              correlationId: escapedCid,
+              prefix: new TextDecoder().decode(decryptedOutput.subarray(0, 4)),
+              byteLength: decryptedOutput.byteLength,
+            });
             const bytesHandle = vm.newUint8Array(decryptedOutput);
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
