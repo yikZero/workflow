@@ -735,6 +735,13 @@ async function processEvents(
             )
           : false;
         if (alreadyProcessed) {
+          runtimeLogger.debug(
+            'Snapshot runtime: hook_received already processed',
+            {
+              correlationId: cid,
+              eventId: event.eventId,
+            }
+          );
           markCreated(vm, escapedCid);
           break;
         }
@@ -742,6 +749,17 @@ async function processEvents(
           vm.evalCode(`!!globalThis.__resolvers["${escapedCid}"]`)
         );
         const rawPayload = eventData?.payload ?? eventData?.result;
+        runtimeLogger.debug('Snapshot runtime: processing hook_received', {
+          correlationId: cid,
+          eventId: event.eventId,
+          hasResolver,
+          payloadType: typeof rawPayload,
+          payloadIsUint8Array: rawPayload instanceof Uint8Array,
+          payloadKeys:
+            rawPayload && typeof rawPayload === 'object'
+              ? Object.keys(rawPayload)
+              : undefined,
+        });
         if (hasResolver) {
           if (rawPayload instanceof Uint8Array) {
             const bytesHandle = vm.newUint8Array(rawPayload);
