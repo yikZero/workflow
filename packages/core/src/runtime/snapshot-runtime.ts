@@ -219,11 +219,11 @@ globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
 };
 
 // Response/Request polyfills — .json()/.text()/.arrayBuffer() are useStep
-// proxies that execute on the host side (same pattern as workflow.ts).
+// proxies that execute on the host side. The proxies are assigned directly
+// to the prototypes so that 'this' (the Response/Request instance) is
+// serialized as thisVal by WORKFLOW_USE_STEP, matching the event-replay
+// runtime's approach (commit dcb0761).
 if (typeof Response === "undefined") {
-  var __resJson = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_json");
-  var __resText = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_text");
-  var __resArrayBuffer = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_array_buffer");
   var __BODY_INIT = Symbol.for("BODY_INIT");
 
   globalThis.Response = function(body, init) {
@@ -247,35 +247,15 @@ if (typeof Response === "undefined") {
   Object.defineProperty(globalThis.Response.prototype, "bodyUsed", {
     get: function() { return false; }
   });
-  // The builtin response methods serialize the Response object directly
-  // so that devalue's Response reducer fires and produces the correct
-  // type tag for the step handler's Response reviver (which creates a
-  // real native Response with .json()/.text() methods).
-  function __serializeResponseForStep(resp) {
-    return globalThis.__wdk_serialize({
-      args: [resp],
-    });
-  }
-  globalThis.Response.prototype.json = function() {
-    var cid = "step_" + globalThis.__generateUlid();
-    var input = __serializeResponseForStep(this);
-    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_json", input: input, hasCreatedEvent: false });
-    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
-  };
-  globalThis.Response.prototype.text = function() {
-    var cid = "step_" + globalThis.__generateUlid();
-    var input = __serializeResponseForStep(this);
-    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_text", input: input, hasCreatedEvent: false });
-    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
-  };
-  globalThis.Response.prototype.arrayBuffer = function() {
-    var cid = "step_" + globalThis.__generateUlid();
-    var input = __serializeResponseForStep(this);
-    globalThis.__pending.push({ type: "step", correlationId: cid, stepId: "__builtin_response_array_buffer", input: input, hasCreatedEvent: false });
-    return new Promise(function(resolve, reject) { globalThis.__resolvers[cid] = { resolve: resolve, reject: reject }; });
-  };
+  // Assign useStep proxies directly — 'this' binding provides the
+  // Response instance, which gets serialized as thisVal by the proxy.
+  Object.defineProperties(globalThis.Response.prototype, {
+    arrayBuffer: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_array_buffer"), writable: true, configurable: true },
+    json: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_json"), writable: true, configurable: true },
+    text: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_text"), writable: true, configurable: true },
+  });
   globalThis.Response.prototype.bytes = function() {
-    return __resArrayBuffer(this).then(function(buf) { return new Uint8Array(buf); });
+    return this.arrayBuffer().then(function(buf) { return new Uint8Array(buf); });
   };
   globalThis.Response.prototype.clone = function() {
     var r = Object.create(globalThis.Response.prototype);
@@ -310,9 +290,11 @@ if (typeof Request === "undefined") {
   Object.defineProperty(globalThis.Request.prototype, "bodyUsed", {
     get: function() { return false; }
   });
-  globalThis.Request.prototype.json = function() { return __resJson(this); };
-  globalThis.Request.prototype.text = function() { return __resText(this); };
-  globalThis.Request.prototype.arrayBuffer = function() { return __resArrayBuffer(this); };
+  Object.defineProperties(globalThis.Request.prototype, {
+    arrayBuffer: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_array_buffer"), writable: true, configurable: true },
+    json: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_json"), writable: true, configurable: true },
+    text: { value: globalThis[Symbol.for("WORKFLOW_USE_STEP")]("__builtin_response_text"), writable: true, configurable: true },
+  });
 }
 
 // createHook — returns a Hook object that is both a Thenable and AsyncIterable.
