@@ -10,7 +10,7 @@
     "prebuild": "pnpm generate:workflows && pnpm setup:swcrc",
     "dev": "nest start --watch",
     "build": "nest build",
-    "postbuild": "tsx scripts/build-vercel.ts",
+    "postbuild": "workflow-nest build",
     "start": "node dist/main.js"
   },
   "engines": {
@@ -38,7 +38,6 @@
     "@swc/cli": "^0.6.0",
     "@swc/core": "^1.10.0",
     "@types/node": "^22.10.7",
-    "tsx": "^4.20.0",
     "typescript": "catalog:",
     "zod": "catalog:"
   }

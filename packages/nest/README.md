@@ -127,8 +127,6 @@ WorkflowModule.forRoot({
 
 ## Deploying to Vercel
 
-When deploying to Vercel, you need to call `buildVercelOutput()` to generate the [Build Output API](https://vercel.com/docs/build-output-api/v3) with queue triggers so VQS can discover your workflow consumers.
-
 ### 1. Create an entry point
 
 Create `api/index.js` exporting your NestJS app as a handler:
@@ -149,22 +147,23 @@ export default async (req, res) => {
 };
 ```
 
-### 2. Add a Vercel build script
+### 2. Add postbuild script
 
-```typescript
-// scripts/build-vercel.ts
-import { NestLocalBuilder } from '@workflow/nest/builder';
-
-const builder = new NestLocalBuilder({
-  workingDir: process.cwd(),
-  dirs: ['src'],
-  outDir: 'dist/.workflow',
-});
-await builder.build();
-await builder.buildVercelOutput({ entryPoint: 'api/index.js' });
+```json
+{
+  "scripts": {
+    "prebuild": "npx @workflow/nest init --force",
+    "build": "nest build",
+    "postbuild": "workflow-nest build"
+  }
+}
 ```
 
-### 3. Configure vercel.json
+`workflow-nest build` builds workflow bundles and, when running on Vercel, generates the [Build Output API](https://vercel.com/docs/build-output-api/v3) with queue triggers so VQS can discover your workflow consumers. The `api/index.js` entry point is auto-detected.
+
+### 3. Configure Vercel project
+
+Set the Framework Preset to **Other** (not "NestJS") — the NestJS preset conflicts with the Build Output API.
 
 ```json
 { "buildCommand": "pnpm build" }
@@ -256,12 +255,11 @@ This generates:
 ```bash
 # Generate .swcrc configuration
 npx @workflow/nest init
+npx @workflow/nest init --force  # overwrite existing
 
-# Force regenerate (overwrites existing)
-npx @workflow/nest init --force
-
-# Show help
-npx @workflow/nest --help
+# Build workflow bundles (+ Vercel Build Output API when VERCEL is set)
+npx @workflow/nest build
+npx @workflow/nest build --entry api/handler.js  # custom entry point
 ```
 
 ## License

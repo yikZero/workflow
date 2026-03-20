@@ -325,8 +325,6 @@ WorkflowModule.forRoot({
 
 ## Deploying to Vercel
 
-Deploying a NestJS workflow app to [Vercel](https://vercel.com/home) requires an additional build step to generate the [Build Output API](https://vercel.com/docs/build-output-api/v3).
-
 <FluidComputeCallout />
 
 ### 1. Create the Vercel entry point
@@ -354,47 +352,28 @@ export default async (req, res) => {
 Your main app module should export a `createApp()` function that creates and initializes the NestJS application, returning both the app instance and the underlying HTTP adapter.
 </Callout>
 
-### 2. Add the Vercel build step
+### 2. Add the build step
 
-Update your build script to call `buildVercelOutput()` when deploying to Vercel. This generates the Build Output API with workflow functions that have the required queue triggers:
-
-{/*@skip-typecheck - Shows build script*/}
-
-```typescript title="scripts/build-vercel.ts" lineNumbers
-import { NestLocalBuilder } from '@workflow/nest/builder';
-
-const builder = new NestLocalBuilder({
-  workingDir: process.cwd(),
-  dirs: ['src'],
-  moduleType: 'es6',
-  outDir: 'dist/.workflow',
-});
-
-// Build workflow bundles for the NestJS controller
-await builder.build();
-
-// Generate Vercel Build Output API with queue triggers
-await builder.buildVercelOutput({
-  entryPoint: 'api/index.js',
-});
-```
-
-Then update your `package.json` scripts:
+Add `workflow-nest build` as a postbuild script. This builds workflow bundles locally, and on Vercel it additionally generates the [Build Output API](https://vercel.com/docs/build-output-api/v3) with the queue triggers that VQS needs to call back your workflow functions:
 
 ```json title="package.json" lineNumbers
 {
   "scripts": {
     "prebuild": "npx @workflow/nest init --force",
     "build": "nest build",
-    "postbuild": "tsx scripts/build-vercel.ts",
+    "postbuild": "workflow-nest build",
     "start:dev": "npx @workflow/nest init --force && nest start --watch"
   }
 }
 ```
 
-### 3. Configure `vercel.json`
+The `workflow-nest build` command auto-detects the `api/index.js` entry point. To specify a different path, use `workflow-nest build --entry path/to/entry.js`.
 
-Since `buildVercelOutput()` generates the full Build Output API structure at `.vercel/output/`, your `vercel.json` only needs the build command:
+### 3. Configure Vercel project
+
+Set your Vercel project's **Framework Preset** to **Other** (not "NestJS"). The NestJS preset uses `@vercel/node` which conflicts with the Build Output API that `workflow-nest build` generates.
+
+Your `vercel.json` only needs the build command:
 
 ```json title="vercel.json" lineNumbers
 {
@@ -403,7 +382,7 @@ Since `buildVercelOutput()` generates the full Build Output API structure at `.v
 ```
 
 <Callout type="warning">
-Do **not** add `functions`, `outputDirectory`, or `rewrites` to `vercel.json` — these are handled by the generated Build Output API `config.json`.
+Do **not** set the framework preset to "NestJS" and do not add `functions`, `outputDirectory`, or `rewrites` to `vercel.json` — routing is handled by the generated Build Output API.
 </Callout>
 
 Check the [Deploying](/docs/deploying) section to learn how your workflows can be deployed elsewhere.

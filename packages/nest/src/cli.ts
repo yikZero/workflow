@@ -52,18 +52,26 @@ function showHelp(): void {
 
 Commands:
   init    Generate .swcrc configuration with the workflow plugin
+  build   Build workflow bundles (and Vercel Build Output API when on Vercel)
   help    Show this help message
 
 Usage:
   npx @workflow/nest init [options]
+  npx @workflow/nest build [options]
 
-Options:
+Init Options:
   --module <type>  SWC module type: 'es6' (default) or 'commonjs'
   --force          Overwrite existing .swcrc file
 
-This command generates a .swcrc file configured with the Workflow SWC plugin
-for client-mode transformations. The plugin path is resolved from the
-@workflow/nest package, so no additional hoisting configuration is needed.
+Build Options:
+  --entry <path>   Vercel serverless entry point (default: auto-detected from api/)
+  --module <type>  SWC module type: 'es6' (default) or 'commonjs'
+  --dirs <dirs>    Comma-separated source directories (default: 'src')
+  --out-dir <dir>  Output directory for bundles (default: '.nestjs/workflow')
+
+The build command generates workflow bundles (steps, workflows, webhook).
+When running on Vercel (VERCEL env set), it also generates the Build Output
+API with experimentalTriggers so VQS can discover workflow consumers.
 `);
 }
 
@@ -135,9 +143,78 @@ function handleInit(args: string[]): void {
 }
 
 /**
+ * Auto-detect the Vercel serverless entry point.
+ * Looks for common patterns: api/index.js, api/index.ts, api/index.mjs
+ */
+function detectEntryPoint(): string | null {
+  const candidates = [
+    'api/index.js',
+    'api/index.ts',
+    'api/index.mjs',
+    'api/server.js',
+    'api/server.ts',
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(resolve(process.cwd(), candidate))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function parseArg(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx >= 0 && idx + 1 < args.length) {
+    return args[idx + 1];
+  }
+  return undefined;
+}
+
+async function handleBuild(args: string[]): Promise<void> {
+  const { NestLocalBuilder } = await import('./builder.js');
+
+  const moduleType = parseModuleType(args);
+  const dirs = parseArg(args, '--dirs')?.split(',') ?? ['src'];
+  const outDir = parseArg(args, '--out-dir');
+
+  const builder = new NestLocalBuilder({
+    workingDir: process.cwd(),
+    dirs,
+    moduleType,
+    ...(outDir ? { outDir } : {}),
+  });
+
+  // Always build workflow bundles
+  await builder.build();
+
+  // On Vercel, also generate Build Output API with experimentalTriggers
+  if (process.env.VERCEL) {
+    const entryPoint = parseArg(args, '--entry') ?? detectEntryPoint();
+    if (!entryPoint) {
+      console.error(
+        '[@workflow/nest] Could not auto-detect Vercel entry point.\n' +
+          'Create an api/index.js file or pass --entry <path>.'
+      );
+      process.exit(1);
+    }
+    if (!existsSync(resolve(process.cwd(), entryPoint))) {
+      console.error(
+        `[@workflow/nest] Entry point not found: ${entryPoint}\n` +
+          'Ensure the file exists or pass a valid --entry <path>.'
+      );
+      process.exit(1);
+    }
+    console.log(
+      `[@workflow/nest] Detected Vercel — generating Build Output API (entry: ${entryPoint})`
+    );
+    await builder.buildVercelOutput({ entryPoint });
+  }
+}
+
+/**
  * Main CLI entry point.
  */
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
 
@@ -153,6 +230,11 @@ function main() {
 
   if (command === 'init') {
     handleInit(args);
+    process.exit(0);
+  }
+
+  if (command === 'build') {
+    await handleBuild(args);
     process.exit(0);
   }
 
