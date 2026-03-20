@@ -125,6 +125,53 @@ WorkflowModule.forRoot({
 });
 ```
 
+## Deploying to Vercel
+
+When deploying to Vercel, you need to call `buildVercelOutput()` to generate the [Build Output API](https://vercel.com/docs/build-output-api/v3) with queue triggers so VQS can discover your workflow consumers.
+
+### 1. Create an entry point
+
+Create `api/index.js` exporting your NestJS app as a handler:
+
+```javascript
+// api/index.js
+import { createApp } from '../dist/app.js';
+
+let ready;
+async function createHandler() {
+  const { app } = await createApp();
+  return app.getHttpAdapter().getInstance();
+}
+
+export default async (req, res) => {
+  ready ??= createHandler();
+  return (await ready)(req, res);
+};
+```
+
+### 2. Add a Vercel build script
+
+```typescript
+// scripts/build-vercel.ts
+import { NestLocalBuilder } from '@workflow/nest/builder';
+
+const builder = new NestLocalBuilder({
+  workingDir: process.cwd(),
+  dirs: ['src'],
+  outDir: 'dist/.workflow',
+});
+await builder.build();
+await builder.buildVercelOutput({ entryPoint: 'api/index.js' });
+```
+
+### 3. Configure vercel.json
+
+```json
+{ "buildCommand": "pnpm build" }
+```
+
+Do **not** add `functions`, `outputDirectory`, or `rewrites` — the Build Output API handles routing.
+
 ## How It Works
 
 The `@workflow/nest` package provides:
@@ -132,7 +179,8 @@ The `@workflow/nest` package provides:
 1. **WorkflowModule** - A NestJS module that handles workflow bundle building and HTTP routing
 2. **WorkflowController** - Handles workflow and step execution requests at `.well-known/workflow/v1/`
 3. **NestLocalBuilder** - Builds workflow bundles (steps.mjs, workflows.mjs) from your source files
-4. **CLI** - Generates `.swcrc` configuration with the SWC plugin properly resolved
+4. **NestLocalBuilder.buildVercelOutput()** - Generates Vercel Build Output API
+5. **CLI** - Generates `.swcrc` configuration with the SWC plugin properly resolved
 
 ## Why the CLI?
 
@@ -177,6 +225,31 @@ WorkflowModule.forRoot({
   distDir: 'dist',          // where compiled .js files live
 })
 ```
+
+### NestLocalBuilder.buildVercelOutput(options)
+
+Generates the Vercel Build Output API.
+
+```typescript
+await builder.buildVercelOutput({
+  // Path to your Vercel serverless function entry point (required)
+  entryPoint: 'api/index.js',
+
+  // Max duration in seconds for the NestJS function (default: 300)
+  maxDuration: 300,
+
+  // Additional routes for the Build Output API config.json
+  additionalRoutes: [],
+});
+```
+
+This generates:
+
+- `.vercel/output/functions/.well-known/workflow/v1/step.func/` with `experimentalTriggers`
+- `.vercel/output/functions/.well-known/workflow/v1/flow.func/` with `experimentalTriggers`
+- `.vercel/output/functions/.well-known/workflow/v1/webhook/[token].func/`
+- `.vercel/output/functions/api/index.js.func/` (bundled NestJS app)
+- `.vercel/output/config.json` with routing rules
 
 ### CLI Commands
 

@@ -1,4 +1,8 @@
-export { type NestBuilderOptions, NestLocalBuilder } from './builder.js';
+export {
+  type NestBuilderOptions,
+  NestLocalBuilder,
+  type NestVercelOutputOptions,
+} from './builder.js';
 export {
   configureWorkflowController,
   WorkflowController,
