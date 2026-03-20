@@ -229,6 +229,8 @@ WorkflowModule.forRoot({
 
 Generates the Vercel Build Output API.
 
+{/*@skip-typecheck: Shows buildVercelOutput options*/}
+
 ```typescript
 await builder.buildVercelOutput({
   // Path to your Vercel serverless function entry point (required)
