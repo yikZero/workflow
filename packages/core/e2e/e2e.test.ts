@@ -702,6 +702,31 @@ describe('e2e', () => {
     }
   );
 
+  test.skipIf(isLocalDeployment())(
+    'outputStreamWorkflow - negative startIndex reads from end',
+    { timeout: 60_000 },
+    async () => {
+      const run = await start(await e2e('outputStreamWorkflow'), []);
+
+      // Use negative startIndex to read only the last chunk from the default stream.
+      // outputStreamWorkflow writes 2 chunks to the default stream:
+      //   chunk 0: binary "Hello, world!"
+      //   chunk 1: object { foo: 'test' }
+      // startIndex: -1 should skip chunk 0 and only return chunk 1.
+      const reader = run.getReadable({ startIndex: -1 }).getReader();
+
+      const r1 = await reader.read();
+      assert(r1.value);
+      expect(r1.value).toEqual({ foo: 'test' });
+
+      const r2 = await reader.read();
+      expect(r2.done).toBe(true);
+
+      const returnValue = await run.returnValue;
+      expect(returnValue).toEqual('done');
+    }
+  );
+
   test('fetchWorkflow', { timeout: 60_000 }, async () => {
     const run = await start(await e2e('fetchWorkflow'), []);
     const returnValue = await run.returnValue;
