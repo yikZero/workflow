@@ -677,6 +677,88 @@ describe('createQueue', () => {
       expect(capturedMeta.requestId).toBeUndefined();
     });
 
+    it('should set x-workflow-run-id response header for workflow payloads', async () => {
+      mockHandleCallback.mockImplementation((handler) => {
+        return async (req: Request) => {
+          await handler(
+            {
+              payload: { runId: 'wrun_abc123' },
+              queueName: '__wkf_workflow_test',
+            },
+            {
+              messageId: 'msg-123',
+              deliveryCount: 1,
+              createdAt: new Date(),
+            }
+          );
+          return new Response('ok');
+        };
+      });
+
+      const queue = createQueue();
+      const routeHandler = queue.createQueueHandler(
+        '__wkf_workflow_',
+        async () => {}
+      );
+
+      const response = await routeHandler(new Request('http://localhost'));
+
+      expect(response.headers.get('x-workflow-run-id')).toBe('wrun_abc123');
+    });
+
+    it('should set x-workflow-run-id response header for step payloads', async () => {
+      mockHandleCallback.mockImplementation((handler) => {
+        return async (req: Request) => {
+          await handler(
+            {
+              payload: {
+                workflowName: 'test',
+                workflowRunId: 'wrun_step456',
+                workflowStartedAt: Date.now(),
+                stepId: 'step_789',
+              },
+              queueName: '__wkf_step_myStep',
+            },
+            {
+              messageId: 'msg-123',
+              deliveryCount: 1,
+              createdAt: new Date(),
+            }
+          );
+          return new Response('ok');
+        };
+      });
+
+      const queue = createQueue();
+      const routeHandler = queue.createQueueHandler(
+        '__wkf_step_',
+        async () => {}
+      );
+
+      const response = await routeHandler(new Request('http://localhost'));
+
+      expect(response.headers.get('x-workflow-run-id')).toBe('wrun_step456');
+    });
+
+    it('should not set x-workflow-run-id response header when handler skips (null message)', async () => {
+      mockHandleCallback.mockImplementation((handler) => {
+        return async (req: Request) => {
+          await handler(null, null);
+          return new Response('ok');
+        };
+      });
+
+      const queue = createQueue();
+      const routeHandler = queue.createQueueHandler(
+        '__wkf_workflow_',
+        async () => {}
+      );
+
+      const response = await routeHandler(new Request('http://localhost'));
+
+      expect(response.headers.get('x-workflow-run-id')).toBeNull();
+    });
+
     it('should handle step payloads correctly', async () => {
       mockSend.mockResolvedValue({ messageId: 'new-msg-123' });
 

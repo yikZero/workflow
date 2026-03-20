@@ -13,6 +13,7 @@ import { getDispatcher } from './http-client.js';
 import { type APIConfig, getHeaders, getHttpUrl } from './utils.js';
 
 const requestIdStorage = new AsyncLocalStorage<string | undefined>();
+const runIdStorage = new AsyncLocalStorage<string | undefined>();
 
 const MessageWrapper = z.object({
   payload: QueuePayloadSchema,
@@ -182,6 +183,16 @@ export function createQueue(config?: APIConfig): Queue {
         const { payload, queueName, deploymentId } =
           MessageWrapper.parse(message);
 
+        // Extract runId from payload for response header correlation
+        const runId =
+          'runId' in payload && typeof payload.runId === 'string'
+            ? payload.runId
+            : 'workflowRunId' in payload &&
+                typeof payload.workflowRunId === 'string'
+              ? payload.workflowRunId
+              : undefined;
+        runIdStorage.enterWith(runId);
+
         const result = await handler(payload, {
           queueName,
           messageId: MessageId.parse(metadata.messageId),
@@ -209,7 +220,22 @@ export function createQueue(config?: APIConfig): Queue {
     return async (req: Request) => {
       const rawId = req.headers.get('x-vercel-id');
       const requestId = rawId?.trim() || undefined;
-      return requestIdStorage.run(requestId, () => vqsHandler(req));
+      return runIdStorage.run(undefined, async () => {
+        const response = await requestIdStorage.run(requestId, () =>
+          vqsHandler(req)
+        );
+        const runId = runIdStorage.getStore();
+        if (response && runId) {
+          const headers = new Headers(response.headers);
+          headers.set('x-workflow-run-id', runId);
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
+        }
+        return response;
+      });
     };
   };
 
