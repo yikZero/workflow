@@ -138,7 +138,7 @@ matrix.app.push({
 
 matrix.app.push({
   name: 'nest',
-  project: 'workbench-nest-workflow',
+  project: 'workbench-nestjs-workflow',
   ...DEV_TEST_CONFIGS.nest,
 });
 
