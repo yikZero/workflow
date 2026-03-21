@@ -238,8 +238,12 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Expose manifest as a serverless function when WORKFLOW_PUBLIC_MANIFEST=1.
-    if (this.shouldExposePublicManifest && manifestJson) {
+    // Always expose the manifest as a serverless function in the Build Output
+    // API. The WORKFLOW_PUBLIC_MANIFEST env var may not be available during
+    // turbo-orchestrated builds on Vercel (it's set in vercel.json env which
+    // is runtime-only in some configurations), so we unconditionally create
+    // the function here. The manifest is safe to serve publicly.
+    if (manifestJson) {
       const manifestFuncDir = join(workflowGeneratedDir, 'manifest.func');
       await mkdir(manifestFuncDir, { recursive: true });
       const manifestHandler = [
@@ -310,14 +314,10 @@ export class NestLocalBuilder extends BaseBuilder {
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
       // Manifest route (rewrite manifest.json to the manifest function)
-      ...(this.shouldExposePublicManifest
-        ? [
-            {
-              src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
-              dest: '/.well-known/workflow/v1/manifest',
-            },
-          ]
-        : []),
+      {
+        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
+        dest: '/.well-known/workflow/v1/manifest',
+      },
       // Let filesystem handler match workflow functions (step, flow)
       { handle: 'filesystem' as const },
       // Send everything else to the NestJS catch-all
