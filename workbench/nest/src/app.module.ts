@@ -1,15 +1,17 @@
-import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { WorkflowModule } from 'workflow/nest';
 import { AppController } from './app.controller.js';
 
-// Use createRequire to import the manifest as a JSON module.
-// require() resolves relative to the file (not CWD) and NFT traces it.
-// The workflow-nest build CLI writes this file to dist/ during postbuild.
-const require = createRequire(import.meta.url);
+// Read manifest from dist/workflow-manifest.json at module load time.
+// The workflow-nest build CLI copies it there during the build step.
+// On Vercel's Lambda, process.cwd() is the project root and dist/
+// is NFT-traced (included in the Lambda automatically).
 try {
-  const data = require('./workflow-manifest.json');
-  (globalThis as any).__workflowManifestJson = JSON.stringify(data);
+  const manifestPath = join(process.cwd(), 'dist', 'workflow-manifest.json');
+  const data = readFileSync(manifestPath, 'utf-8');
+  (globalThis as any).__workflowManifestJson = data;
 } catch {
   // File doesn't exist during dev (built at runtime by WorkflowModule)
 }
