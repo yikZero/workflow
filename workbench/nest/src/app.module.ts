@@ -24,7 +24,7 @@ try {
   imports: [
     WorkflowModule.forRoot({
       skipBuild: !!process.env.VERCEL,
-      outDir: WORKFLOW_OUT_DIR,
+      outDir: `./${WORKFLOW_OUT_DIR}`,
     }),
   ],
   controllers: [AppController],
