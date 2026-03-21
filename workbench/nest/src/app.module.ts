@@ -13,9 +13,9 @@ if (process.env.VERCEL) {
 // NestJS preset copies all of dist/ to the Lambda, so the file is available.
 const _require = createRequire(import.meta.url);
 try {
-  const manifest = _require('./workflow-manifest.cjs');
-  (globalThis as any).__workflowManifestJson =
-    typeof manifest === 'string' ? manifest : JSON.stringify(manifest);
+  // require() auto-parses .json files. Stringify back for the controller.
+  const manifest = _require('./workflow-manifest.json');
+  (globalThis as any).__workflowManifestJson = JSON.stringify(manifest);
 } catch {
   // File doesn't exist during dev (built at runtime by WorkflowModule)
 }
