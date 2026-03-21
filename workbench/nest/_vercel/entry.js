@@ -24,6 +24,7 @@ async function createHandler() {
 }
 
 export default async (req, res) => {
+  console.log('[wf-nest] req.url:', req.url, 'hasManifest:', !!__manifest);
   // Serve manifest inline — injected by buildVercelOutput()
   if (
     __manifest &&
