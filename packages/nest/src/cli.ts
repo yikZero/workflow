@@ -202,11 +202,11 @@ async function handleBuild(args: string[]): Promise<void> {
       'utf-8'
     );
     await writeFileAsync(
-      pathJoin(process.cwd(), 'dist', 'workflow-manifest.js'),
+      pathJoin(process.cwd(), 'dist', 'workflow-manifest.cjs'),
       `module.exports = ${JSON.stringify(manifestContent)};\n`
     );
     console.log(
-      '[@workflow/nest] Wrote manifest module to dist/workflow-manifest.js'
+      '[@workflow/nest] Wrote manifest module to dist/workflow-manifest.cjs'
     );
   } catch {
     // manifest may not exist (no workflows discovered)
