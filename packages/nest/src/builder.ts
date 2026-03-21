@@ -6,7 +6,6 @@ import {
   STEP_QUEUE_TRIGGER,
   WORKFLOW_QUEUE_TRIGGER,
 } from '@workflow/builders';
-import * as esbuild from 'esbuild';
 import { join } from 'pathe';
 import { rewriteTsImportsInContent } from './cjs-rewrite.js';
 
@@ -261,61 +260,33 @@ export class NestLocalBuilder extends BaseBuilder {
       console.warn('[@workflow/nest] Could not read manifest for embedding');
     }
 
-    // Create a wrapper entry that serves the manifest inline
-    const wrapperPath = join(entryFuncDir, '_wrapper.mjs');
-    await writeFile(
-      wrapperPath,
-      [
-        `const handler = require(${JSON.stringify(entryPointPath)});`,
-        `const __handler = handler.default || handler;`,
-        `const __manifest = ${manifestJsonStr};`,
-        `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
-        `module.exports = async (req, res) => {`,
-        `  const url = req.url || '';`,
-        `  if (url.includes('__wf_debug')) {`,
-        `    res.setHeader('content-type', 'application/json');`,
-        `    res.end(JSON.stringify({ url, headers: req.headers, hasManifest: !!__manifest }));`,
-        `    return;`,
-        `  }`,
-        `  const origUrl = req.headers?.['x-matched-path'] || req.headers?.['x-forwarded-uri'] || url;`,
-        `  if ((__manifestRe.test(url) || __manifestRe.test(origUrl)) && __manifest) {`,
-        `    res.setHeader('content-type', 'application/json');`,
-        `    res.end(__manifest);`,
-        `    return;`,
-        `  }`,
-        `  return __handler(req, res);`,
-        `};`,
-      ].join('\n')
-    );
-
-    await esbuild.build({
-      entryPoints: [wrapperPath],
-      bundle: true,
-      platform: 'node',
-      target: 'node22',
-      format: 'cjs',
-      outfile: join(entryFuncDir, 'index.js'),
-      external: [
-        'node:*',
-        '@nestjs/websockets',
-        '@nestjs/websockets/*',
-        '@nestjs/microservices',
-        '@nestjs/microservices/*',
-        '@nestjs/platform-fastify',
-        'class-validator',
-        'class-transformer',
-        'cache-manager',
-        '@swc/*',
-        '*.node',
-      ],
-      logLevel: 'warning',
-      keepNames: true,
-      sourcemap: false,
-      minify: false,
-    });
-    // Clean up wrapper
-    const { unlink } = await import('node:fs/promises');
-    await unlink(wrapperPath).catch(() => {});
+    // Write a self-contained handler that embeds the manifest inline and
+    // delegates all other requests to the NestJS app. We use a single-file
+    // approach without esbuild because Vercel's NFT traces imports from
+    // bundled files and resolves them to the original source, bypassing
+    // the bundle. Instead, write the handler directly and let NFT trace
+    // the original entry point naturally.
+    const handlerCode = [
+      `const __manifest = ${manifestJsonStr};`,
+      `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
+      `let __handler;`,
+      `async function getHandler() {`,
+      `  if (__handler) return __handler;`,
+      `  const mod = await import(${JSON.stringify(entryPointPath)});`,
+      `  __handler = mod.default || mod;`,
+      `  return __handler;`,
+      `}`,
+      `module.exports = async (req, res) => {`,
+      `  if (__manifestRe.test(req.url || '')) {`,
+      `    res.setHeader('content-type', 'application/json');`,
+      `    res.end(__manifest);`,
+      `    return;`,
+      `  }`,
+      `  const handler = await getHandler();`,
+      `  return handler(req, res);`,
+      `};`,
+    ].join('\n');
+    await writeFile(join(entryFuncDir, 'index.js'), handlerCode);
 
     await this.createPackageJson(entryFuncDir, 'commonjs');
     await this.createVcConfig(entryFuncDir, {
