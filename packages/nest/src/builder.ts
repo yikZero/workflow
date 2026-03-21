@@ -266,7 +266,11 @@ export class NestLocalBuilder extends BaseBuilder {
       console.warn('[@workflow/nest] Could not inject manifest into entry');
     }
 
+    // Write the modified entry to BOTH the function dir AND the original
+    // source location. Vercel's NFT traces the original file, so the
+    // injected content must be in the source file too.
     await writeFile(join(entryFuncDir, 'index.js'), entryContent);
+    await writeFile(entryPointPath, entryContent);
 
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
