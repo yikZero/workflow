@@ -237,12 +237,20 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Bundle the NestJS entry point as a self-contained Build Output API
-    // function. We generate a wrapper entry that:
-    // 1. Imports the original NestJS entry point
-    // 2. Intercepts manifest.json requests and serves the embedded manifest
-    // This is necessary because Vercel only deploys the handler file from
-    // .func/ directories — no additional files are included in the Lambda.
+    // Write manifest as a static file. handle:filesystem in config.json
+    // serves static files from .vercel/output/static/ before the catch-all.
+    const manifestFile = join(workflowGeneratedDir, 'manifest.json');
+    try {
+      const manifestContent = await readFile(manifestFile, 'utf-8');
+      const staticDir = join(outputDir, 'static/.well-known/workflow/v1');
+      await mkdir(staticDir, { recursive: true });
+      await writeFile(join(staticDir, 'manifest.json'), manifestContent);
+      console.log('[@workflow/nest] Wrote manifest.json as static file');
+    } catch {
+      console.warn('[@workflow/nest] Could not write manifest as static file');
+    }
+
+    // Write the NestJS entry point as a Build Output API function.
     console.log(
       '[@workflow/nest] Bundling NestJS entry point for Vercel Build Output API'
     );
@@ -304,13 +312,7 @@ export class NestLocalBuilder extends BaseBuilder {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
-      // Route manifest.json to the NestJS catch-all BEFORE handle:filesystem.
-      // The filesystem handler may intercept .json paths and return 404 for
-      // missing static files instead of falling through to the catch-all.
-      {
-        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
-        dest: '/__nestjs',
-      },
+      // manifest.json is served as a static file by handle:filesystem
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
       ...(vercelOptions.additionalRoutes ?? []),
