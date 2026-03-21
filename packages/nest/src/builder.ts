@@ -243,19 +243,47 @@ export class NestLocalBuilder extends BaseBuilder {
     // turbo-orchestrated builds on Vercel (it's set in vercel.json env which
     // is runtime-only in some configurations), so we unconditionally create
     // the function here. The manifest is safe to serve publicly.
-    if (manifestJson) {
+    // Create manifest serverless function. If createManifest failed
+    // (manifestJson is undefined), create a function that reads it from
+    // the manifest.json file on disk (which createManifest still writes).
+    {
       const manifestFuncDir = join(workflowGeneratedDir, 'manifest.func');
       await mkdir(manifestFuncDir, { recursive: true });
-      const manifestHandler = [
-        `const manifest = ${manifestJson};`,
-        `module.exports.default = (req, res) => {`,
-        `  res.setHeader('content-type', 'application/json');`,
-        `  res.end(JSON.stringify(manifest));`,
-        `};`,
-      ].join('\n');
+      let manifestHandler: string;
+      if (manifestJson) {
+        manifestHandler = [
+          `module.exports = (req, res) => {`,
+          `  res.setHeader('content-type', 'application/json');`,
+          `  res.end(${JSON.stringify(manifestJson)});`,
+          `};`,
+        ].join('\n');
+      } else {
+        // Fallback: read manifest.json from disk at runtime
+        manifestHandler = [
+          `const fs = require('fs');`,
+          `const path = require('path');`,
+          `module.exports = (req, res) => {`,
+          `  try {`,
+          `    const manifest = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf-8');`,
+          `    res.setHeader('content-type', 'application/json');`,
+          `    res.end(manifest);`,
+          `  } catch (e) {`,
+          `    res.statusCode = 404;`,
+          `    res.end('manifest not found');`,
+          `  }`,
+          `};`,
+        ].join('\n');
+        console.warn(
+          '[@workflow/nest] Manifest creation returned undefined, using filesystem fallback'
+        );
+      }
       await writeFile(join(manifestFuncDir, 'index.js'), manifestHandler);
       await this.createPackageJson(manifestFuncDir, 'commonjs');
       await this.createVcConfig(manifestFuncDir, {});
+      console.log(
+        '[@workflow/nest] Created manifest function at',
+        manifestFuncDir
+      );
     }
 
     // Bundle the NestJS entry point as a self-contained Build Output API
