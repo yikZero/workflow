@@ -14,7 +14,7 @@ if (process.env.VERCEL) {
 // all of dist/ to the Lambda, so the file will be available.
 const _require = createRequire(import.meta.url);
 try {
-  const _manifestObj = _require('./workflow-manifest.json');
+  const _manifestObj = _require('./workflow/manifest.json');
   (globalThis as any).__workflowManifestJson = JSON.stringify(_manifestObj);
 } catch {
   // File doesn't exist during dev (built at runtime by WorkflowModule)

@@ -7,7 +7,7 @@
     "generate:workflows": "node ../scripts/generate-workflows-registry.js ./src/workflows ./src/_workflows.ts --esm",
     "setup:swcrc": "node ./node_modules/@workflow/nest/dist/cli.js init --force",
     "predev": "pnpm generate:workflows && pnpm setup:swcrc",
-    "prebuild": "pnpm generate:workflows && pnpm setup:swcrc",
+    "prebuild": "pnpm generate:workflows && pnpm setup:swcrc && node ./node_modules/@workflow/nest/dist/cli.js build",
     "dev": "nest start --watch",
     "build": "nest build",
     "postbuild": "node ./node_modules/@workflow/nest/dist/cli.js build",

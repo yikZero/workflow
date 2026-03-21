@@ -5,7 +5,13 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "builder": "swc",
-    "typeCheck": false
+    "typeCheck": false,
+    "assets": [
+      {
+        "include": "../.nestjs/workflow/manifest.json",
+        "outDir": "dist"
+      }
+    ]
   },
   "watchOptions": {
     "preserveWatchOutput": true
