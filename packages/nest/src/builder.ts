@@ -268,8 +268,10 @@ export class NestLocalBuilder extends BaseBuilder {
       [
         `import handler from ${JSON.stringify(entryPointPath)};`,
         `const __manifest = ${manifestJsonStr};`,
+        `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
         `export default async (req, res) => {`,
-        `  if (req.url?.match(/\\/.well-known\\/workflow\\/v1\\/manifest\\.json/) && __manifest) {`,
+        `  const url = req.url || req.headers?.['x-matched-path'] || '';`,
+        `  if (__manifestRe.test(url) && __manifest) {`,
         `    res.setHeader('content-type', 'application/json');`,
         `    res.end(__manifest);`,
         `    return;`,
