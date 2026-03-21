@@ -247,7 +247,7 @@ export class NestLocalBuilder extends BaseBuilder {
     // (manifestJson is undefined), create a function that reads it from
     // the manifest.json file on disk (which createManifest still writes).
     {
-      const manifestFuncDir = join(workflowGeneratedDir, 'manifest.func');
+      const manifestFuncDir = join(workflowGeneratedDir, 'manifest.json.func');
       await mkdir(manifestFuncDir, { recursive: true });
       let manifestHandler: string;
       if (manifestJson) {
@@ -334,21 +334,18 @@ export class NestLocalBuilder extends BaseBuilder {
       maxDuration: vercelOptions.maxDuration ?? 300,
     });
 
-    // Write Build Output API config.json with routing
+    // Write Build Output API config.json with routing.
+    // The webhook route is an explicit rewrite (dynamic segment).
+    // handle:filesystem matches all functions (step, flow, manifest.json,
+    // webhook) and static files. handle:miss ensures the NestJS catch-all
+    // only runs for paths that don't match any function or static file.
     const routes = [
-      // Workflow webhook dynamic route
       {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
-      // Manifest route (rewrite manifest.json to the manifest function)
-      {
-        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
-        dest: '/.well-known/workflow/v1/manifest',
-      },
-      // Let filesystem handler match workflow functions (step, flow)
       { handle: 'filesystem' as const },
-      // Send everything else to the NestJS catch-all
+      { handle: 'miss' as const },
       ...(vercelOptions.additionalRoutes ?? []),
       {
         src: '/(.*)',
