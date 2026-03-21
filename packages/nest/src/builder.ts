@@ -311,6 +311,7 @@ export class NestLocalBuilder extends BaseBuilder {
       {
         src: '/(.*)',
         dest: '/__nestjs',
+        check: true,
       },
     ];
 
