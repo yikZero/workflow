@@ -268,9 +268,24 @@ export class NestLocalBuilder extends BaseBuilder {
       console.warn('[@workflow/nest] Could not write __manifest.js');
     }
 
-    // Copy the entry point into the function directory.
+    // Copy the entry point AND __manifest.js into the function directory.
+    // Both files are needed because the import path ./__manifest.js in
+    // the entry point resolves relative to the .func/ directory.
     const entryContent = await readFile(entryPointPath, 'utf-8');
     await writeFile(join(entryFuncDir, 'index.js'), entryContent);
+    try {
+      const manifestModuleContent = await readFile(manifestModulePath, 'utf-8');
+      await writeFile(
+        join(entryFuncDir, '__manifest.js'),
+        manifestModuleContent
+      );
+    } catch {
+      // Use empty placeholder if manifest module wasn't written
+      await writeFile(
+        join(entryFuncDir, '__manifest.js'),
+        "export const manifest = '';\n"
+      );
+    }
 
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
