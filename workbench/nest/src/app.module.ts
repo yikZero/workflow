@@ -6,6 +6,7 @@ import { AppController } from './app.controller.js';
 // Dynamic import() IS traced by @vercel/nft (unlike readFileSync with
 // computed paths). The module is in dist/ alongside this compiled file.
 try {
+  // @ts-ignore — module generated at build time, not available during typecheck
   const mod = await import('./workflow-manifest.js');
   (globalThis as any).__workflowManifestJson = mod.default;
 } catch {
