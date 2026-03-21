@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
   BaseBuilder,
@@ -232,11 +232,25 @@ export class NestLocalBuilder extends BaseBuilder {
       },
       classes: { ...stepsManifest.classes, ...workflowsManifest.classes },
     };
-    await this.createManifest({
+    const manifestJson = await this.createManifest({
       workflowBundlePath: join(flowFuncDir, 'index.js'),
       manifestDir: workflowGeneratedDir,
       manifest,
     });
+
+    // Expose manifest as a static file when WORKFLOW_PUBLIC_MANIFEST=1.
+    // Vercel Build Output API serves static files from .vercel/output/static/
+    if (this.shouldExposePublicManifest && manifestJson) {
+      const staticManifestDir = join(
+        outputDir,
+        'static/.well-known/workflow/v1'
+      );
+      await mkdir(staticManifestDir, { recursive: true });
+      await copyFile(
+        join(workflowGeneratedDir, 'manifest.json'),
+        join(staticManifestDir, 'manifest.json')
+      );
+    }
 
     // Bundle the NestJS entry point as a self-contained Build Output API
     // function using esbuild. The entry point (e.g. api/index.js) and all its
