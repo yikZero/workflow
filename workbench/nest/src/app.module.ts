@@ -9,7 +9,9 @@ import { AppController } from './app.controller.js';
 //
 // We store it on process so the controller can access it without readFileSync.
 try {
-  const manifestPath = '.nestjs/workflow/manifest.json';
+  // Path relative to dist/app.module.js → ../.nestjs/workflow/manifest.json
+  // NFT resolves readFileSync paths relative to the containing file
+  const manifestPath = '../.nestjs/workflow/manifest.json';
   const data = readFileSync(manifestPath, 'utf-8');
   // Make manifest available globally for the controller
   (globalThis as any).__workflowManifestJson = data;
