@@ -10,7 +10,7 @@
     "prebuild": "pnpm generate:workflows && pnpm setup:swcrc",
     "dev": "nest start --watch",
     "build": "nest build",
-    "postbuild": "node ./node_modules/@workflow/nest/dist/cli.js build",
+    "postbuild": "node ./node_modules/@workflow/nest/dist/cli.js build --out-dir workflow-out",
     "start": "node dist/main.js"
   },
   "engines": {
