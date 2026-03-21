@@ -329,11 +329,11 @@ WorkflowModule.forRoot({
 
 ### 1. Create the Vercel entry point
 
-Create an `api/index.js` file that exports your NestJS app as a serverless function handler:
+Create a `_vercel/entry.js` file that exports your NestJS app as a serverless function handler. Use `_vercel/` instead of `api/` to avoid triggering Vercel's automatic serverless function detection which conflicts with the Build Output API:
 
 {/*@skip-typecheck - Shows Vercel entry point*/}
 
-```javascript title="api/index.js" lineNumbers
+```javascript title="_vercel/entry.js" lineNumbers
 import { createApp } from '../dist/app.js';
 
 let ready;

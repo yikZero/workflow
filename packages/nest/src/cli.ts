@@ -144,10 +144,13 @@ function handleInit(args: string[]): void {
 
 /**
  * Auto-detect the Vercel serverless entry point.
- * Looks for common patterns: api/index.js, api/index.ts, api/index.mjs
+ * Prefers _vercel/ directory to avoid triggering Vercel's automatic
+ * serverless function detection on the api/ directory.
  */
 function detectEntryPoint(): string | null {
   const candidates = [
+    '_vercel/entry.js',
+    '_vercel/entry.ts',
     'api/index.js',
     'api/index.ts',
     'api/index.mjs',

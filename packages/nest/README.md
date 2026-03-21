@@ -129,10 +129,10 @@ WorkflowModule.forRoot({
 
 ### 1. Create an entry point
 
-Create `api/index.js` exporting your NestJS app as a handler:
+Create `_vercel/entry.js` exporting your NestJS app as a handler (use `_vercel/` not `api/` to avoid triggering Vercel's automatic function detection):
 
 ```javascript
-// api/index.js
+// _vercel/entry.js
 import { createApp } from '../dist/app.js';
 
 let ready;
