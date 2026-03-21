@@ -1,22 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import express from 'express';
 import { AppModule } from '../dist/app.module.js';
-
-// Try to read the manifest that workflow-nest build generates.
-// Use a static path so NFT can trace it.
-let __manifest;
-try {
-  // @vercel/nft static analysis hint:
-  __manifest = readFileSync(
-    join(process.cwd(), '.nestjs', 'workflow', 'manifest.json'),
-    'utf-8'
-  );
-} catch {
-  // Manifest not available (e.g., development mode without postbuild)
-}
 
 let ready;
 
@@ -32,16 +17,6 @@ async function createHandler() {
 }
 
 export default async (req, res) => {
-  // Serve manifest inline — bypass the WorkflowController which can't
-  // find the manifest file in the serverless function context
-  if (
-    __manifest &&
-    /\/.well-known\/workflow\/v1\/manifest\.json/.test(req.url || '')
-  ) {
-    res.setHeader('content-type', 'application/json');
-    res.end(__manifest);
-    return;
-  }
   ready ??= createHandler();
   return (await ready)(req, res);
 };

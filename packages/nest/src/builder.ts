@@ -162,7 +162,7 @@ export class NestLocalBuilder extends BaseBuilder {
    * function and writes `config.json` with routing rules.
    */
   async buildVercelOutput(
-    vercelOptions: Omit<NestVercelOutputOptions, keyof NestBuilderOptions>
+    _vercelOptions?: Omit<NestVercelOutputOptions, keyof NestBuilderOptions>
   ): Promise<void> {
     const outputDir = resolve(this.#workingDir, '.vercel/output');
     const functionsDir = join(outputDir, 'functions');
@@ -236,29 +236,6 @@ export class NestLocalBuilder extends BaseBuilder {
       manifestDir: workflowGeneratedDir,
       manifest,
     });
-
-    // Write the manifest to __manifest.js alongside the entry point.
-    // With framework=nestjs, Vercel's @vercel/node builder runs NFT
-    // on the entry point. The static import of __manifest.js ensures
-    // NFT traces and includes the populated file in the Lambda.
-    console.log(
-      '[@workflow/nest] Populating __manifest.js for Vercel deployment'
-    );
-    const manifestFile = join(workflowGeneratedDir, 'manifest.json');
-    const manifestModulePath = join(
-      resolve(this.#workingDir, vercelOptions.entryPoint, '..'),
-      '__manifest.js'
-    );
-    try {
-      const manifestContent = await readFile(manifestFile, 'utf-8');
-      await writeFile(
-        manifestModulePath,
-        `export const manifest = ${JSON.stringify(manifestContent)};\n`
-      );
-      console.log('[@workflow/nest] Wrote manifest to __manifest.js');
-    } catch {
-      console.warn('[@workflow/nest] Could not write __manifest.js');
-    }
 
     // Write Build Output API config.json with routing for workflow functions.
     // The NestJS @vercel/node builder handles the main app function and
