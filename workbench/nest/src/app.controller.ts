@@ -1,7 +1,38 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { existsSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Body, Controller, Get, Post } from '@nestjs/common';
+
+const bundleDir = dirname(fileURLToPath(import.meta.url));
 
 @Controller('api')
 export class AppController {
+  @Get('debug')
+  debug() {
+    const cwd = process.cwd();
+    const outDir = process.env.VERCEL
+      ? bundleDir + '/_workflow'
+      : join(cwd, '.nestjs/workflow');
+    const manifestPath = join(outDir, 'manifest.json');
+    return {
+      cwd,
+      bundleDir,
+      outDir,
+      manifestPath,
+      manifestExists: existsSync(manifestPath),
+      VERCEL: process.env.VERCEL,
+      WORKFLOW_PUBLIC_MANIFEST: process.env.WORKFLOW_PUBLIC_MANIFEST,
+      cwdContents: readdirSync(cwd).slice(0, 20),
+      bundleDirContents: (() => {
+        try {
+          return readdirSync(bundleDir).slice(0, 20);
+        } catch {
+          return 'error';
+        }
+      })(),
+    };
+  }
+
   @Post('test-direct-step-call')
   async invokeStepDirectly(@Body() body: { x: number; y: number }) {
     // This route tests calling step functions directly outside of any workflow context
