@@ -327,6 +327,13 @@ export class NestLocalBuilder extends BaseBuilder {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
+      // Route manifest.json to the NestJS catch-all BEFORE handle:filesystem.
+      // The filesystem handler may intercept .json paths and return 404 for
+      // missing static files instead of falling through to the catch-all.
+      {
+        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
+        dest: '/__nestjs',
+      },
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
       ...(vercelOptions.additionalRoutes ?? []),
