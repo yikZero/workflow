@@ -18,6 +18,19 @@ async function createHandler() {
 }
 
 export default async (req, res) => {
+  // DEBUG: return manifest info for /__wf_test endpoint
+  if ((req.url || '').includes('__wf_test')) {
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        hasManifest: !!__manifest,
+        manifestLength: __manifest?.length || 0,
+        manifestStart: (__manifest || '').substring(0, 100),
+        url: req.url,
+      })
+    );
+    return;
+  }
   // Serve manifest inline — the manifest JSON is imported from a
   // generated file that workflow-nest build populates during postbuild
   if (
