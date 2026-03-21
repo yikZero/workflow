@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "generate:workflows": "node ../scripts/generate-workflows-registry.js ./src/workflows ./src/_workflows.ts --esm",
-    "setup:swcrc": "pnpm exec workflow-nest init --force",
+    "setup:swcrc": "node ./node_modules/@workflow/nest/dist/cli.js init --force",
     "predev": "pnpm generate:workflows && pnpm setup:swcrc",
     "prebuild": "pnpm generate:workflows && pnpm setup:swcrc",
     "dev": "nest start --watch",
     "build": "nest build",
-    "postbuild": "pnpm exec workflow-nest build",
+    "postbuild": "node ./node_modules/@workflow/nest/dist/cli.js build",
     "start": "node dist/main.js"
   },
   "engines": {
