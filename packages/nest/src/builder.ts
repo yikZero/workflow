@@ -237,40 +237,36 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Write manifest alongside the entry point so NFT includes it.
-    // The entry point reads it via readFileSync at import time.
-    const manifestFile = join(workflowGeneratedDir, 'manifest.json');
-    const entryDir = resolve(this.#workingDir, vercelOptions.entryPoint, '..');
-    try {
-      const manifestContent = await readFile(manifestFile, 'utf-8');
-      await writeFile(join(entryDir, '__manifest.json'), manifestContent);
-      console.log(
-        '[@workflow/nest] Wrote __manifest.json alongside entry point'
-      );
-    } catch {
-      console.warn('[@workflow/nest] Could not write __manifest.json');
-    }
-
     // Write the NestJS entry point as a Build Output API function.
+    // We inject the manifest JSON directly into a copy of the entry point
+    // by replacing a known placeholder. This avoids all file-system issues
+    // (NFT tracing, .func deployment, static file serving).
     console.log(
-      '[@workflow/nest] Bundling NestJS entry point for Vercel Build Output API'
+      '[@workflow/nest] Creating NestJS function for Vercel Build Output API'
     );
     const entryPointPath = resolve(this.#workingDir, vercelOptions.entryPoint);
     const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
-    // Symlink the entry point into the function directory. Vercel's NFT
-    // traces the entry point and includes all its dependencies. The entry
-    // point itself handles manifest serving via readFileSync.
-    const entryTarget = join(entryFuncDir, 'index.js');
-    const { symlink } = await import('node:fs/promises');
+    let entryContent = await readFile(entryPointPath, 'utf-8');
+
+    // Inject manifest JSON into the entry point. The entry point should
+    // have: let __manifest; try { __manifest = readFileSync(...) } catch {}
+    // We replace the try/catch with a direct assignment.
+    const manifestFile = join(workflowGeneratedDir, 'manifest.json');
     try {
-      await symlink(entryPointPath, entryTarget);
+      const manifestContent = await readFile(manifestFile, 'utf-8');
+      // Replace the readFileSync block with a direct constant
+      entryContent = entryContent.replace(
+        /let __manifest;\s*try\s*\{[^}]*\}\s*catch\s*\{[^}]*\}/s,
+        `const __manifest = ${JSON.stringify(manifestContent)};`
+      );
+      console.log('[@workflow/nest] Injected manifest JSON into entry point');
     } catch {
-      // Fallback: copy the entry file if symlink fails
-      const content = await readFile(entryPointPath, 'utf-8');
-      await writeFile(entryTarget, content);
+      console.warn('[@workflow/nest] Could not inject manifest into entry');
     }
+
+    await writeFile(join(entryFuncDir, 'index.js'), entryContent);
 
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {

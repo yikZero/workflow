@@ -1,18 +1,13 @@
-import { readFileSync } from 'node:fs';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import express from 'express';
 import { AppModule } from '../dist/app.module.js';
 
-// Load embedded manifest at import time. The builder writes this file
-// alongside the entry point during buildVercelOutput().
-// Use new URL() pattern so Vercel's NFT can trace and include the file.
+// The builder replaces this block with: const __manifest = '...json...';
+// biome-ignore lint/style/useSingleVarDeclarator: placeholder for build injection
 let __manifest;
 try {
-  __manifest = readFileSync(
-    new URL('./__manifest.json', import.meta.url),
-    'utf-8'
-  );
+  __manifest = undefined;
 } catch {}
 
 let ready;
@@ -29,8 +24,7 @@ async function createHandler() {
 }
 
 export default async (req, res) => {
-  // Serve manifest inline — the WorkflowController can't access the
-  // manifest file in the serverless function context
+  // Serve manifest inline — injected by buildVercelOutput()
   if (
     __manifest &&
     /\/.well-known\/workflow\/v1\/manifest\.json/.test(req.url || '')
