@@ -8,6 +8,7 @@ import { createBuildQueue } from '@workflow/builders';
 import { join } from 'pathe';
 import { type NestBuilderOptions, NestLocalBuilder } from './builder.js';
 import {
+  configureManifest,
   configureWorkflowController,
   WorkflowController,
 } from './workflow.controller.js';
@@ -18,6 +19,12 @@ export interface WorkflowModuleOptions extends NestBuilderOptions {
    * @default false
    */
   skipBuild?: boolean;
+  /**
+   * Pre-loaded manifest JSON string. When set, the controller serves this
+   * instead of reading from the filesystem. Useful on Vercel where the
+   * manifest file may not be available via readFileSync.
+   */
+  manifestJson?: string;
 }
 
 const DEFAULT_OUT_DIR = '.nestjs/workflow';
@@ -47,8 +54,11 @@ export class WorkflowModule implements OnModuleInit, OnModuleDestroy {
     const workingDir = options.workingDir ?? process.cwd();
     const outDir = options.outDir ?? join(workingDir, DEFAULT_OUT_DIR);
 
-    // Configure the controller with the output directory
+    // Configure the controller with the output directory and optional manifest
     configureWorkflowController(outDir);
+    if (options.manifestJson) {
+      configureManifest(options.manifestJson);
+    }
 
     // Create builder if we're not skipping builds
     if (!options.skipBuild) {

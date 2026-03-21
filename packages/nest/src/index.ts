@@ -4,6 +4,7 @@ export {
   type NestVercelOutputOptions,
 } from './builder.js';
 export {
+  configureManifest,
   configureWorkflowController,
   WorkflowController,
 } from './workflow.controller.js';

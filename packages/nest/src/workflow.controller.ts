@@ -5,12 +5,21 @@ import { join } from 'pathe';
 
 // Module-level state for configuration
 let configuredOutDir: string | null = null;
+let configuredManifestJson: string | null = null;
 
 /**
  * Configure the workflow controller with the output directory
  */
 export function configureWorkflowController(outDir: string): void {
   configuredOutDir = outDir;
+}
+
+/**
+ * Pre-configure the manifest JSON so the controller doesn't need readFileSync.
+ * Useful on Vercel where the manifest file may not be accessible via filesystem.
+ */
+export function configureManifest(manifestJson: string): void {
+  configuredManifestJson = manifestJson;
 }
 
 /**
@@ -129,13 +138,13 @@ export class WorkflowController {
       }
       return;
     }
-    const outDir = getOutDir();
     let manifest: string;
     try {
-      // Check for eagerly-loaded manifest first (set by app.module.ts on Vercel)
-      const globalManifest = (globalThis as any).__workflowManifestJson;
+      // Check pre-configured manifest, then globalThis, then filesystem
       manifest =
-        globalManifest ?? readFileSync(join(outDir, 'manifest.json'), 'utf-8');
+        configuredManifestJson ??
+        (globalThis as any).__workflowManifestJson ??
+        readFileSync(join(getOutDir(), 'manifest.json'), 'utf-8');
     } catch {
       if (typeof res.code === 'function') {
         res.code(404).send('');
