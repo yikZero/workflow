@@ -266,10 +266,11 @@ export class NestLocalBuilder extends BaseBuilder {
     await writeFile(
       wrapperPath,
       [
-        `import handler from ${JSON.stringify(entryPointPath)};`,
+        `const handler = require(${JSON.stringify(entryPointPath)});`,
+        `const __handler = handler.default || handler;`,
         `const __manifest = ${manifestJsonStr};`,
         `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
-        `export default async (req, res) => {`,
+        `module.exports = async (req, res) => {`,
         `  const url = req.url || '';`,
         `  if (url.includes('__wf_debug')) {`,
         `    res.setHeader('content-type', 'application/json');`,
@@ -282,7 +283,7 @@ export class NestLocalBuilder extends BaseBuilder {
         `    res.end(__manifest);`,
         `    return;`,
         `  }`,
-        `  return handler(req, res);`,
+        `  return __handler(req, res);`,
         `};`,
       ].join('\n')
     );
@@ -292,8 +293,8 @@ export class NestLocalBuilder extends BaseBuilder {
       bundle: true,
       platform: 'node',
       target: 'node22',
-      format: 'esm',
-      outfile: join(entryFuncDir, 'index.mjs'),
+      format: 'cjs',
+      outfile: join(entryFuncDir, 'index.js'),
       external: [
         'node:*',
         '@nestjs/websockets',
@@ -316,9 +317,9 @@ export class NestLocalBuilder extends BaseBuilder {
     const { unlink } = await import('node:fs/promises');
     await unlink(wrapperPath).catch(() => {});
 
-    await this.createPackageJson(entryFuncDir, 'module');
+    await this.createPackageJson(entryFuncDir, 'commonjs');
     await this.createVcConfig(entryFuncDir, {
-      handler: 'index.mjs',
+      handler: 'index.js',
       maxDuration: vercelOptions.maxDuration ?? 300,
     });
 
