@@ -6,7 +6,6 @@ import {
   STEP_QUEUE_TRIGGER,
   WORKFLOW_QUEUE_TRIGGER,
 } from '@workflow/builders';
-import * as esbuild from 'esbuild';
 import { join } from 'pathe';
 import { rewriteTsImportsInContent } from './cjs-rewrite.js';
 
@@ -238,113 +237,36 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Bundle the NestJS entry point with esbuild into a self-contained
-    // CJS function. With framework=null (no NestJS preset), Build Output
-    // API functions must be self-contained — no NFT tracing is done.
-    // We write a wrapper that embeds the manifest JSON and delegates
-    // to the NestJS handler.
+    // Write the manifest to __manifest.js alongside the entry point.
+    // With framework=nestjs, Vercel's @vercel/node builder runs NFT
+    // on the entry point. The static import of __manifest.js ensures
+    // NFT traces and includes the populated file in the Lambda.
     console.log(
-      '[@workflow/nest] Bundling NestJS entry point for Vercel Build Output API'
+      '[@workflow/nest] Populating __manifest.js for Vercel deployment'
     );
-    const entryPointPath = resolve(this.#workingDir, vercelOptions.entryPoint);
-    const entryFuncDir = join(functionsDir, '__nestjs.func');
-    await mkdir(entryFuncDir, { recursive: true });
-
-    // Read manifest to embed in the bundle
     const manifestFile = join(workflowGeneratedDir, 'manifest.json');
-    let manifestDefine = {};
+    const manifestModulePath = join(
+      resolve(this.#workingDir, vercelOptions.entryPoint, '..'),
+      '__manifest.js'
+    );
     try {
       const manifestContent = await readFile(manifestFile, 'utf-8');
-      manifestDefine = {
-        __WORKFLOW_MANIFEST__: JSON.stringify(manifestContent),
-      };
-    } catch {}
+      await writeFile(
+        manifestModulePath,
+        `export const manifest = ${JSON.stringify(manifestContent)};\n`
+      );
+      console.log('[@workflow/nest] Wrote manifest to __manifest.js');
+    } catch {
+      console.warn('[@workflow/nest] Could not write __manifest.js');
+    }
 
-    // Write a thin wrapper that serves the manifest and delegates to NestJS
-    const wrapperPath = join(entryFuncDir, '_wrapper.cjs');
-    await writeFile(
-      wrapperPath,
-      [
-        `const __manifest = typeof __WORKFLOW_MANIFEST__ !== 'undefined' ? __WORKFLOW_MANIFEST__ : '';`,
-        `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
-        `let __handler;`,
-        `async function getHandler() {`,
-        `  if (__handler) return __handler;`,
-        `  const mod = await import(${JSON.stringify(entryPointPath)});`,
-        `  __handler = mod.default || mod;`,
-        `  return __handler;`,
-        `}`,
-        `module.exports = async (req, res) => {`,
-        `  if (__manifest && __manifestRe.test(req.url || '')) {`,
-        `    res.setHeader('content-type', 'application/json');`,
-        `    res.end(__manifest);`,
-        `    return;`,
-        `  }`,
-        `  const handler = await getHandler();`,
-        `  return handler(req, res);`,
-        `};`,
-      ].join('\n')
-    );
-
-    await esbuild.build({
-      entryPoints: [wrapperPath],
-      bundle: true,
-      platform: 'node',
-      target: 'node22',
-      format: 'cjs',
-      outfile: join(entryFuncDir, 'index.js'),
-      external: [
-        'node:*',
-        '@nestjs/websockets',
-        '@nestjs/websockets/*',
-        '@nestjs/microservices',
-        '@nestjs/microservices/*',
-        '@nestjs/platform-fastify',
-        'class-validator',
-        'class-transformer',
-        'cache-manager',
-        '@swc/*',
-        '*.node',
-      ],
-      logLevel: 'warning',
-      keepNames: true,
-      sourcemap: false,
-      minify: false,
-      define: {
-        ...manifestDefine,
-        'process.env.WORKFLOW_PUBLIC_MANIFEST': '"1"',
-      },
-    });
-    // Clean up wrapper
-    await (await import('node:fs/promises'))
-      .unlink(wrapperPath)
-      .catch(() => {});
-
-    await this.createPackageJson(entryFuncDir, 'commonjs');
-    await this.createVcConfig(entryFuncDir, {
-      handler: 'index.js',
-      maxDuration: vercelOptions.maxDuration ?? 300,
-    });
-
-    // Write Build Output API config.json with routing.
-    // handle:filesystem matches workflow functions (step, flow, webhook).
-    // handle:miss ensures the NestJS catch-all only runs for paths that
-    // don't match any function — including manifest.json which the NestJS
-    // WorkflowController serves at runtime.
+    // Write Build Output API config.json with routing for workflow functions.
+    // The NestJS @vercel/node builder handles the main app function and
+    // catch-all routing — we only need routes for the webhook dynamic path.
     const routes = [
       {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
-      },
-      // manifest.json is served by the NestJS handler which reads
-      // __manifest.json at import time (placed alongside the entry point)
-      { handle: 'filesystem' as const },
-      { handle: 'miss' as const },
-      ...(vercelOptions.additionalRoutes ?? []),
-      {
-        src: '/(.*)',
-        dest: '/__nestjs',
-        check: true,
       },
     ];
 
