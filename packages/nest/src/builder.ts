@@ -312,7 +312,12 @@ export class NestLocalBuilder extends BaseBuilder {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
-      // manifest.json is served as a static file by handle:filesystem
+      // Manifest header + static file served by handle:filesystem
+      {
+        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
+        headers: { 'content-type': 'application/json' },
+        continue: true,
+      },
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
       ...(vercelOptions.additionalRoutes ?? []),
