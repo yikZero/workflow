@@ -1,6 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import express from 'express';
@@ -8,10 +6,13 @@ import { AppModule } from '../dist/app.module.js';
 
 // Load embedded manifest at import time. The builder writes this file
 // alongside the entry point during buildVercelOutput().
-const __dir = dirname(fileURLToPath(import.meta.url));
+// Use new URL() pattern so Vercel's NFT can trace and include the file.
 let __manifest;
 try {
-  __manifest = readFileSync(join(__dir, '__manifest.json'), 'utf-8');
+  __manifest = readFileSync(
+    new URL('./__manifest.json', import.meta.url),
+    'utf-8'
+  );
 } catch {}
 
 let ready;
