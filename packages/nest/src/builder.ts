@@ -296,7 +296,9 @@ export class NestLocalBuilder extends BaseBuilder {
       '[@workflow/nest] Bundling NestJS entry point for Vercel Build Output API'
     );
     const entryPointPath = resolve(this.#workingDir, vercelOptions.entryPoint);
-    const entryFuncDir = join(functionsDir, 'api/index.js.func');
+    // Avoid dots in .func directory names — Build Output API doesn't
+    // reliably match function dirs containing periods.
+    const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
     await esbuild.build({
@@ -354,7 +356,7 @@ export class NestLocalBuilder extends BaseBuilder {
       ...(vercelOptions.additionalRoutes ?? []),
       {
         src: '/(.*)',
-        dest: '/api/index.js',
+        dest: '/__nestjs',
       },
     ];
 
