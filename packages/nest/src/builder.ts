@@ -250,6 +250,26 @@ export class NestLocalBuilder extends BaseBuilder {
     const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
+    // Read the manifest to embed it in the NestJS bundle. Vercel's Build
+    // Output API only deploys the handler file from .func/ dirs — extra
+    // files like manifest.json are not included. We embed it as a banner
+    // that writes to /tmp/ at startup so the WorkflowController can read it.
+    const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
+    let manifestBanner = '';
+    try {
+      const manifestContent = await readFile(manifestSrc, 'utf-8');
+      // Write manifest to /tmp/_wf_manifest/ at import time. The
+      // WorkflowModule.forRoot({ outDir }) must point to this path.
+      manifestBanner = [
+        `import{mkdirSync as __m,writeFileSync as __w}from"node:fs";`,
+        `try{__m("/tmp/_wf_manifest",{recursive:true});`,
+        `__w("/tmp/_wf_manifest/manifest.json",${JSON.stringify(manifestContent)})`,
+        `}catch{}`,
+      ].join('');
+    } catch {
+      console.warn('[@workflow/nest] Could not read manifest for embedding');
+    }
+
     await esbuild.build({
       entryPoints: [entryPointPath],
       bundle: true,
@@ -257,13 +277,8 @@ export class NestLocalBuilder extends BaseBuilder {
       target: 'node22',
       format: 'esm',
       outfile: join(entryFuncDir, 'index.mjs'),
-      // Mark Node.js built-in modules and known optional NestJS
-      // peer dependencies as external. These are loaded via dynamic
-      // require() in try/catch blocks — they're not needed at runtime
-      // unless the customer explicitly uses them.
       external: [
         'node:*',
-        // NestJS optional peer dependencies
         '@nestjs/websockets',
         '@nestjs/websockets/*',
         '@nestjs/microservices',
@@ -272,49 +287,23 @@ export class NestLocalBuilder extends BaseBuilder {
         'class-validator',
         'class-transformer',
         'cache-manager',
-        // SWC native bindings (not needed at runtime for the app function)
         '@swc/*',
         '*.node',
       ],
       logLevel: 'warning',
-      // Preserve class names for NestJS dependency injection
       keepNames: true,
       sourcemap: false,
       minify: false,
-      // Ensure manifest serving is enabled at runtime — the controller checks
-      // process.env.WORKFLOW_PUBLIC_MANIFEST which may not be set in the
-      // serverless function environment.
       define: {
         'process.env.WORKFLOW_PUBLIC_MANIFEST': '"1"',
       },
+      banner: manifestBanner ? { js: manifestBanner } : undefined,
     });
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
       handler: 'index.mjs',
       maxDuration: vercelOptions.maxDuration ?? 300,
     });
-
-    // Copy manifest.json into the NestJS function directory so the
-    // WorkflowController can serve it at runtime via readFileSync.
-    // Use _workflow (no dot prefix) since Vercel may exclude dotfiles
-    // during deployment. The WorkflowModule.forRoot() outDir should match.
-    const nestjsWorkflowDir = join(entryFuncDir, '_workflow');
-    await mkdir(nestjsWorkflowDir, { recursive: true });
-    const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
-    try {
-      const manifestContent = await readFile(manifestSrc, 'utf-8');
-      await writeFile(
-        join(nestjsWorkflowDir, 'manifest.json'),
-        manifestContent
-      );
-      console.log(
-        '[@workflow/nest] Copied manifest.json into NestJS function for runtime serving'
-      );
-    } catch {
-      console.warn(
-        '[@workflow/nest] Could not copy manifest.json into NestJS function'
-      );
-    }
 
     // Write Build Output API config.json with routing.
     // handle:filesystem matches workflow functions (step, flow, webhook).
