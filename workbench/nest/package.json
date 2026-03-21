@@ -9,7 +9,7 @@
     "predev": "pnpm generate:workflows && pnpm setup:swcrc",
     "prebuild": "pnpm generate:workflows && pnpm setup:swcrc",
     "dev": "nest start --watch",
-    "build": "nest build",
+    "build": "node ./node_modules/@workflow/nest/dist/cli.js build && nest build && cp .nestjs/workflow/manifest.json dist/workflow-manifest.json 2>/dev/null || true",
     "postbuild": "node ./node_modules/@workflow/nest/dist/cli.js build",
     "start": "node dist/main.js"
   },
