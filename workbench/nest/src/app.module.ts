@@ -3,21 +3,12 @@ import { Module } from '@nestjs/common';
 import { WorkflowModule } from 'workflow/nest';
 import { AppController } from './app.controller.js';
 
-// Eagerly read the manifest at module load time. This serves two purposes:
-// 1. On Vercel, it reads the file before WorkflowController needs it
-// 2. The static string '.nestjs/workflow/manifest.json' helps NFT trace the file
-//
-// We store it on process so the controller can access it without readFileSync.
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// Read manifest from dist/workflow-manifest.json at module load time.
-// Use import.meta.url to resolve the path relative to THIS file (not CWD).
-// NFT should trace the readFileSync and include the file.
-const __moduleDir = dirname(fileURLToPath(import.meta.url));
+// Read manifest using the new URL() + import.meta.url pattern that
+// @vercel/nft traces statically AND resolves correctly at runtime.
+// The workflow-nest build CLI copies manifest.json to dist/ during postbuild.
 try {
   const data = readFileSync(
-    join(__moduleDir, 'workflow-manifest.json'),
+    new URL('./workflow-manifest.json', import.meta.url),
     'utf-8'
   );
   (globalThis as any).__workflowManifestJson = data;
