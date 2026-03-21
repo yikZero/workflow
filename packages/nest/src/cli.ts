@@ -203,7 +203,7 @@ async function handleBuild(args: string[]): Promise<void> {
     );
     await writeFileAsync(
       pathJoin(process.cwd(), 'dist', 'workflow-manifest.js'),
-      `export default ${JSON.stringify(manifestContent)};\n`
+      `module.exports = ${JSON.stringify(manifestContent)};\n`
     );
     console.log(
       '[@workflow/nest] Wrote manifest module to dist/workflow-manifest.js'
