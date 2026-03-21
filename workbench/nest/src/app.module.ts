@@ -5,10 +5,10 @@ import { AppController } from './app.controller.js';
 @Module({
   imports: [
     WorkflowModule.forRoot({
+      // On Vercel, workflow routes (step, flow, webhook) are separate Build
+      // Output API functions. The manifest is served inline by the wrapper.
+      // Skip building bundles that would fail in the serverless context.
       skipBuild: !!process.env.VERCEL,
-      // On Vercel, the esbuild banner writes manifest.json to /tmp/_wf_manifest/
-      // at import time. Point the controller's outDir there so it can serve it.
-      ...(process.env.VERCEL ? { outDir: '/tmp/_wf_manifest' } : {}),
     }),
   ],
   controllers: [AppController],

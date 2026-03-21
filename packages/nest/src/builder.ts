@@ -239,39 +239,48 @@ export class NestLocalBuilder extends BaseBuilder {
     });
 
     // Bundle the NestJS entry point as a self-contained Build Output API
-    // function using esbuild. The entry point (e.g. api/index.js) and all its
-    // dependencies (dist/, node_modules/) are bundled into a single file.
+    // function. We generate a wrapper entry that:
+    // 1. Imports the original NestJS entry point
+    // 2. Intercepts manifest.json requests and serves the embedded manifest
+    // This is necessary because Vercel only deploys the handler file from
+    // .func/ directories — no additional files are included in the Lambda.
     console.log(
       '[@workflow/nest] Bundling NestJS entry point for Vercel Build Output API'
     );
     const entryPointPath = resolve(this.#workingDir, vercelOptions.entryPoint);
-    // Avoid dots in .func directory names — Build Output API doesn't
-    // reliably match function dirs containing periods.
     const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
-    // Read the manifest to embed it in the NestJS bundle. Vercel's Build
-    // Output API only deploys the handler file from .func/ dirs — extra
-    // files like manifest.json are not included. We embed it as a banner
-    // that writes to /tmp/ at startup so the WorkflowController can read it.
+    // Read manifest to embed directly in the wrapper
     const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
-    let manifestBanner = '';
+    let manifestJsonStr = '""';
     try {
-      const manifestContent = await readFile(manifestSrc, 'utf-8');
-      // Write manifest to /tmp/_wf_manifest/ at import time. The
-      // WorkflowModule.forRoot({ outDir }) must point to this path.
-      manifestBanner = [
-        `import{mkdirSync as __m,writeFileSync as __w}from"node:fs";`,
-        `try{__m("/tmp/_wf_manifest",{recursive:true});`,
-        `__w("/tmp/_wf_manifest/manifest.json",${JSON.stringify(manifestContent)})`,
-        `}catch{}`,
-      ].join('');
+      const content = await readFile(manifestSrc, 'utf-8');
+      manifestJsonStr = JSON.stringify(content);
     } catch {
       console.warn('[@workflow/nest] Could not read manifest for embedding');
     }
 
+    // Create a wrapper entry that serves the manifest inline
+    const wrapperPath = join(entryFuncDir, '_wrapper.mjs');
+    await writeFile(
+      wrapperPath,
+      [
+        `import handler from ${JSON.stringify(entryPointPath)};`,
+        `const __manifest = ${manifestJsonStr};`,
+        `export default async (req, res) => {`,
+        `  if (req.url?.match(/\\/.well-known\\/workflow\\/v1\\/manifest\\.json/) && __manifest) {`,
+        `    res.setHeader('content-type', 'application/json');`,
+        `    res.end(__manifest);`,
+        `    return;`,
+        `  }`,
+        `  return handler(req, res);`,
+        `};`,
+      ].join('\n')
+    );
+
     await esbuild.build({
-      entryPoints: [entryPointPath],
+      entryPoints: [wrapperPath],
       bundle: true,
       platform: 'node',
       target: 'node22',
@@ -294,11 +303,11 @@ export class NestLocalBuilder extends BaseBuilder {
       keepNames: true,
       sourcemap: false,
       minify: false,
-      define: {
-        'process.env.WORKFLOW_PUBLIC_MANIFEST': '"1"',
-      },
-      banner: manifestBanner ? { js: manifestBanner } : undefined,
     });
+    // Clean up wrapper
+    const { unlink } = await import('node:fs/promises');
+    await unlink(wrapperPath).catch(() => {});
+
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
       handler: 'index.mjs',
