@@ -190,18 +190,23 @@ async function handleBuild(args: string[]): Promise<void> {
   // Always build workflow bundles
   await builder.build();
 
-  // Copy manifest to dist/ so @vercel/nft includes it in the Lambda.
-  // NFT traces readFileSync paths relative to the file containing the call.
-  // The app.module reads from ./workflow-manifest.json (relative to dist/).
-  const { copyFile } = await import('node:fs/promises');
+  // Write manifest as a JS module to dist/ so NFT can trace the import.
+  // The app.module uses: import('./workflow-manifest.js') which NFT traces.
+  const { readFile: readFileAsync, writeFile: writeFileAsync } = await import(
+    'node:fs/promises'
+  );
   const { join: pathJoin } = await import('node:path');
   try {
-    await copyFile(
+    const manifestContent = await readFileAsync(
       pathJoin(builder.outDir, 'manifest.json'),
-      pathJoin(process.cwd(), 'dist', 'workflow-manifest.json')
+      'utf-8'
+    );
+    await writeFileAsync(
+      pathJoin(process.cwd(), 'dist', 'workflow-manifest.js'),
+      `export default ${JSON.stringify(manifestContent)};\n`
     );
     console.log(
-      '[@workflow/nest] Copied manifest to dist/workflow-manifest.json'
+      '[@workflow/nest] Wrote manifest module to dist/workflow-manifest.js'
     );
   } catch {
     // manifest may not exist (no workflows discovered)
