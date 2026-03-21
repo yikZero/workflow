@@ -10,22 +10,48 @@ export class AppController {
   @Get('debug')
   debug() {
     const cwd = process.cwd();
-    const outDir = process.env.VERCEL
-      ? bundleDir + '/_workflow'
-      : join(cwd, '.nestjs/workflow');
-    const manifestPath = join(outDir, 'manifest.json');
+    const checkPaths = [
+      join(cwd, '_workflow/manifest.json'),
+      join(cwd, '.nestjs/workflow/manifest.json'),
+      join(bundleDir, '_workflow/manifest.json'),
+      '/var/task/_workflow/manifest.json',
+      '/var/task/___vc/_workflow/manifest.json',
+    ];
+    const found = checkPaths.filter((p) => existsSync(p));
+    // Search for manifest.json recursively in common dirs
+    const searchDirs = ['/var/task', '/var/task/___vc'];
+    const manifestFiles: string[] = [];
+    const walkDir = (dir: string, depth: number) => {
+      if (depth > 3) return;
+      try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          if (
+            entry.name === 'manifest.json' &&
+            !full.includes('node_modules')
+          ) {
+            manifestFiles.push(full);
+          }
+          if (
+            entry.isDirectory() &&
+            !['node_modules', '.git', 'packages'].includes(entry.name)
+          ) {
+            walkDir(full, depth + 1);
+          }
+        }
+      } catch {}
+    };
+    for (const d of searchDirs) walkDir(d, 0);
+
     return {
       cwd,
       bundleDir,
-      outDir,
-      manifestPath,
-      manifestExists: existsSync(manifestPath),
-      VERCEL: process.env.VERCEL,
-      WORKFLOW_PUBLIC_MANIFEST: process.env.WORKFLOW_PUBLIC_MANIFEST,
+      found,
+      manifestFiles,
       cwdContents: readdirSync(cwd).slice(0, 20),
-      bundleDirContents: (() => {
+      vcContents: (() => {
         try {
-          return readdirSync(bundleDir).slice(0, 20);
+          return readdirSync('/var/task/___vc').slice(0, 20);
         } catch {
           return 'error';
         }
