@@ -247,7 +247,10 @@ export class NestLocalBuilder extends BaseBuilder {
     // (manifestJson is undefined), create a function that reads it from
     // the manifest.json file on disk (which createManifest still writes).
     {
-      const manifestFuncDir = join(workflowGeneratedDir, 'manifest.json.func');
+      // Use __manifest (no dots) for the function name since Build Output API
+      // doesn't reliably handle function dirs containing periods (e.g.
+      // manifest.json.func). An explicit route rewrites manifest.json → __manifest.
+      const manifestFuncDir = join(workflowGeneratedDir, '__manifest.func');
       await mkdir(manifestFuncDir, { recursive: true });
       let manifestHandler: string;
       if (manifestJson) {
@@ -335,14 +338,16 @@ export class NestLocalBuilder extends BaseBuilder {
     });
 
     // Write Build Output API config.json with routing.
-    // The webhook route is an explicit rewrite (dynamic segment).
-    // handle:filesystem matches all functions (step, flow, manifest.json,
-    // webhook) and static files. handle:miss ensures the NestJS catch-all
-    // only runs for paths that don't match any function or static file.
     const routes = [
       {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
+      },
+      // Rewrite manifest.json to the __manifest function (dots in
+      // function dir names are not reliably matched by filesystem handler)
+      {
+        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
+        dest: '/.well-known/workflow/v1/__manifest',
       },
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
