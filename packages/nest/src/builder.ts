@@ -237,17 +237,18 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Write manifest as a static file. handle:filesystem in config.json
-    // serves static files from .vercel/output/static/ before the catch-all.
+    // Write manifest alongside the entry point so NFT includes it.
+    // The entry point reads it via readFileSync at import time.
     const manifestFile = join(workflowGeneratedDir, 'manifest.json');
+    const entryDir = resolve(this.#workingDir, vercelOptions.entryPoint, '..');
     try {
       const manifestContent = await readFile(manifestFile, 'utf-8');
-      const staticDir = join(outputDir, 'static/.well-known/workflow/v1');
-      await mkdir(staticDir, { recursive: true });
-      await writeFile(join(staticDir, 'manifest.json'), manifestContent);
-      console.log('[@workflow/nest] Wrote manifest.json as static file');
+      await writeFile(join(entryDir, '__manifest.json'), manifestContent);
+      console.log(
+        '[@workflow/nest] Wrote __manifest.json alongside entry point'
+      );
     } catch {
-      console.warn('[@workflow/nest] Could not write manifest as static file');
+      console.warn('[@workflow/nest] Could not write __manifest.json');
     }
 
     // Write the NestJS entry point as a Build Output API function.
@@ -258,45 +259,20 @@ export class NestLocalBuilder extends BaseBuilder {
     const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
-    // Read manifest to embed directly in the wrapper
-    const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
-    let manifestJsonStr = '""';
+    // Symlink the entry point into the function directory. Vercel's NFT
+    // traces the entry point and includes all its dependencies. The entry
+    // point itself handles manifest serving via readFileSync.
+    const entryTarget = join(entryFuncDir, 'index.js');
+    const { symlink } = await import('node:fs/promises');
     try {
-      const content = await readFile(manifestSrc, 'utf-8');
-      manifestJsonStr = JSON.stringify(content);
+      await symlink(entryPointPath, entryTarget);
     } catch {
-      console.warn('[@workflow/nest] Could not read manifest for embedding');
+      // Fallback: copy the entry file if symlink fails
+      const content = await readFile(entryPointPath, 'utf-8');
+      await writeFile(entryTarget, content);
     }
 
-    // Write a self-contained handler that embeds the manifest inline and
-    // delegates all other requests to the NestJS app. We use a single-file
-    // approach without esbuild because Vercel's NFT traces imports from
-    // bundled files and resolves them to the original source, bypassing
-    // the bundle. Instead, write the handler directly and let NFT trace
-    // the original entry point naturally.
-    const handlerCode = [
-      `const __manifest = ${manifestJsonStr};`,
-      `const __manifestRe = /\\/.well-known\\/workflow\\/v1\\/manifest\\.json/;`,
-      `let __handler;`,
-      `async function getHandler() {`,
-      `  if (__handler) return __handler;`,
-      `  const mod = await import(${JSON.stringify(entryPointPath)});`,
-      `  __handler = mod.default || mod;`,
-      `  return __handler;`,
-      `}`,
-      `module.exports = async (req, res) => {`,
-      `  if (__manifestRe.test(req.url || '')) {`,
-      `    res.setHeader('content-type', 'application/json');`,
-      `    res.end(__manifest);`,
-      `    return;`,
-      `  }`,
-      `  const handler = await getHandler();`,
-      `  return handler(req, res);`,
-      `};`,
-    ].join('\n');
-    await writeFile(join(entryFuncDir, 'index.js'), handlerCode);
-
-    await this.createPackageJson(entryFuncDir, 'commonjs');
+    await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
       handler: 'index.js',
       maxDuration: vercelOptions.maxDuration ?? 300,
@@ -312,12 +288,8 @@ export class NestLocalBuilder extends BaseBuilder {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
-      // Manifest header + static file served by handle:filesystem
-      {
-        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
-        headers: { 'content-type': 'application/json' },
-        continue: true,
-      },
+      // manifest.json is served by the NestJS handler which reads
+      // __manifest.json at import time (placed alongside the entry point)
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
       ...(vercelOptions.additionalRoutes ?? []),
