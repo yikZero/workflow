@@ -11,15 +11,13 @@ export class AppController {
   debug() {
     const cwd = process.cwd();
     const checkPaths = [
+      '/tmp/_wf_manifest/manifest.json',
       join(cwd, '_workflow/manifest.json'),
       join(cwd, '.nestjs/workflow/manifest.json'),
-      join(bundleDir, '_workflow/manifest.json'),
-      '/var/task/_workflow/manifest.json',
-      '/var/task/___vc/_workflow/manifest.json',
     ];
     const found = checkPaths.filter((p) => existsSync(p));
     // Search for manifest.json recursively in common dirs
-    const searchDirs = ['/var/task', '/var/task/___vc'];
+    const searchDirs = ['/tmp', '/var/task'];
     const manifestFiles: string[] = [];
     const walkDir = (dir: string, depth: number) => {
       if (depth > 3) return;
