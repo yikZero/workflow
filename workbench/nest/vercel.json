@@ -1,5 +1,10 @@
 {
   "buildCommand": "turbo build",
+  "functions": {
+    "**/*.js": {
+      "includeFiles": "dist/workflow-manifest.json"
+    }
+  },
   "env": {
     "WORKFLOW_PUBLIC_MANIFEST": "1"
   }
