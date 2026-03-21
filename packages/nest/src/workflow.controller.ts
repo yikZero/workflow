@@ -132,7 +132,10 @@ export class WorkflowController {
     const outDir = getOutDir();
     let manifest: string;
     try {
-      manifest = readFileSync(join(outDir, 'manifest.json'), 'utf-8');
+      // Check for eagerly-loaded manifest first (set by app.module.ts on Vercel)
+      const globalManifest = (globalThis as any).__workflowManifestJson;
+      manifest =
+        globalManifest ?? readFileSync(join(outDir, 'manifest.json'), 'utf-8');
     } catch {
       if (typeof res.code === 'function') {
         res.code(404).send('');
