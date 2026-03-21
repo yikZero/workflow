@@ -296,9 +296,9 @@ export class NestLocalBuilder extends BaseBuilder {
 
     // Copy manifest.json into the NestJS function directory so the
     // WorkflowController can serve it at runtime via readFileSync.
-    // The controller reads from configuredOutDir which defaults to
-    // .nestjs/workflow — we create that path inside the function dir.
-    const nestjsWorkflowDir = join(entryFuncDir, '.nestjs', 'workflow');
+    // Use _workflow (no dot prefix) since Vercel may exclude dotfiles
+    // during deployment. The WorkflowModule.forRoot() outDir should match.
+    const nestjsWorkflowDir = join(entryFuncDir, '_workflow');
     await mkdir(nestjsWorkflowDir, { recursive: true });
     const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
     try {

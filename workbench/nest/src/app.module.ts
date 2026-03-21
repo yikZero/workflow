@@ -16,9 +16,9 @@ const bundleDir = dirname(fileURLToPath(import.meta.url));
       // controller. Skip building bundles that would fail in the serverless
       // function context (no source files available).
       skipBuild: !!process.env.VERCEL,
-      // Set workingDir to the bundle directory so the controller can find
-      // manifest.json at .nestjs/workflow/manifest.json relative to the bundle.
-      ...(process.env.VERCEL ? { workingDir: bundleDir } : {}),
+      // Set outDir to _workflow inside the bundle directory. On Vercel,
+      // the manifest is at _workflow/manifest.json relative to the bundle.
+      ...(process.env.VERCEL ? { outDir: bundleDir + '/_workflow' } : {}),
     }),
   ],
   controllers: [AppController],
