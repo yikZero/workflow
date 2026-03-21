@@ -248,29 +248,29 @@ export class NestLocalBuilder extends BaseBuilder {
     const entryFuncDir = join(functionsDir, '__nestjs.func');
     await mkdir(entryFuncDir, { recursive: true });
 
-    let entryContent = await readFile(entryPointPath, 'utf-8');
-
-    // Inject manifest JSON into the entry point. The entry point should
-    // have: let __manifest; try { __manifest = readFileSync(...) } catch {}
-    // We replace the try/catch with a direct assignment.
+    // Write the manifest to __manifest.js alongside the entry point.
+    // The entry point imports this file statically, so NFT traces and
+    // includes it in the Lambda. The file is a placeholder in git that
+    // the builder populates with the actual manifest during postbuild.
     const manifestFile = join(workflowGeneratedDir, 'manifest.json');
+    const manifestModulePath = join(
+      resolve(this.#workingDir, vercelOptions.entryPoint, '..'),
+      '__manifest.js'
+    );
     try {
       const manifestContent = await readFile(manifestFile, 'utf-8');
-      // Replace the readFileSync block with a direct constant
-      entryContent = entryContent.replace(
-        /let __manifest;\s*try\s*\{[^}]*\}\s*catch\s*\{[^}]*\}/s,
-        `const __manifest = ${JSON.stringify(manifestContent)};`
+      await writeFile(
+        manifestModulePath,
+        `export const manifest = ${JSON.stringify(manifestContent)};\n`
       );
-      console.log('[@workflow/nest] Injected manifest JSON into entry point');
+      console.log('[@workflow/nest] Wrote manifest to __manifest.js');
     } catch {
-      console.warn('[@workflow/nest] Could not inject manifest into entry');
+      console.warn('[@workflow/nest] Could not write __manifest.js');
     }
 
-    // Write the modified entry to BOTH the function dir AND the original
-    // source location. Vercel's NFT traces the original file, so the
-    // injected content must be in the source file too.
+    // Copy the entry point into the function directory.
+    const entryContent = await readFile(entryPointPath, 'utf-8');
     await writeFile(join(entryFuncDir, 'index.js'), entryContent);
-    await writeFile(entryPointPath, entryContent);
 
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {

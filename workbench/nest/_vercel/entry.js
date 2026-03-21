@@ -2,13 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import express from 'express';
 import { AppModule } from '../dist/app.module.js';
-
-// The builder replaces this block with: const __manifest = '...json...';
-// biome-ignore lint/style/useSingleVarDeclarator: placeholder for build injection
-let __manifest;
-try {
-  __manifest = undefined;
-} catch {}
+import { manifest as __manifest } from './__manifest.js';
 
 let ready;
 
@@ -24,8 +18,8 @@ async function createHandler() {
 }
 
 export default async (req, res) => {
-  console.log('[wf-nest] req.url:', req.url, 'hasManifest:', !!__manifest);
-  // Serve manifest inline — injected by buildVercelOutput()
+  // Serve manifest inline — the manifest JSON is imported from a
+  // generated file that workflow-nest build populates during postbuild
   if (
     __manifest &&
     /\/.well-known\/workflow\/v1\/manifest\.json/.test(req.url || '')
