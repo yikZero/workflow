@@ -232,62 +232,11 @@ export class NestLocalBuilder extends BaseBuilder {
       },
       classes: { ...stepsManifest.classes, ...workflowsManifest.classes },
     };
-    const manifestJson = await this.createManifest({
+    await this.createManifest({
       workflowBundlePath: join(flowFuncDir, 'index.js'),
       manifestDir: workflowGeneratedDir,
       manifest,
     });
-
-    // Always expose the manifest as a serverless function in the Build Output
-    // API. The WORKFLOW_PUBLIC_MANIFEST env var may not be available during
-    // turbo-orchestrated builds on Vercel (it's set in vercel.json env which
-    // is runtime-only in some configurations), so we unconditionally create
-    // the function here. The manifest is safe to serve publicly.
-    // Create manifest serverless function. If createManifest failed
-    // (manifestJson is undefined), create a function that reads it from
-    // the manifest.json file on disk (which createManifest still writes).
-    {
-      // Use __manifest (no dots) for the function name since Build Output API
-      // doesn't reliably handle function dirs containing periods (e.g.
-      // manifest.json.func). An explicit route rewrites manifest.json → __manifest.
-      const manifestFuncDir = join(workflowGeneratedDir, '__manifest.func');
-      await mkdir(manifestFuncDir, { recursive: true });
-      let manifestHandler: string;
-      if (manifestJson) {
-        manifestHandler = [
-          `module.exports = (req, res) => {`,
-          `  res.setHeader('content-type', 'application/json');`,
-          `  res.end(${JSON.stringify(manifestJson)});`,
-          `};`,
-        ].join('\n');
-      } else {
-        // Fallback: read manifest.json from disk at runtime
-        manifestHandler = [
-          `const fs = require('fs');`,
-          `const path = require('path');`,
-          `module.exports = (req, res) => {`,
-          `  try {`,
-          `    const manifest = fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf-8');`,
-          `    res.setHeader('content-type', 'application/json');`,
-          `    res.end(manifest);`,
-          `  } catch (e) {`,
-          `    res.statusCode = 404;`,
-          `    res.end('manifest not found');`,
-          `  }`,
-          `};`,
-        ].join('\n');
-        console.warn(
-          '[@workflow/nest] Manifest creation returned undefined, using filesystem fallback'
-        );
-      }
-      await writeFile(join(manifestFuncDir, 'index.js'), manifestHandler);
-      await this.createPackageJson(manifestFuncDir, 'commonjs');
-      await this.createVcConfig(manifestFuncDir, {});
-      console.log(
-        '[@workflow/nest] Created manifest function at',
-        manifestFuncDir
-      );
-    }
 
     // Bundle the NestJS entry point as a self-contained Build Output API
     // function using esbuild. The entry point (e.g. api/index.js) and all its
@@ -339,17 +288,37 @@ export class NestLocalBuilder extends BaseBuilder {
       maxDuration: vercelOptions.maxDuration ?? 300,
     });
 
+    // Copy manifest.json into the NestJS function directory so the
+    // WorkflowController can serve it at runtime via readFileSync.
+    // The controller reads from configuredOutDir which defaults to
+    // .nestjs/workflow — we create that path inside the function dir.
+    const nestjsWorkflowDir = join(entryFuncDir, '.nestjs', 'workflow');
+    await mkdir(nestjsWorkflowDir, { recursive: true });
+    const manifestSrc = join(workflowGeneratedDir, 'manifest.json');
+    try {
+      const manifestContent = await readFile(manifestSrc, 'utf-8');
+      await writeFile(
+        join(nestjsWorkflowDir, 'manifest.json'),
+        manifestContent
+      );
+      console.log(
+        '[@workflow/nest] Copied manifest.json into NestJS function for runtime serving'
+      );
+    } catch {
+      console.warn(
+        '[@workflow/nest] Could not copy manifest.json into NestJS function'
+      );
+    }
+
     // Write Build Output API config.json with routing.
+    // handle:filesystem matches workflow functions (step, flow, webhook).
+    // handle:miss ensures the NestJS catch-all only runs for paths that
+    // don't match any function — including manifest.json which the NestJS
+    // WorkflowController serves at runtime.
     const routes = [
       {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
-      },
-      // Rewrite manifest.json to the __manifest function (dots in
-      // function dir names are not reliably matched by filesystem handler)
-      {
-        src: '^\\/\\.well-known\\/workflow\\/v1\\/manifest\\.json$',
-        dest: '/.well-known/workflow/v1/__manifest',
       },
       { handle: 'filesystem' as const },
       { handle: 'miss' as const },
