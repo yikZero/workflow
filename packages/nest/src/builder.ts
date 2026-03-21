@@ -281,6 +281,12 @@ export class NestLocalBuilder extends BaseBuilder {
       keepNames: true,
       sourcemap: false,
       minify: false,
+      // Ensure manifest serving is enabled at runtime — the controller checks
+      // process.env.WORKFLOW_PUBLIC_MANIFEST which may not be set in the
+      // serverless function environment.
+      define: {
+        'process.env.WORKFLOW_PUBLIC_MANIFEST': '"1"',
+      },
     });
     await this.createPackageJson(entryFuncDir, 'module');
     await this.createVcConfig(entryFuncDir, {
