@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { WorkflowModule } from 'workflow/nest';
 import { AppController } from './app.controller.js';
@@ -21,6 +22,11 @@ try {
   imports: [
     WorkflowModule.forRoot({
       skipBuild: !!process.env.VERCEL,
+      // On Vercel, the bundle files are copied to dist/workflow/ by nest-cli
+      // assets. Point outDir there so the controller can import them.
+      ...(process.env.VERCEL
+        ? { outDir: join(process.cwd(), 'dist', 'workflow') }
+        : {}),
       ...(manifestJson ? { manifestJson } : {}),
     }),
   ],
