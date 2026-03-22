@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { All, Controller, Get, Post, Req, Res } from '@nestjs/common';
 import { join } from 'pathe';
@@ -90,6 +90,44 @@ function getOutDir(): string {
 }
 
 /**
+ * Load a workflow bundle by name. Tries filesystem first (local dev),
+ * then falls back to base64-encoded bundles from globalThis (Vercel).
+ */
+async function loadBundle(
+  filename: string
+): Promise<{ POST: (req: Request) => Promise<Response> }> {
+  const outDir = getOutDir();
+  const filePath = join(outDir, filename);
+
+  // Try filesystem first (works in local dev)
+  try {
+    return await import(pathToFileURL(filePath).href);
+  } catch {
+    // File not found — try base64 fallback
+  }
+
+  // Fallback: decode base64-encoded bundle from globalThis (set by app.module.ts)
+  const bundleName = filename.replace('.mjs', '');
+  const base64 = (globalThis as any)[`__workflowBundle_${bundleName}`] as
+    | string
+    | undefined;
+  if (!base64) {
+    throw new Error(
+      `Workflow bundle ${filename} not found at ${filePath} and no base64 fallback available`
+    );
+  }
+
+  // Write to /tmp/ and import from there
+  const tmpDir = '/tmp/_wf_bundles';
+  const tmpPath = join(tmpDir, filename);
+  if (!existsSync(tmpPath)) {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(tmpPath, Buffer.from(base64, 'base64'));
+  }
+  return await import(pathToFileURL(tmpPath).href);
+}
+
+/**
  * Controller that handles the well-known workflow endpoints.
  * Dynamically imports the generated bundles and handles request/response conversion.
  */
@@ -97,10 +135,7 @@ function getOutDir(): string {
 export class WorkflowController {
   @Post('step')
   async handleStep(@Req() req: any, @Res() res: any) {
-    const outDir = getOutDir();
-    const { POST } = await import(
-      pathToFileURL(join(outDir, 'steps.mjs')).href
-    );
+    const { POST } = await loadBundle('steps.mjs');
     const webRequest = toWebRequest(req);
     const webResponse = await POST(webRequest);
     await sendWebResponse(res, webResponse);
@@ -108,10 +143,7 @@ export class WorkflowController {
 
   @Post('flow')
   async handleFlow(@Req() req: any, @Res() res: any) {
-    const outDir = getOutDir();
-    const { POST } = await import(
-      pathToFileURL(join(outDir, 'workflows.mjs')).href
-    );
+    const { POST } = await loadBundle('workflows.mjs');
     const webRequest = toWebRequest(req);
     const webResponse = await POST(webRequest);
     await sendWebResponse(res, webResponse);
@@ -119,10 +151,7 @@ export class WorkflowController {
 
   @All('webhook/:token')
   async handleWebhook(@Req() req: any, @Res() res: any) {
-    const outDir = getOutDir();
-    const { POST } = await import(
-      pathToFileURL(join(outDir, 'webhook.mjs')).href
-    );
+    const { POST } = await loadBundle('webhook.mjs');
     const webRequest = toWebRequest(req);
     const webResponse = await POST(webRequest);
     await sendWebResponse(res, webResponse);
