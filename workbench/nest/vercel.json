@@ -1,5 +1,13 @@
 {
   "buildCommand": "turbo build",
+  "functions": {
+    "api/index.js": {
+      "runtime": "@vercel/node@5.5.23",
+      "maxDuration": 300,
+      "includeFiles": "dist/workflow/{steps,workflows,webhook}.mjs"
+    }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }],
   "env": {
     "WORKFLOW_PUBLIC_MANIFEST": "1"
   }
