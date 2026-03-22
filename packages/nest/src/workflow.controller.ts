@@ -117,8 +117,9 @@ async function loadBundle(
     );
   }
 
-  // Write to /tmp/ and import from there
-  const tmpDir = '/tmp/_wf_bundles';
+  // Write to a directory inside the project so package resolution works.
+  // /tmp/ doesn't have node_modules, so imports of 'workflow' fail.
+  const tmpDir = join(process.cwd(), '.wf_bundles');
   const tmpPath = join(tmpDir, filename);
   if (!existsSync(tmpPath)) {
     mkdirSync(tmpDir, { recursive: true });
