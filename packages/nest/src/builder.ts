@@ -6,6 +6,7 @@ import {
   STEP_QUEUE_TRIGGER,
   WORKFLOW_QUEUE_TRIGGER,
 } from '@workflow/builders';
+import * as esbuild from 'esbuild';
 import { join } from 'pathe';
 import { rewriteTsImportsInContent } from './cjs-rewrite.js';
 
@@ -162,7 +163,7 @@ export class NestLocalBuilder extends BaseBuilder {
    * function and writes `config.json` with routing rules.
    */
   async buildVercelOutput(
-    _vercelOptions?: Omit<NestVercelOutputOptions, keyof NestBuilderOptions>
+    vercelOptions?: Omit<NestVercelOutputOptions, keyof NestBuilderOptions>
   ): Promise<void> {
     const outputDir = resolve(this.#workingDir, '.vercel/output');
     const functionsDir = join(outputDir, 'functions');
@@ -237,14 +238,70 @@ export class NestLocalBuilder extends BaseBuilder {
       manifest,
     });
 
-    // Write Build Output API config.json with routing for workflow functions.
-    // The NestJS @vercel/node builder handles the main app function and
-    // catch-all routing — we only need routes for the webhook dynamic path.
+    // Bundle the NestJS entry point into the Build Output API.
+    // With framework=null, there's no @vercel/node NFT — the function
+    // must be self-contained via esbuild.
+    // Only bundle the entry point if dist/ exists (postbuild, not prebuild)
+    const { existsSync } = await import('node:fs');
+    const distExists = existsSync(resolve(this.#workingDir, 'dist'));
+    if (vercelOptions?.entryPoint && distExists) {
+      console.log(
+        '[@workflow/nest] Bundling NestJS entry point for Build Output API'
+      );
+      const entryPointPath = resolve(
+        this.#workingDir,
+        vercelOptions.entryPoint
+      );
+      const entryFuncDir = join(functionsDir, '__nestjs.func');
+      await mkdir(entryFuncDir, { recursive: true });
+
+      await esbuild.build({
+        entryPoints: [entryPointPath],
+        bundle: true,
+        platform: 'node',
+        target: 'node22',
+        format: 'cjs',
+        outfile: join(entryFuncDir, 'index.js'),
+        external: [
+          'node:*',
+          '@nestjs/websockets',
+          '@nestjs/websockets/*',
+          '@nestjs/microservices',
+          '@nestjs/microservices/*',
+          '@nestjs/platform-fastify',
+          'class-validator',
+          'class-transformer',
+          'cache-manager',
+          '@swc/*',
+          '*.node',
+        ],
+        logLevel: 'warning',
+        keepNames: true,
+        sourcemap: false,
+        minify: false,
+        define: {
+          'process.env.WORKFLOW_PUBLIC_MANIFEST': '"1"',
+        },
+      });
+      await this.createPackageJson(entryFuncDir, 'commonjs');
+      await this.createVcConfig(entryFuncDir, {
+        handler: 'index.js',
+        maxDuration: vercelOptions.maxDuration ?? 300,
+      });
+    }
+
+    // Write Build Output API config.json with routing.
     const routes = [
       {
         src: '^\\/\\.well-known\\/workflow\\/v1\\/webhook\\/([^\\/]+)$',
         dest: '/.well-known/workflow/v1/webhook/[token]',
       },
+      { handle: 'filesystem' as const },
+      { handle: 'miss' as const },
+      // Catch-all to the NestJS handler (only if entry point was bundled)
+      ...(vercelOptions?.entryPoint && distExists
+        ? [{ src: '/(.*)', dest: '/__nestjs', check: true }]
+        : []),
     ];
 
     await writeFile(
