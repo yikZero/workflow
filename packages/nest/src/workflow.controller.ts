@@ -117,13 +117,23 @@ async function loadBundle(
     );
   }
 
-  // Write to a directory inside the project so package resolution works.
-  // /tmp/ doesn't have node_modules, so imports of 'workflow' fail.
-  const tmpDir = join(process.cwd(), '.wf_bundles');
+  // Write to /tmp/ but symlink node_modules so package resolution works.
+  // The Lambda filesystem is read-only except /tmp/.
+  const tmpDir = '/tmp/_wf_bundles';
   const tmpPath = join(tmpDir, filename);
   if (!existsSync(tmpPath)) {
     mkdirSync(tmpDir, { recursive: true });
     writeFileSync(tmpPath, Buffer.from(base64, 'base64'));
+    // Create a node_modules symlink so the bundle can resolve packages
+    const nodeModulesLink = join(tmpDir, 'node_modules');
+    if (!existsSync(nodeModulesLink)) {
+      try {
+        const { symlinkSync } = require('node:fs') as typeof import('node:fs');
+        symlinkSync(join(process.cwd(), 'node_modules'), nodeModulesLink);
+      } catch {
+        // Symlink might fail in some environments
+      }
+    }
   }
   return await import(pathToFileURL(tmpPath).href);
 }
