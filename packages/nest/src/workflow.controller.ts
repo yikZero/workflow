@@ -117,23 +117,15 @@ async function loadBundle(
     );
   }
 
-  // Write to /tmp/ but symlink node_modules so package resolution works.
-  // The Lambda filesystem is read-only except /tmp/.
+  // Write the self-contained CJS bundle to /tmp/ and import it.
+  // These are Build Output API bundles with ALL dependencies inlined.
   const tmpDir = '/tmp/_wf_bundles';
-  const tmpPath = join(tmpDir, filename);
+  // Use .cjs extension to ensure Node.js treats it as CJS regardless of package.json type
+  const cjsFilename = filename.replace('.mjs', '.cjs');
+  const tmpPath = join(tmpDir, cjsFilename);
   if (!existsSync(tmpPath)) {
     mkdirSync(tmpDir, { recursive: true });
     writeFileSync(tmpPath, Buffer.from(base64, 'base64'));
-    // Create a node_modules symlink so the bundle can resolve packages
-    const nodeModulesLink = join(tmpDir, 'node_modules');
-    if (!existsSync(nodeModulesLink)) {
-      try {
-        const { symlinkSync } = require('node:fs') as typeof import('node:fs');
-        symlinkSync(join(process.cwd(), 'node_modules'), nodeModulesLink);
-      } catch {
-        // Symlink might fail in some environments
-      }
-    }
   }
   return await import(pathToFileURL(tmpPath).href);
 }
