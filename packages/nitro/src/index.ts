@@ -36,24 +36,11 @@ export default {
 
     // NOTE: Externalize .nitro/workflow to prevent dev reloads
     if (nitro.options.dev) {
+      nitro.options.externals ||= {};
+      nitro.options.externals.external ||= [];
       const outDir = join(nitro.options.buildDir, 'workflow');
-      nitro.hooks.hook(
-        'rollup:before',
-        (_nitro: Nitro, config: RollupConfig) => {
-          const prevExternal = config.external;
-          config.external = (id: string, ...args: unknown[]) => {
-            if (id.startsWith(outDir)) return true;
-            if (typeof prevExternal === 'function')
-              return (
-                prevExternal as (
-                  id: string,
-                  ...args: unknown[]
-                ) => boolean | null | undefined
-              )(id, ...args);
-            if (Array.isArray(prevExternal)) return prevExternal.includes(id);
-            return prevExternal === id;
-          };
-        }
+      nitro.options.externals.external.push((id: string) =>
+        id.startsWith(outDir)
       );
     }
 
