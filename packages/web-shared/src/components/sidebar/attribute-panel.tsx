@@ -10,7 +10,6 @@ import { isEncryptedMarker, isExpiredMarker } from '../../lib/hydration';
 import { useToast } from '../../lib/toast';
 import { extractConversation, isDoStreamStep } from '../../lib/utils';
 import { RunClickContext, StreamClickContext } from '../ui/data-inspector';
-import { TimestampTooltip } from '../ui/timestamp-tooltip';
 import { ErrorCard } from '../ui/error-card';
 import {
   ErrorStackBlock,
