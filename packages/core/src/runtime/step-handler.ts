@@ -303,7 +303,10 @@ const stepHandler = getWorldHandlers().createQueueHandler(
                   specVersion: SPEC_VERSION_CURRENT,
                   correlationId: stepId,
                   eventData: {
-                    error: err.message,
+                    error: {
+                      message: err.message,
+                      name: err.name,
+                    },
                     stack: err.stack,
                   },
                 },
