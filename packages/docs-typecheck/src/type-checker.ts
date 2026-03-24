@@ -71,7 +71,6 @@ const compilerOptions: ts.CompilerOptions = {
     workflow: [path.join(repoRoot, 'packages/workflow/dist/index')],
     'workflow/api': [path.join(repoRoot, 'packages/workflow/dist/api')],
     'workflow/next': [path.join(repoRoot, 'packages/next/dist/index')],
-    'workflow/vite': [path.join(repoRoot, 'packages/vite/dist/index')],
     'workflow/astro': [path.join(repoRoot, 'packages/astro/dist/index')],
     'workflow/errors': [
       path.join(repoRoot, 'packages/workflow/dist/internal/errors'),
@@ -104,7 +103,6 @@ const compilerOptions: ts.CompilerOptions = {
 const RESOLVED_MODULES = new Set([
   ...Object.keys(compilerOptions.paths ?? {}),
   'workflow/next',
-  'workflow/vite',
   'workflow/astro',
 ]);
 
