@@ -12,6 +12,8 @@ From the repository root:
 pnpm test:docs
 ```
 
+This checks code samples in `docs/content/docs/**/*.mdx`, `packages/*/README.md`, and `skills/**/SKILL.md`.
+
 Or from this package directory:
 
 ```bash
