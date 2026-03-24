@@ -70,6 +70,9 @@ const compilerOptions: ts.CompilerOptions = {
     // have "require" conditions that TS picks up incorrectly with Bundler resolution.
     workflow: [path.join(repoRoot, 'packages/workflow/dist/index')],
     'workflow/api': [path.join(repoRoot, 'packages/workflow/dist/api')],
+    'workflow/next': [path.join(repoRoot, 'packages/next/dist/index')],
+    'workflow/vite': [path.join(repoRoot, 'packages/vite/dist/index')],
+    'workflow/astro': [path.join(repoRoot, 'packages/astro/dist/index')],
     'workflow/errors': [
       path.join(repoRoot, 'packages/workflow/dist/internal/errors'),
     ],
@@ -98,7 +101,12 @@ const compilerOptions: ts.CompilerOptions = {
  * ("Cannot find module") error for any of these is a real regression and
  * must NOT be silenced.
  */
-const RESOLVED_MODULES = new Set(Object.keys(compilerOptions.paths ?? {}));
+const RESOLVED_MODULES = new Set([
+  ...Object.keys(compilerOptions.paths ?? {}),
+  'workflow/next',
+  'workflow/vite',
+  'workflow/astro',
+]);
 
 /**
  * Returns true if a TS2307 diagnostic refers to a module we don't expect to

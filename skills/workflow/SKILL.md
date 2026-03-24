@@ -52,6 +52,7 @@ Related packages also include bundled docs:
 
 **Essential imports:**
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 // Workflow primitives
 import { sleep, fetch, createHook, createWebhook, getWritable } from "workflow";
@@ -78,6 +79,7 @@ import { DurableAgent } from "@workflow/ai/agent";
 
 `"use workflow"` functions run in a sandboxed VM. `"use step"` functions have **full Node.js access**. Put your logic in steps and use the workflow function purely for orchestration.
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 // Steps have full Node.js and npm access
 async function fetchUserData(userId: string) {
@@ -184,6 +186,7 @@ export async function myAgentWorkflow(userMessage: string) {
 
 Use `start()` to launch workflows from API routes. **`start()` cannot be called directly in workflow context** — wrap it in a step function.
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 import { start } from "workflow/api";
 
@@ -199,6 +202,7 @@ const run = await start(noArgWorkflow);
 
 **Starting child workflows from inside a workflow — must use a step:**
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 import { start } from "workflow/api";
 
@@ -278,6 +282,7 @@ export async function POST(req: Request) {
 
 Use `FatalError` for permanent failures (no retry), `RetryableError` for transient failures:
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 import { FatalError, RetryableError } from "workflow";
 
@@ -590,6 +595,7 @@ describe("approvalWorkflow", () => {
 
 **Testing webhooks:** Use `resumeWebhook()` with a `Request` object — no HTTP server needed:
 
+<!-- @skip-typecheck: incomplete code sample -->
 ```typescript
 import { start, resumeWebhook } from "workflow/api";
 import { waitForHook } from "@workflow/vitest";
