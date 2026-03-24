@@ -15,6 +15,7 @@ This guide shows how to set up integration tests that spawn a dev server as a si
 
 Create a Vitest config with the `workflow()` Vite plugin for code transforms and a `globalSetup` script that manages the server lifecycle:
 
+{/* @skip-typecheck - workflow/vite Plugin type conflicts with vitest/config Plugin type in monorepo */}
 ```typescript title="vitest.server.config.ts" lineNumbers
 import { defineConfig } from "vitest/config";
 import { workflow } from "workflow/vite"; // [!code highlight]
