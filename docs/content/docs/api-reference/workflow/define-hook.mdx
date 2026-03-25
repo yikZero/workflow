@@ -15,6 +15,10 @@ This is a lightweight wrapper around [`createHook()`](/docs/api-reference/workfl
 
 When a `schema` is provided, the hook is typed as `TypedHook<TInput, TOutput>` — the `resume()` method accepts `TInput` (the raw payload), while the workflow receives `TOutput` (the validated and potentially transformed result). Without a schema, `TOutput` defaults to `TInput`.
 
+<Callout type="info">
+`defineHook()` spans both execution contexts: call `.create()` inside `"use workflow"` code to create the hook, and call `.resume()` from runtime code (such as API routes or server actions) to resume it. Calling `.create()` outside a workflow or `.resume()` inside one will throw an error.
+</Callout>
+
 <Callout>
 We recommend using `defineHook()` over `createHook()` in production codebases for better type safety and optional runtime validation.
 </Callout>

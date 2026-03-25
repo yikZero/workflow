@@ -10,9 +10,9 @@ related:
   - /docs/api-reference/workflow/create-webhook
 ---
 
-Creates a deterministic-token hook primitive that can be used to resume a workflow run with arbitrary payloads.
+Creates a hook primitive that can be used to suspend a workflow and later resume it with an arbitrary serializable payload.
 
-Unlike [`createWebhook()`](/docs/api-reference/workflow/create-webhook), which always generates a random token for its public HTTP endpoint, `createHook()` lets you specify a deterministic `token` that external systems can reconstruct without prior communication. Hooks are resumed server-side via [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) and can receive any serializable payload.
+Unlike [`createWebhook()`](/docs/api-reference/workflow/create-webhook), which always generates a random token for its public HTTP endpoint, `createHook()` accepts an optional custom `token`. If you omit `token`, Workflow generates a unique token automatically. Use a custom token only when the sender can deterministically reconstruct it. Hooks are resumed server-side via [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) and can receive any serializable payload.
 
 ```ts lineNumbers
 import { createHook } from "workflow"
@@ -92,9 +92,36 @@ export async function approvalWorkflow() {
 }
 ```
 
+### Machine-readable logging
+
+Emit a structured log line when a hook is created so external systems can discover its token programmatically:
+
+```typescript lineNumbers
+import { createHook } from "workflow"
+
+export async function approvalWorkflow() {
+  "use workflow";
+
+  using hook = createHook<{ approved: boolean }>();
+
+  console.info(JSON.stringify({ // [!code highlight]
+    event: "workflow.hook.created", // [!code highlight]
+    token: hook.token, // [!code highlight]
+  })); // [!code highlight]
+
+  return await hook;
+}
+```
+
+Example log line:
+
+```json
+{"event":"workflow.hook.created","token":"nk_abc123"}
+```
+
 ### Customizing Tokens
 
-Tokens are used to identify a specific hook. You can customize the token to be more specific to a use case.
+By default, Workflow generates a unique token for each hook. You can provide a custom `token` when the resuming side needs to reconstruct the token without prior communication.
 
 ```typescript lineNumbers
 import { createHook } from "workflow";
