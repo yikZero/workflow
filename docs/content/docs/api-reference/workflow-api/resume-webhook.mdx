@@ -50,10 +50,11 @@ showSections={['parameters']}
 
 ### Returns
 
-Returns a `Promise<Response>` that resolves to:
+Returns a `Promise<Response>` that resolves to one of three outcomes:
 
-- A `202 Accepted` response if the webhook was created with the default mode (no `respondWith` option or a `Response` object passed to `respondWith`)
-- The workflow's custom `Response` if the webhook was created with `createWebhook({ respondWith: 'manual' })` and the workflow called `request.respondWith(response)` from a step function
+- A `202 Accepted` response when the webhook was created with the default mode (no `respondWith` option)
+- The exact `Response` object configured with `createWebhook({ respondWith: new Response(...) })`
+- The workflow's manual `Response` when the webhook was created with `createWebhook({ respondWith: 'manual' })` and a step calls `request.respondWith(response)`
 
 Throws an error if the webhook token is not found or invalid.
 
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
 
   try {
     const response = await resumeWebhook(token, request); // [!code highlight]
-    return response; // Returns the workflow's custom response
+    return response; // May be 202 Accepted, a configured static Response, or a manual workflow response
   } catch (error) {
     return new Response("Webhook not found", { status: 404 });
   }

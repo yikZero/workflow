@@ -9,13 +9,35 @@ related:
 
 Helpers for integrating AI SDK for building AI-powered workflows.
 
-## Classes
+## Root Exports (`@workflow/ai`)
+
+The root `@workflow/ai` entrypoint exports:
+
+<Cards>
+    <Card title="WorkflowChatTransport" href="/docs/api-reference/workflow-ai/workflow-chat-transport">
+      A drop-in transport for the AI SDK for automatic reconnection in interrupted streams.
+    </Card>
+</Cards>
+
+It also re-exports the `ModelMessage` type from the AI SDK for convenience.
+
+## Agent (`@workflow/ai/agent`)
+
+The `@workflow/ai/agent` subpath exports the `DurableAgent` class and related types:
 
 <Cards>
     <Card title="DurableAgent" href="/docs/api-reference/workflow-ai/durable-agent">
       A class for building durable AI agents that maintain state across workflow steps and handle tool execution with automatic retries.
     </Card>
-    <Card title="WorkflowChatTransport" href="/docs/api-reference/workflow-ai/workflow-chat-transport">
-      A drop-in transport for the AI SDK for automatic reconnection in interrupted streams.
-    </Card>
 </Cards>
+
+## Provider Subpaths
+
+Model provider wrappers are available as separate subpath imports:
+
+- `@workflow/ai/anthropic` — Anthropic provider
+- `@workflow/ai/openai` — OpenAI provider
+- `@workflow/ai/google` — Google provider
+- `@workflow/ai/gateway` — Gateway provider
+- `@workflow/ai/xai` — xAI provider
+- `@workflow/ai/test` — Mock provider for testing
