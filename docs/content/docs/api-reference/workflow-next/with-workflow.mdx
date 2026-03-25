@@ -9,6 +9,40 @@ prerequisites:
 
 Configures webpack/turbopack loaders to transform workflow code (`"use step"`/`"use workflow"` directives)
 
+## API Signature
+
+### Parameters
+
+<TSDoc
+definition={`
+import { withWorkflow } from "workflow/next";
+export default withWorkflow;`}
+showSections={["parameters"]}
+/>
+
+#### Options
+
+The second parameter accepts an optional configuration object:
+
+| Property | Type | Description |
+|---|---|---|
+| `workflows.lazyDiscovery` | `boolean` | Enable lazy discovery mode. When `true`, workflows are discovered incrementally via loader notifications instead of eagerly scanning at build time. |
+| `workflows.local.port` | `number` | Override the local development server port. Sets the `PORT` environment variable. |
+| `workflows.local.dataDir` | `string` | Override the local data directory path. Defaults to `'.next/workflow-data'` when running locally. |
+
+### Returns
+
+Returns an async function `(phase: string, ctx: { defaultConfig: NextConfig }) => Promise<NextConfig>` compatible with the `next.config.ts` default export.
+
+### Environment Behavior
+
+When running locally (no `VERCEL_DEPLOYMENT_ID`):
+- Sets `WORKFLOW_TARGET_WORLD` to `'local'` if not already set
+- Sets `WORKFLOW_LOCAL_DATA_DIR` to `'.next/workflow-data'` if not already set
+
+When running on Vercel:
+- Sets `WORKFLOW_TARGET_WORLD` to `'vercel'` if not already set
+
 ## Usage
 
 To enable `"use step"` and `"use workflow"` directives while developing locally or deploying to production, wrap your `nextConfig` with `withWorkflow`.
