@@ -28,7 +28,7 @@ The second parameter accepts an optional configuration object:
 |---|---|---|
 | `workflows.lazyDiscovery` | `boolean` | Enable lazy discovery mode. Sets the `WORKFLOW_NEXT_LAZY_DISCOVERY` flag. Deferred discovery only activates on Next.js `>= 16.2.0-canary.48`; on older versions, Workflow logs a warning and falls back to eager scanning. |
 | `workflows.local.port` | `number` | Override the local development server port. Sets the `PORT` environment variable when running locally (no `VERCEL_DEPLOYMENT_ID`). |
-| `workflows.local.dataDir` | `string` | Typed but not currently applied by the `withWorkflow` implementation. The local data directory is always set to `'.next/workflow-data'` via the `WORKFLOW_LOCAL_DATA_DIR` environment variable. |
+| `workflows.local.dataDir` | `string` | Currently typed but ignored by `withWorkflow()`. In local mode, when `WORKFLOW_TARGET_WORLD` is unset, the implementation hardcodes `WORKFLOW_LOCAL_DATA_DIR` to `'.next/workflow-data'`. |
 
 ### Returns
 
@@ -61,8 +61,14 @@ const nextConfig: NextConfig = {
   // … rest of your Next.js config
 };
 
-// not required but allows configuring workflow options
-const workflowConfig = {} 
+// optional, but this shows the actual supported shape
+const workflowConfig = {
+  workflows: {
+    local: {
+      port: 3001,
+    },
+  },
+};
 
 export default withWorkflow(nextConfig, workflowConfig); // [!code highlight]
 ```
