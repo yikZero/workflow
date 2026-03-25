@@ -36,13 +36,13 @@ Workflow SDK contains the following functions you can use inside your workflow f
         Make HTTP requests from within a workflow with automatic retry semantics.
     </Card>
     <Card href="/docs/api-reference/workflow/create-hook" title="createHook()">
-        Create a low-level hook to receive arbitrary payloads from external systems.
+        Create a hook with a deterministic token, resumed server-side via `resumeHook()`.
     </Card>
     <Card href="/docs/api-reference/workflow/define-hook" title="defineHook()">
-        Type-safe hook helper for consistent payload types.
+        Type-safe hook helper with optional schema validation for consistent payload types.
     </Card>
     <Card href="/docs/api-reference/workflow/create-webhook" title="createWebhook()">
-        Create a webhook that suspends the workflow until an HTTP request is received.
+        Create a webhook with a randomly generated token and public HTTP endpoint.
     </Card>
     <Card href="/docs/api-reference/workflow/get-writable" title="getWritable()">
         Access the current workflow run's default stream.

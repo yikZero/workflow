@@ -10,9 +10,9 @@ related:
   - /docs/api-reference/workflow/create-webhook
 ---
 
-Creates a low-level hook primitive that can be used to resume a workflow run with arbitrary payloads.
+Creates a deterministic-token hook primitive that can be used to resume a workflow run with arbitrary payloads.
 
-Hooks allow external systems to send data to a paused workflow without the HTTP-specific constraints of webhooks. They're identified by a token and can receive any serializable payload.
+Unlike [`createWebhook()`](/docs/api-reference/workflow/create-webhook), which always generates a random token for its public HTTP endpoint, `createHook()` lets you specify a deterministic `token` that external systems can reconstruct without prior communication. Hooks are resumed server-side via [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) and can receive any serializable payload.
 
 ```ts lineNumbers
 import { createHook } from "workflow"
@@ -64,6 +64,10 @@ export default Hook;`}
 />
 
 The returned `Hook` object also implements `AsyncIterable<T>`, which allows you to iterate over incoming payloads using `for await...of` syntax.
+
+<Callout>
+The `isWebhook` option in `HookOptions` controls whether the hook can be resumed via the public webhook endpoint (`/.well-known/workflow/v1/webhook/{token}`). It defaults to `false`, meaning hooks created with `createHook()` can only be resumed server-side via `resumeHook()`. The `createWebhook()` function sets this to `true` automatically.
+</Callout>
 
 ## Examples
 

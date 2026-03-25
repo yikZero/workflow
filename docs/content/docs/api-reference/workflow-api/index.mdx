@@ -16,13 +16,13 @@ The API package is for access and introspection of workflow data to inspect runs
         Start/enqueue a new workflow run.
     </Card>
     <Card href="/docs/api-reference/workflow-api/resume-hook" title="resumeHook()">
-        Resume a workflow by sending a payload to a hook.
+        Resume a hook created with `createHook()` by sending an arbitrary payload.
     </Card>
     <Card href="/docs/api-reference/workflow-api/resume-webhook" title="resumeWebhook()">
-        Resume a workflow by sending a `Request` to a webhook.
+        Resume a webhook created with `createWebhook()` by forwarding an HTTP `Request`.
     </Card>
     <Card href="/docs/api-reference/workflow-api/get-hook-by-token" title="getHookByToken()">
-        Get hook details and metadata by its token.
+        Retrieve hook details, metadata, and run information by token.
     </Card>
     <Card href="/docs/api-reference/workflow-api/get-run" title="getRun()">
         Get workflow run status and metadata without waiting for completion.

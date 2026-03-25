@@ -52,7 +52,8 @@ showSections={['parameters']}
 
 Returns a `Promise<Response>` that resolves to:
 
-- `Response`: The HTTP response from the workflow's `respondWith()` call
+- A `202 Accepted` response if the webhook was created with the default mode (no `respondWith` option or a `Response` object passed to `respondWith`)
+- The workflow's custom `Response` if the webhook was created with `createWebhook({ respondWith: 'manual' })` and the workflow called `request.respondWith(response)` from a step function
 
 Throws an error if the webhook token is not found or invalid.
 

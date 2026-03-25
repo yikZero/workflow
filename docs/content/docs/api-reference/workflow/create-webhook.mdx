@@ -17,6 +17,15 @@ Webhooks provide a way for external systems to send HTTP requests directly to yo
 `createWebhook()` creates a public endpoint at `/.well-known/workflow/v1/webhook/:token`, and the token in that URL is the only authorization performed for incoming requests resuming that webhook. This is convenient for prototypes and simple resume links because it avoids creating another route, but if you need stronger security, prefer [`createHook()`](/docs/api-reference/workflow/create-hook) behind your own route and authorize the request before calling [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) to avoid unauthenticated workflow resumptions.
 </Callout>
 
+<Callout type="info">
+`createWebhook()` does **not** accept a `token` option. Webhook tokens are always randomly generated. Use [`createHook()`](/docs/api-reference/workflow/create-hook) with [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) for deterministic token patterns.
+</Callout>
+
+`createWebhook` has two overloads:
+
+- **Default mode** — `createWebhook(options?)` returns `Webhook<Request>`. The caller automatically receives a `202 Accepted` response (or the `Response` object you pass as `respondWith`).
+- **Manual-response mode** — `createWebhook({ respondWith: 'manual' })` returns `Webhook<RequestWithResponse>`. Each request exposes a `respondWith()` method so the workflow can send a custom HTTP response from within a step function.
+
 ```ts lineNumbers
 import { createWebhook } from "workflow"
 
@@ -54,7 +63,7 @@ showSections={['returns']}
 The returned `Webhook` object has:
 
 - `url`: The HTTP endpoint URL that external systems can call
-- `token`: The unique token identifying this webhook
+- `token`: The unique, randomly generated token identifying this webhook
 - Implements `AsyncIterable<T>` for handling multiple requests, where `T` is `Request` (default) or `RequestWithResponse` (manual mode)
 
 When using `createWebhook({ respondWith: 'manual' })`, the resolved request type is `RequestWithResponse`, which extends the standard `Request` interface with a `respondWith(response: Response): Promise<void>` method for sending custom responses back to the caller.
@@ -122,7 +131,7 @@ async function sendResponse(request: RequestWithResponse): Promise<void> {
 export async function respondingWebhookWorkflow() {
   "use workflow";
 
-  using webhook = createWebhook({ respondWith: "manual" });
+  using webhook = createWebhook({ respondWith: "manual" }); // [!code highlight]
   console.log("Webhook URL:", webhook.url);
 
   const request = await webhook;

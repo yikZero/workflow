@@ -13,6 +13,8 @@ Creates a type-safe hook helper that ensures the payload type is consistent betw
 
 This is a lightweight wrapper around [`createHook()`](/docs/api-reference/workflow/create-hook) and [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) to avoid type mismatches. It also supports optional runtime validation and transformation of payloads using any [Standard Schema v1](https://standardschema.dev) compliant validator like Zod or Valibot.
 
+When a `schema` is provided, the hook is typed as `TypedHook<TInput, TOutput>` — the `resume()` method accepts `TInput` (the raw payload), while the workflow receives `TOutput` (the validated and potentially transformed result). Without a schema, `TOutput` defaults to `TInput`.
+
 <Callout>
 We recommend using `defineHook()` over `createHook()` in production codebases for better type safety and optional runtime validation.
 </Callout>
@@ -48,20 +50,21 @@ showSections={['parameters']}
 
 <TSDoc
 definition={`
-interface DefineHook<T> {
+interface TypedHook<TInput, TOutput> {
   /**
 
-* Creates a new hook with the defined payload type.
+* Creates a new hook with the defined output type.
   */
-  create: (options?: HookOptions) => Hook<T>;
+  create: (options?: HookOptions) => Hook<TOutput>;
 
   /**
 
-* Resumes a hook by sending a payload with the defined type.
+* Resumes a hook by sending a payload with the defined input type.
+* Throws an error if the hook is not found or if schema validation fails.
    */
-  resume: (token: string, payload: T) => Promise<HookEntity | null>;
+  resume: (token: string, payload: TInput) => Promise<HookEntity>;
 }
-export default DefineHook;`}
+export default TypedHook;`}
 />
 
 ## Examples
@@ -93,24 +96,24 @@ export async function workflowWithApproval() {
 
 ### Resuming with Type Safety
 
-Hooks can be resumed using the same defined hook and a token. By using the same hook, you can ensure that the payload matches the defined type when resuming a hook.
+Hooks can be resumed using the same defined hook and a token. By using the same hook, you can ensure that the payload matches the defined type when resuming a hook. The `resume()` method throws an error if the hook is not found or if schema validation fails.
 
 ```typescript lineNumbers
 // Use the same defined hook to resume
 export async function POST(request: Request) {
   const { token, approved, comment } = await request.json();
 
-  // Type-safe resumption - TypeScript ensures the payload matches
-  const result = await approvalHook.resume(token, { // [!code highlight]
-    approved, // [!code highlight]
-    comment, // [!code highlight]
-  }); // [!code highlight]
+  try {
+    // Type-safe resumption - TypeScript ensures the payload matches
+    const result = await approvalHook.resume(token, { // [!code highlight]
+      approved, // [!code highlight]
+      comment, // [!code highlight]
+    }); // [!code highlight]
 
-  if (!result) {
-    return Response.json({ error: "Hook not found" }, { status: 404 });
+    return Response.json({ success: true, runId: result.runId });
+  } catch (error) {
+    return Response.json({ error: "Hook not found or invalid payload" }, { status: 400 });
   }
-
-  return Response.json({ success: true, runId: result.runId });
 }
 ```
 
