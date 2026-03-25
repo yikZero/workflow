@@ -9,9 +9,9 @@ related:
   - /docs/api-reference/workflow/retryable-error
 ---
 
-When a `FatalError` is thrown in a step, it indicates that the workflow should not retry a step, marking it as failure.
+When a `FatalError` is thrown in a step, the step fails without retrying and the error bubbles back to the workflow logic.
 
-You should use this when you don't want a specific step to retry.
+Use `FatalError` when a failure is intentional or unrecoverable and retrying would be wasteful or harmful.
 
 ```typescript lineNumbers
 import { FatalError } from "workflow"
@@ -43,7 +43,7 @@ new FatalError(message: string)
 
 | Property | Type   | Description                                      |
 | -------- | ------ | ------------------------------------------------ |
-| `fatal`  | `true` | Always `true`. Marks the error as non-retryable. |
+| `fatal`  | `boolean` | Always initialized to `true`. Marks the error as non-retryable. |
 
 ### Static Methods
 

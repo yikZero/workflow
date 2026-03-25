@@ -9,12 +9,12 @@ related:
   - /docs/errors/fetch-in-workflow
 ---
 
-Makes HTTP requests from within a workflow. This is a hoisted `"use step"` wrapper over `globalThis.fetch`, allowing you to call `fetch` directly inside a `"use workflow"` function. The call executes as a step with full Node.js runtime access.
+Makes HTTP requests from within a workflow. This is a hoisted `"use step"` wrapper over `globalThis.fetch`, allowing you to call `fetch` directly inside a `"use workflow"` function. Because it runs as a step, thrown request failures follow the normal step retry policy, while ordinary HTTP responses (including `4xx` and `5xx`) are returned as normal `Response` objects.
 
 This is useful when you need to call external APIs or services from within your workflow.
 
 <Callout>
-`fetch` is a `"use step"` wrapper and should be called directly inside workflow functions. It does not include built-in retry logic — use a custom step with [`RetryableError`](/docs/api-reference/workflow/retryable-error) for retry control.
+`fetch` is a `"use step"` wrapper and should be called directly inside workflow functions. It does not add HTTP-status-aware retry behavior on top of the standard `fetch` API. If you want retries to depend on `response.status`, headers, or body content, wrap `globalThis.fetch` in your own `"use step"` function and throw [`FatalError`](/docs/api-reference/workflow/fatal-error) or [`RetryableError`](/docs/api-reference/workflow/retryable-error) yourself.
 </Callout>
 
 ```typescript lineNumbers
@@ -82,9 +82,9 @@ async function apiWorkflow() {
 }
 ```
 
-We call `fetch()` with a URL and optional request options, just like the standard `fetch` API. Because `fetch` runs as a step, the workflow runtime handles serialization and replay.
+We call `fetch()` with a URL and optional request options, just like the standard `fetch` API. Because `fetch` runs as a step, the workflow runtime handles serialization and replay. If the request throws, normal step retry behavior applies; if it returns a `Response`, your code decides whether that response should be treated as success, fatal failure, or retryable failure.
 
-This API is provided as a convenience to easily use `fetch` in a workflow, but you may want to write your own `"use step"` wrapper for more control over error handling and retry logic.
+This API is provided as a convenience to easily use `fetch` in a workflow, but you may want to write your own `"use step"` wrapper when retries should depend on HTTP response details such as `status`, headers, or body content.
 
 ### Customizing Fetch Behavior
 
