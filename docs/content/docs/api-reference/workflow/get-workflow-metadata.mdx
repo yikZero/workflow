@@ -1,22 +1,23 @@
 ---
 title: getWorkflowMetadata
-description: Access run IDs and timing information within workflow functions.
+description: Access run IDs and timing information within workflow or step functions.
 type: reference
-summary: Call getWorkflowMetadata inside a workflow to access the run ID and timing information.
+summary: Call getWorkflowMetadata inside a workflow or step function to access the run ID and timing information.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 ---
 
-Returns additional metadata available in the current workflow function.
+Returns metadata about the current workflow run. This function can be called from either a workflow function or a step function.
 
 You may want to use this function when you need to:
 
 * Log workflow run IDs
 * Access timing information of a workflow
 * Detect whether encryption is enabled for the current run
+* Retrieve the workflow URL from within a step
 
 <Callout>
-If you need to access step context, take a look at [`getStepMetadata`](/docs/api-reference/workflow/get-step-metadata).
+If you need to access step-specific context, take a look at [`getStepMetadata`](/docs/api-reference/workflow/get-step-metadata).
 </Callout>
 
 ```typescript lineNumbers
@@ -102,6 +103,16 @@ showSections={['parameters']}
 />
 
 ### Returns
+
+Returns a `WorkflowMetadata` object with the following fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `workflowName` | `string` | The name of the workflow. |
+| `workflowRunId` | `string` | Unique identifier for the workflow run. |
+| `workflowStartedAt` | `Date` | Timestamp when the workflow run started. |
+| `url` | `string` | The URL where the workflow can be triggered. |
+| `features.encryption` | `boolean` | Whether serialized workflow data is encrypted at rest for the current run. |
 
 <TSDoc
 definition={`

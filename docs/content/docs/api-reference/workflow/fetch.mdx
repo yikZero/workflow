@@ -1,20 +1,20 @@
 ---
 title: fetch
-description: Make HTTP requests from workflows with automatic serialization and retry semantics.
+description: Make HTTP requests from workflows using a step-wrapped fetch.
 type: reference
-summary: Use the workflow-aware fetch to make HTTP requests with automatic serialization and retry semantics.
+summary: Use the workflow-aware fetch to make HTTP requests from workflow code.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
   - /docs/errors/fetch-in-workflow
 ---
 
-Makes HTTP requests from within a workflow. This is a special step function that wraps the standard `fetch` API, automatically handling serialization and providing retry semantics.
+Makes HTTP requests from within a workflow. This is a hoisted `"use step"` wrapper over `globalThis.fetch`, allowing you to call `fetch` directly inside a `"use workflow"` function. The call executes as a step with full Node.js runtime access.
 
 This is useful when you need to call external APIs or services from within your workflow.
 
 <Callout>
-`fetch` is a *special* type of step function provided and should be called directly inside workflow functions.
+`fetch` is a `"use step"` wrapper and should be called directly inside workflow functions. It does not include built-in retry logic — use a custom step with [`RetryableError`](/docs/api-reference/workflow/retryable-error) for retry control.
 </Callout>
 
 ```typescript lineNumbers
@@ -82,9 +82,9 @@ async function apiWorkflow() {
 }
 ```
 
-We call `fetch()` with a URL and optional request options, just like the standard fetch API. The workflow runtime automatically handles the response serialization.
+We call `fetch()` with a URL and optional request options, just like the standard `fetch` API. Because `fetch` runs as a step, the workflow runtime handles serialization and replay.
 
-This API is provided as a convenience to easily use `fetch` in workflow, but often, you might want to extend and implement your own fetch for more powerful error handing and retry logic.
+This API is provided as a convenience to easily use `fetch` in a workflow, but you may want to write your own `"use step"` wrapper for more control over error handling and retry logic.
 
 ### Customizing Fetch Behavior
 
@@ -140,7 +140,6 @@ export async function customFetch(
 
 This example demonstrates:
 
-- Setting custom `maxRetries` to 5 retries (6 total attempts including the initial attempt).
 - Throwing [`FatalError`](/docs/api-reference/workflow/fatal-error) for client errors (400-499) to prevent retries.
 - Handling 429 rate limiting by reading the `Retry-After` header and using [`RetryableError`](/docs/api-reference/workflow/retryable-error).
-- Allowing automatic retries for server errors (5xx).
+- Allowing automatic retries for server errors (5xx) by throwing a plain `Error`.

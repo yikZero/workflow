@@ -29,16 +29,28 @@ async function fallibleStep() {
 
 ## API Signature
 
-### Parameters
+### Constructor
 
-<TSDoc
-definition={`
-interface Error {
-  /**
+```typescript
+new FatalError(message: string)
+```
 
-* The error message.
-   */
-  message: string;
-}
-export default Error;`}
-/>
+| Parameter | Type     | Description       |
+| --------- | -------- | ----------------- |
+| `message` | `string` | The error message |
+
+### Instance Properties
+
+| Property | Type   | Description                                      |
+| -------- | ------ | ------------------------------------------------ |
+| `fatal`  | `true` | Always `true`. Marks the error as non-retryable. |
+
+### Static Methods
+
+#### `FatalError.is(value)`
+
+```typescript
+FatalError.is(value: unknown): value is FatalError
+```
+
+Returns `true` if `value` is a `FatalError` instance. Useful for checking caught errors without `instanceof`.

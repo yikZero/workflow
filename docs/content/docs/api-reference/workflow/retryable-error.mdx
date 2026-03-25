@@ -33,26 +33,38 @@ The difference between `Error` and `RetryableError` may not be entirely obvious,
 
 ## API Signature
 
-### Parameters
+### Constructor
 
-<TSDoc
-definition={`
-import { type RetryableErrorOptions } from "workflow";
-interface RetryableError {
-    options?: RetryableErrorOptions;
-    message: string;
-}
+```typescript
+new RetryableError(message: string, options?: RetryableErrorOptions)
+```
 
-export default RetryableError;`}
-/>
+| Parameter | Type                     | Description                         |
+| --------- | ------------------------ | ----------------------------------- |
+| `message` | `string`                 | The error message                   |
+| `options`  | `RetryableErrorOptions` | Optional configuration for retries  |
 
-#### RetryableErrorOptions
+### Instance Properties
 
-<TSDoc
-definition={`
-import { type RetryableErrorOptions } from "workflow";
-export default RetryableErrorOptions;`}
-/>
+| Property     | Type   | Description                                                                 |
+| ------------ | ------ | --------------------------------------------------------------------------- |
+| `retryAfter` | `Date` | The date/time when the step should be retried. Defaults to 1 second from now when `options.retryAfter` is omitted. |
+
+### `RetryableErrorOptions`
+
+| Property      | Type                              | Description                                                                                             |
+| ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `retryAfter?` | `number \| StringValue \| Date`   | Delay before retrying. A `number` is milliseconds, a `StringValue` is a duration string (e.g. `"5s"`, `"2m"`), or a `Date` for an absolute time. Defaults to 1 second (1000 ms) when omitted. |
+
+### Static Methods
+
+#### `RetryableError.is(value)`
+
+```typescript
+RetryableError.is(value: unknown): value is RetryableError
+```
+
+Returns `true` if `value` is a `RetryableError` instance. Useful for checking caught errors without `instanceof`.
 
 ## Examples
 

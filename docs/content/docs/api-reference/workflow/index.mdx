@@ -18,22 +18,19 @@ Core workflow primitives including steps, context management, streaming, webhook
 npm i workflow
 ```
 
-## Functions
+## Workflow Functions
 
-Workflow SDK contains the following functions you can use inside your workflow functions:
+These functions are available inside `"use workflow"` functions:
 
 <Cards>
     <Card href="/docs/api-reference/workflow/get-workflow-metadata" title="getWorkflowMetadata()">
         A function that returns context about the current workflow execution.
     </Card>
-    <Card href="/docs/api-reference/workflow/get-step-metadata" title="getStepMetadata()">
-        A function that returns context about the current step execution.
-    </Card>
     <Card href="/docs/api-reference/workflow/sleep" title="sleep()">
         Sleeping workflows for a specified duration. Deterministic and replay-safe.
     </Card>
     <Card href="/docs/api-reference/workflow/fetch" title="fetch()">
-        Make HTTP requests from within a workflow with automatic retry semantics.
+        Make HTTP requests from within a workflow. Runs as a step under the hood.
     </Card>
     <Card href="/docs/api-reference/workflow/create-hook" title="createHook()">
         Create a hook with a deterministic token, resumed server-side via `resumeHook()`.
@@ -49,9 +46,19 @@ Workflow SDK contains the following functions you can use inside your workflow f
     </Card>
 </Cards>
 
+## Step Functions
+
+These functions are available inside `"use step"` functions:
+
+<Cards>
+    <Card href="/docs/api-reference/workflow/get-step-metadata" title="getStepMetadata()">
+        A function that returns context about the current step execution.
+    </Card>
+</Cards>
+
 ## Error Classes
 
-Workflow SDK includes error classes that can be thrown in a workflow or step to change the error exit strategy of a workflow.
+Error classes that can be thrown inside a step to control retry behavior.
 
 <Cards>
     <Card href="/docs/api-reference/workflow/fatal-error" title="FatalError()">
