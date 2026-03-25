@@ -26,9 +26,9 @@ The second parameter accepts an optional configuration object:
 
 | Property | Type | Description |
 |---|---|---|
-| `workflows.lazyDiscovery` | `boolean` | Enable lazy discovery mode. When `true`, workflows are discovered incrementally via loader notifications instead of eagerly scanning at build time. |
-| `workflows.local.port` | `number` | Override the local development server port. Sets the `PORT` environment variable. |
-| `workflows.local.dataDir` | `string` | Override the local data directory path. Defaults to `'.next/workflow-data'` when running locally. |
+| `workflows.lazyDiscovery` | `boolean` | Enable lazy discovery mode. Sets the `WORKFLOW_NEXT_LAZY_DISCOVERY` flag. Deferred discovery only activates on Next.js `>= 16.2.0-canary.48`; on older versions, Workflow logs a warning and falls back to eager scanning. |
+| `workflows.local.port` | `number` | Override the local development server port. Sets the `PORT` environment variable when running locally (no `VERCEL_DEPLOYMENT_ID`). |
+| `workflows.local.dataDir` | `string` | Typed but not currently applied by the `withWorkflow` implementation. The local data directory is always set to `'.next/workflow-data'` via the `WORKFLOW_LOCAL_DATA_DIR` environment variable. |
 
 ### Returns
 
@@ -36,12 +36,18 @@ Returns an async function `(phase: string, ctx: { defaultConfig: NextConfig }) =
 
 ### Environment Behavior
 
-When running locally (no `VERCEL_DEPLOYMENT_ID`):
-- Sets `WORKFLOW_TARGET_WORLD` to `'local'` if not already set
-- Sets `WORKFLOW_LOCAL_DATA_DIR` to `'.next/workflow-data'` if not already set
+When running locally (no `VERCEL_DEPLOYMENT_ID`) and `WORKFLOW_TARGET_WORLD` is not already set:
+- Sets `WORKFLOW_TARGET_WORLD` to `'local'`
+- Sets `WORKFLOW_LOCAL_DATA_DIR` to `'.next/workflow-data'`
 
-When running on Vercel:
-- Sets `WORKFLOW_TARGET_WORLD` to `'vercel'` if not already set
+When running locally (no `VERCEL_DEPLOYMENT_ID`):
+- If `workflows.local.port` is provided, sets `PORT` to that value
+
+When running on Vercel (`VERCEL_DEPLOYMENT_ID` is present) and `WORKFLOW_TARGET_WORLD` is not already set:
+- Sets `WORKFLOW_TARGET_WORLD` to `'vercel'`
+
+During the development server phase (`phase-development-server`):
+- Sets `WORKFLOW_PUBLIC_MANIFEST` to `'1'` if not already set
 
 ## Usage
 
