@@ -99,7 +99,7 @@ export async function customFetch(
 ) {
     "use step"
 
-    const response = await fetch(url, init)
+    const response = await globalThis.fetch(url, init)
 
     // Handle client errors (4xx) - don't retry
     if (response.status >= 400 && response.status < 500) {
