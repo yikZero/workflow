@@ -18,16 +18,13 @@ Core workflow primitives including steps, context management, streaming, webhook
 npm i workflow
 ```
 
-## Workflow Functions
+## Workflow-only APIs
 
-These functions are available inside `"use workflow"` functions:
+These functions must be called inside `"use workflow"` functions:
 
 <Cards>
-    <Card href="/docs/api-reference/workflow/get-workflow-metadata" title="getWorkflowMetadata()">
-        A function that returns context about the current workflow execution.
-    </Card>
     <Card href="/docs/api-reference/workflow/sleep" title="sleep()">
-        Sleeping workflows for a specified duration. Deterministic and replay-safe.
+        Suspend a workflow for a specified duration or until a date. Deterministic and replay-safe.
     </Card>
     <Card href="/docs/api-reference/workflow/fetch" title="fetch()">
         Make HTTP requests from within a workflow. Runs as a step under the hood.
@@ -41,18 +38,28 @@ These functions are available inside `"use workflow"` functions:
     <Card href="/docs/api-reference/workflow/create-webhook" title="createWebhook()">
         Create a webhook with a randomly generated token and public HTTP endpoint.
     </Card>
+</Cards>
+
+## Workflow and Step APIs
+
+These functions can be called from either `"use workflow"` or `"use step"` functions:
+
+<Cards>
+    <Card href="/docs/api-reference/workflow/get-workflow-metadata" title="getWorkflowMetadata()">
+        Return context about the current workflow execution.
+    </Card>
     <Card href="/docs/api-reference/workflow/get-writable" title="getWritable()">
-        Access the current workflow run's default stream.
+        Access the current workflow run's stream.
     </Card>
 </Cards>
 
-## Step Functions
+## Step-only APIs
 
-These functions are available inside `"use step"` functions:
+These functions must be called inside `"use step"` functions:
 
 <Cards>
     <Card href="/docs/api-reference/workflow/get-step-metadata" title="getStepMetadata()">
-        A function that returns context about the current step execution.
+        Return context about the current step execution.
     </Card>
 </Cards>
 

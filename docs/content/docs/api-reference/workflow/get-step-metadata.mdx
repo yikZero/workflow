@@ -74,6 +74,15 @@ export default getStepMetadata;`}
 
 ### Returns
 
+Returns a `StepMetadata` object with the following fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stepName` | `string` | The name of the current step. |
+| `stepId` | `string` | Unique identifier for the current step execution. Useful as part of an idempotency key. |
+| `stepStartedAt` | `Date` | Timestamp when the current step started. |
+| `attempt` | `number` | The number of times the current step has been executed. Increases with each retry. |
+
 <TSDoc
   definition={`
 import type { StepMetadata } from "workflow";
