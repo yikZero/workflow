@@ -1,13 +1,13 @@
 ---
-title: Resilient start()
-description: Overhaul of start() to tolerate world-vercel storage unavailability when the queue is healthy.
+title: Resilient run start
+description: Overhaul run start logic to tolerate world storage unavailability, as long as the queue is healthy, and significantly speeds up run start.
 ---
 
 # Resilient `start()`
 
 ## Motivation
 
-When `world-vercel` storage (DynamoDB) is unavailable but the queue (VQS) is up,
+When `world` storage is unavailable but the queue is up,
 `start()` previously failed entirely because `world.events.create(run_created)`
 is called before `world.queue()`. This change decouples run creation from queue
 dispatch so that runs can still be accepted when storage is degraded.
