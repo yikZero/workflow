@@ -3,7 +3,7 @@ name: workflow-verify
 description: Turn a workflow blueprint into implementation-ready file lists, test matrices, integration test skeletons, and runtime verification commands. Use when the user is ready to implement and test a designed workflow. Triggers on "verify workflow", "workflow tests", "implement blueprint", or "workflow-verify".
 metadata:
   author: Vercel Inc.
-  version: '0.4'
+  version: '0.5'
 ---
 
 # workflow-verify
@@ -30,7 +30,39 @@ Always read these before producing output:
 
 1. **`skills/workflow/SKILL.md`** — the authoritative API truth source.
 2. **`lib/ai/workflow-blueprint.ts`** — the `WorkflowBlueprint` type contract.
-3. **The current workflow blueprint** — the original or a stress-patched version, either from the conversation or from `.workflow-skills/blueprints/*.json`.
+3. **`.workflow-skills/context.json`** if it exists — project context from the teach stage.
+4. **The current workflow blueprint** — the original or a stress-patched version, either from the conversation or from `.workflow-skills/blueprints/*.json`.
+5. **The `WorkflowVerificationPlan` contract** — defined in `lib/ai/workflow-verification.ts`.
+
+## Verification Artifact Contract
+
+Create `.workflow-skills/verification/<workflow-name>.json` with this exact shape:
+
+```json
+{
+  "contractVersion": "1",
+  "blueprintName": "<blueprint.name>",
+  "files": [
+    { "path": "<path>", "kind": "workflow", "purpose": "<purpose>" }
+  ],
+  "testMatrix": [
+    { "name": "<test name>", "helpers": ["start"], "verifies": ["<assertion>"] }
+  ],
+  "runtimeCommands": [
+    { "name": "<name>", "command": "<shell command>", "expects": "<expected outcome>" }
+  ],
+  "implementationNotes": ["<note>"]
+}
+```
+
+Rules:
+
+- `blueprintName` must equal `blueprint.name`.
+- `files` must include exactly one workflow file, one route file, and one test file.
+- The route file must come from `blueprint.trigger.entrypoint`.
+- The test matrix must be copied from `blueprint.tests`.
+- `implementationNotes` must carry forward `invariants`, `operatorSignals`, and `compensationPlan`.
+- If `.workflow-skills/context.json` shows `src/workflows/` in `canonicalExamples`, use `src/workflows/<name>.ts`; otherwise use `workflows/<name>.ts`.
 
 ## Output Sections
 
@@ -162,6 +194,12 @@ DEPLOYMENT_URL="http://localhost:3000" APP_NAME="nextjs-turbopack" \
 ```
 
 Include workflow-specific commands for any manual verification steps (e.g. triggering a webhook via `curl`, inspecting run state via CLI).
+
+### `## Verification Artifact`
+
+Include a fenced `json` block that exactly matches the contents of
+`.workflow-skills/verification/<workflow-name>.json`. This lets both humans and
+downstream tooling parse the plan without reading the file.
 
 ## Hard Rules
 

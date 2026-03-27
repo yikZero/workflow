@@ -102,7 +102,7 @@ If you prefer to run each stage manually, see the [Manual Loop](#manual-loop-tea
 | Teach | Workflow context | `.workflow-skills/context.json` | Created once, then reused by later runs |
 | Design | Workflow blueprint | `.workflow-skills/blueprints/<name>.json` | New `WorkflowBlueprint` JSON file |
 | Stress | Blueprint patch | `.workflow-skills/blueprints/<name>.json` | Same file, updated in place |
-| Verify | Test matrix + integration test skeleton | Assistant output | Generated for implementation; no persisted file path is promised here |
+| Verify | Verification plan + integration test skeleton | `.workflow-skills/verification/<name>.json` | Persisted machine-readable file plan, test matrix, runtime commands, and inline implementation guidance |
 
 This means the scenario table above shows the **primary persisted blueprint artifact**,
 not the full set of loop outputs.
@@ -198,6 +198,54 @@ The skill produces:
 - A complete **integration test skeleton** using `start`, `waitForHook`,
   `resumeHook`, `waitForSleep`, and `wakeUp`
 - **Runtime verification commands** you can paste into your terminal
+- A persisted **verification artifact** at `.workflow-skills/verification/<name>.json`
+
+Inspect the verification artifact:
+
+```bash
+cat .workflow-skills/verification/approval-expiry-escalation.json
+```
+
+```json
+{
+  "contractVersion": "1",
+  "blueprintName": "approval-expiry-escalation",
+  "files": [
+    {
+      "path": "workflows/approval-expiry-escalation.ts",
+      "kind": "workflow",
+      "purpose": "Workflow orchestration and step implementations"
+    },
+    {
+      "path": "app/api/purchase-orders/route.ts",
+      "kind": "route",
+      "purpose": "Entrypoint that starts or resumes the workflow"
+    },
+    {
+      "path": "workflows/approval-expiry-escalation.integration.test.ts",
+      "kind": "test",
+      "purpose": "Integration coverage for hooks, sleeps, retries, and return values"
+    }
+  ],
+  "testMatrix": [
+    {
+      "name": "manager approves within window",
+      "helpers": ["start", "waitForHook", "resumeHook"],
+      "verifies": ["PO approved by manager", "requester notified"]
+    }
+  ],
+  "runtimeCommands": [
+    {
+      "name": "focused-workflow-test",
+      "command": "pnpm vitest run workflows/approval-expiry-escalation.integration.test.ts",
+      "expects": "approval-expiry-escalation integration tests pass"
+    }
+  ],
+  "implementationNotes": [
+    "Invariant: A purchase order must receive exactly one final decision"
+  ]
+}
+```
 
 ## Inspect Generated Artifacts
 

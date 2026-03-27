@@ -134,3 +134,71 @@ curl -X POST http://localhost:3000/api/purchase-orders \
 pnpm wf runs list --workflow approval-expiry-escalation
 pnpm wf runs get <run-id>
 ```
+
+## Verification Artifact
+
+Persisted to `.workflow-skills/verification/approval-expiry-escalation.json`:
+
+```json
+{
+  "contractVersion": "1",
+  "blueprintName": "approval-expiry-escalation",
+  "files": [
+    {
+      "path": "workflows/approval-expiry-escalation.ts",
+      "kind": "workflow",
+      "purpose": "Workflow orchestration and step implementations"
+    },
+    {
+      "path": "app/api/purchase-orders/route.ts",
+      "kind": "route",
+      "purpose": "Entrypoint that starts or resumes the workflow"
+    },
+    {
+      "path": "workflows/approval-expiry-escalation.integration.test.ts",
+      "kind": "test",
+      "purpose": "Integration coverage for hooks, sleeps, retries, and return values"
+    }
+  ],
+  "testMatrix": [
+    {
+      "name": "manager approves within window",
+      "helpers": ["start", "waitForHook", "resumeHook"],
+      "verifies": ["PO approved by manager", "requester notified"]
+    },
+    {
+      "name": "manager timeout triggers director escalation and director approves",
+      "helpers": ["start", "waitForHook", "waitForSleep", "wakeUp", "resumeHook"],
+      "verifies": ["escalation triggered after 48h", "director approves PO"]
+    },
+    {
+      "name": "full timeout triggers auto-rejection",
+      "helpers": ["start", "waitForHook", "waitForSleep", "wakeUp"],
+      "verifies": ["auto-rejected after 72h total", "requester notified of rejection"]
+    }
+  ],
+  "runtimeCommands": [
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "expects": "No TypeScript errors"
+    },
+    {
+      "name": "test",
+      "command": "pnpm test",
+      "expects": "All repository tests pass"
+    },
+    {
+      "name": "focused-workflow-test",
+      "command": "pnpm vitest run workflows/approval-expiry-escalation.integration.test.ts",
+      "expects": "approval-expiry-escalation integration tests pass"
+    }
+  ],
+  "implementationNotes": [
+    "Invariant: A purchase order must receive exactly one final decision: approved, rejected, or auto-rejected",
+    "Invariant: Escalation must only trigger after the primary approval window expires",
+    "Operator signal: Log approval.requested with PO number and assigned manager",
+    "Operator signal: Log approval.escalated with PO number and director"
+  ]
+}
+```

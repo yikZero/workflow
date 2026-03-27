@@ -24,7 +24,7 @@ scenario. The full loop is:
 - `workflow-teach` → create or reuse `.workflow-skills/context.json`
 - `workflow-design` → create `.workflow-skills/blueprints/<name>.json`
 - `workflow-stress` → patch that blueprint file in place
-- `workflow-verify` → generate test matrix + integration skeleton in assistant output
+- `workflow-verify` → create `.workflow-skills/verification/<name>.json` and emit the same verification artifact inline, plus the integration test skeleton
 
 Each scenario command reads your project context, emits a blueprint, stress-tests
 it, and generates a verification matrix — without requiring you to learn the
@@ -115,7 +115,7 @@ argument-hint: "[flow or domain]"
 | `workflow-teach`   | Capture project context (interview-driven)       | 1     |
 | `workflow-design`  | Emit a machine-readable WorkflowBlueprint        | 2     |
 | `workflow-stress`  | Pressure-test blueprints for edge cases          | 3     |
-| `workflow-verify`  | Generate implementation-ready test matrices      | 4     |
+| `workflow-verify`  | Generate verification plan + implementation-ready test matrices | 4     |
 
 The four-stage loop (teach → design → stress → verify) is the primary user
 journey. `workflow-init` is a prerequisite, and `workflow` is an always-on

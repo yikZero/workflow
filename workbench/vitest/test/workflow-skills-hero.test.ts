@@ -308,6 +308,16 @@ describe('hero-loop: approval-expiry-escalation', () => {
       expect(verifyContent).toContain('approval.escalated');
       expect(verifyContent).toContain('approval.decided');
     });
+
+    it('includes Verification Artifact section [runtime-helpers]', () => {
+      expect(verifyContent).toContain('## Verification Artifact');
+    });
+
+    it('persists a verification artifact path [runtime-helpers]', () => {
+      expect(verifyContent).toContain(
+        '.workflow-skills/verification/approval-expiry-escalation.json'
+      );
+    });
   });
 
   // -----------------------------------------------------------------------

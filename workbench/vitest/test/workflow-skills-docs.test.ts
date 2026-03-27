@@ -33,9 +33,7 @@ describe('workflow skills getting-started docs', () => {
   });
 
   it('uses the blueprint naming contract instead of the scenario command name', () => {
-    expect(docs).not.toContain(
-      '.workflow-skills/blueprints/<scenario>.json'
-    );
+    expect(docs).not.toContain('.workflow-skills/blueprints/<scenario>.json');
     expect(docs).toContain('.workflow-skills/blueprints/<name>.json');
   });
 
@@ -45,6 +43,10 @@ describe('workflow skills getting-started docs', () => {
         `.workflow-skills/blueprints/${scenario.blueprintName}.json`
       );
     }
+  });
+
+  it('documents the persisted verification artifact path', () => {
+    expect(docs).toContain('.workflow-skills/verification/<name>.json');
   });
 
   it('shows both base skills and scenario skills in the install section', () => {

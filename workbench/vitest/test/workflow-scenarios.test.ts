@@ -7,6 +7,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { WORKFLOW_SCENARIOS } from '../../../lib/ai/workflow-scenarios';
 
 const ROOT = resolve(import.meta.dirname, '..', '..', '..');
 
@@ -90,7 +91,7 @@ describe('workflow scenario skills', () => {
     });
 
     it('golden contains valid blueprint', () => {
-      const golden = readGolden('workflow-webhook', 'duplicate-webhook-order');
+      const golden = readGolden('workflow-webhook', 'webhook-ingress');
       const blueprint = extractJsonFence(golden);
       expect(blueprint).not.toBeNull();
       expect(blueprint!.contractVersion).toBe('1');
@@ -111,10 +112,7 @@ describe('workflow scenario skills', () => {
     });
 
     it('golden contains compensation plan', () => {
-      const golden = readGolden(
-        'workflow-saga',
-        'partial-side-effect-compensation'
-      );
+      const golden = readGolden('workflow-saga', 'compensation-saga');
       const blueprint = extractJsonFence(golden);
       expect(blueprint).not.toBeNull();
       expect(
@@ -235,6 +233,22 @@ describe('workflow scenario skills', () => {
         for (const stage of FULL_LOOP) {
           expect(content).toContain(stage);
         }
+      }
+    });
+
+    it('every scenario golden uses registry blueprintName as the canonical name', () => {
+      for (const scenario of WORKFLOW_SCENARIOS) {
+        const goldenPath = resolve(
+          ROOT,
+          'skills',
+          scenario.name,
+          'goldens',
+          `${scenario.blueprintName}.md`
+        );
+        expect(
+          existsSync(goldenPath),
+          `missing canonical golden ${scenario.blueprintName} for ${scenario.name}`
+        ).toBe(true);
       }
     });
   });
