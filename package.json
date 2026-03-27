@@ -45,7 +45,7 @@
     "ci:publish": "pnpm build && changeset publish",
     "release:notes": "node scripts/generate-release-notes.mjs",
     "workbench:stage": "node scripts/stage-workbench-with-tarballs.mjs",
-    "test:workflow-skills:unit": "vitest run scripts/build-workflow-skills.test.mjs scripts/validate-workflow-skill-files.test.mjs workbench/vitest/test/workflow-skills-hero.test.ts workbench/vitest/test/workflow-scenarios.test.ts",
+    "test:workflow-skills:unit": "vitest run scripts/build-workflow-skills.test.mjs scripts/validate-workflow-skill-files.test.mjs workbench/vitest/test/workflow-skills-hero.test.ts workbench/vitest/test/workflow-scenarios.test.ts workbench/vitest/test/workflow-skills-docs.test.ts workbench/vitest/test/workflow-skills-docs-contract.test.ts",
     "test:workflow-skills:cli": "node scripts/validate-workflow-skill-files.mjs",
     "test:workflow-skills": "pnpm test:workflow-skills:unit && pnpm test:workflow-skills:cli",
     "build:workflow-skills": "node scripts/build-workflow-skills.mjs"

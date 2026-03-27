@@ -8,14 +8,23 @@ skill-and-build model.
 
 Start from the problem you are solving, not the underlying stages:
 
-| Command | When to use | Example prompt |
-|---------|-------------|----------------|
-| `/workflow-approval` | Human approval, expiry, or escalation | `refund approvals with escalation after 48h` |
-| `/workflow-webhook` | External ingress and duplicate delivery risk | `ingest Stripe checkout completion safely` |
-| `/workflow-saga` | Partial-success side effects and compensation | `reserve inventory, charge payment, compensate on shipping failure` |
-| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior | `wait 24h for approval, then expire` |
-| `/workflow-idempotency` | Retries and replay can duplicate effects | `make duplicate webhook delivery safe` |
-| `/workflow-observe` | Operators need progress streams and terminal signals | `stream operator progress and final status` |
+| Command | When to use | Example prompt | Emits |
+|---------|-------------|----------------|-------|
+| `/workflow-approval` | Human approval, expiry, or escalation | `refund approvals with escalation after 48h` | `.workflow-skills/blueprints/approval-expiry-escalation.json` |
+| `/workflow-webhook` | External ingress and duplicate delivery risk | `ingest Stripe checkout completion safely` | `.workflow-skills/blueprints/webhook-ingress.json` |
+| `/workflow-saga` | Partial-success side effects and compensation | `reserve inventory, charge payment, compensate on shipping failure` | `.workflow-skills/blueprints/compensation-saga.json` |
+| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior | `wait 24h for approval, then expire` | `.workflow-skills/blueprints/approval-timeout-streaming.json` |
+| `/workflow-idempotency` | Retries and replay can duplicate effects | `make duplicate webhook delivery safe` | `.workflow-skills/blueprints/duplicate-webhook-order.json` |
+| `/workflow-observe` | Operators need progress streams and terminal signals | `stream operator progress and final status` | `.workflow-skills/blueprints/operator-observability-streams.json` |
+
+Shared artifact across all scenario commands: `.workflow-skills/context.json`.
+The `Emits` column above shows the primary persisted blueprint artifact for each
+scenario. The full loop is:
+
+- `workflow-teach` → create or reuse `.workflow-skills/context.json`
+- `workflow-design` → create `.workflow-skills/blueprints/<name>.json`
+- `workflow-stress` → patch that blueprint file in place
+- `workflow-verify` → generate test matrix + integration skeleton in assistant output
 
 Each scenario command reads your project context, emits a blueprint, stress-tests
 it, and generates a verification matrix — without requiring you to learn the

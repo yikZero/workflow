@@ -95,6 +95,18 @@ If you prefer to run each stage manually, see the [Manual Loop](#manual-loop-tea
 
 </Steps>
 
+## Artifacts Produced by the Loop
+
+| Stage | Artifact | Path | Behavior |
+|-------|----------|------|----------|
+| Teach | Workflow context | `.workflow-skills/context.json` | Created once, then reused by later runs |
+| Design | Workflow blueprint | `.workflow-skills/blueprints/<name>.json` | New `WorkflowBlueprint` JSON file |
+| Stress | Blueprint patch | `.workflow-skills/blueprints/<name>.json` | Same file, updated in place |
+| Verify | Test matrix + integration test skeleton | Assistant output | Generated for implementation; no persisted file path is promised here |
+
+This means the scenario table above shows the **primary persisted blueprint artifact**,
+not the full set of loop outputs.
+
 ## Manual Loop: Teach, Design, Stress, Verify
 
 If your workflow doesn't fit a named scenario, or you want fine-grained control
@@ -241,27 +253,98 @@ cat .workflow-skills/blueprints/approval-expiry-escalation.json
     "type": "api_route",
     "entrypoint": "app/api/purchase-orders/route.ts"
   },
+  "inputs": {
+    "poNumber": "string",
+    "amount": "number",
+    "requesterId": "string"
+  },
   "steps": [
-    { "name": "validatePurchaseOrder", "runtime": "step" },
-    { "name": "notifyManager", "runtime": "step" },
-    { "name": "awaitManagerApproval", "runtime": "workflow" },
-    { "name": "notifyDirector", "runtime": "step" },
-    { "name": "awaitDirectorApproval", "runtime": "workflow" },
-    { "name": "recordDecision", "runtime": "step" },
-    { "name": "notifyRequester", "runtime": "step" }
+    {
+      "name": "validatePurchaseOrder",
+      "runtime": "step",
+      "purpose": "Validate the purchase order and reject duplicates",
+      "sideEffects": ["db.read"],
+      "idempotencyKey": "validate:po-${poNumber}",
+      "failureMode": "fatal"
+    },
+    {
+      "name": "notifyManager",
+      "runtime": "step",
+      "purpose": "Send approval request to manager",
+      "sideEffects": ["notification.send"],
+      "idempotencyKey": "notify-manager:po-${poNumber}",
+      "maxRetries": 3,
+      "failureMode": "retryable"
+    },
+    {
+      "name": "awaitManagerApproval",
+      "runtime": "workflow",
+      "purpose": "Wait for manager decision or 48h timeout",
+      "sideEffects": [],
+      "failureMode": "default"
+    },
+    {
+      "name": "notifyDirector",
+      "runtime": "step",
+      "purpose": "Escalate to director after manager timeout",
+      "sideEffects": ["notification.send"],
+      "idempotencyKey": "notify-director:po-${poNumber}",
+      "maxRetries": 3,
+      "failureMode": "retryable"
+    },
+    {
+      "name": "awaitDirectorApproval",
+      "runtime": "workflow",
+      "purpose": "Wait for director decision or 24h timeout",
+      "sideEffects": [],
+      "failureMode": "default"
+    },
+    {
+      "name": "recordDecision",
+      "runtime": "step",
+      "purpose": "Persist the final decision",
+      "sideEffects": ["db.update"],
+      "idempotencyKey": "decision:po-${poNumber}",
+      "maxRetries": 2,
+      "failureMode": "retryable"
+    }
   ],
   "suspensions": [
-    { "kind": "hook", "tokenStrategy": "deterministic" },
+    { "kind": "hook", "tokenStrategy": "deterministic", "payloadType": "ApprovalDecision" },
     { "kind": "sleep", "duration": "48h" },
-    { "kind": "hook", "tokenStrategy": "deterministic" },
+    { "kind": "hook", "tokenStrategy": "deterministic", "payloadType": "ApprovalDecision" },
     { "kind": "sleep", "duration": "24h" }
   ],
+  "streams": [],
+  "tests": [
+    {
+      "name": "manager approves within window",
+      "helpers": ["start", "waitForHook", "resumeHook"],
+      "verifies": ["PO approved by manager"]
+    },
+    {
+      "name": "full timeout triggers auto-rejection",
+      "helpers": ["start", "waitForHook", "waitForSleep", "wakeUp"],
+      "verifies": ["PO auto-rejected after 72h total"]
+    }
+  ],
+  "antiPatternsAvoided": [
+    "Node.js APIs inside \"use workflow\"",
+    "Missing idempotency for side effects",
+    "Direct stream I/O in workflow context",
+    "createWebhook() with custom token",
+    "start() called directly from workflow code",
+    "Mutating step inputs without returning"
+  ],
   "invariants": [
-    "A purchase order must receive exactly one final decision"
+    "A purchase order must receive exactly one final decision",
+    "Escalation must only trigger after the primary approval window expires"
   ],
   "compensationPlan": [],
   "operatorSignals": [
-    "Log approval.requested with PO number and assigned manager"
+    "Log approval.requested with PO number and assigned manager",
+    "Log approval.escalated with PO number and director",
+    "Log approval.decided with final status and decision maker"
   ]
 }
 ```
@@ -285,6 +368,33 @@ design with the skill loop. It exercises the hardest patterns in a single flow:
 
 Use the prompt from the design step above to walk through the full loop with
 this scenario.
+
+## Inspect Build Output
+
+The workflow-skills builder emits structured JSON logs on stderr and a JSON
+manifest on stdout. Redirect them to inspect build state programmatically:
+
+```bash
+pnpm build:workflow-skills > /tmp/workflow-skills-manifest.json 2> /tmp/workflow-skills-build.log
+
+echo 'manifest summary'
+cat /tmp/workflow-skills-manifest.json | jq '{providers, totalOutputs}'
+
+echo 'first 3 structured log events'
+head -n 3 /tmp/workflow-skills-build.log | jq
+```
+
+Expected output shape:
+
+```json
+{ "providers": ["claude-code", "cursor"], "totalOutputs": 24 }
+```
+
+```
+{"event":"start","ts":"2026-03-27T16:41:23.035Z","mode":"build"}
+{"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":12}
+{"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":24}
+```
 
 ## Next Steps
 
