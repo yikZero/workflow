@@ -1,55 +1,76 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
 import {
-  checks,
-  goldenChecks,
-  stressGoldenChecks,
   allChecks,
+  getCheckManifest,
+  getCheckGroupForRuleId,
 } from './lib/workflow-skill-checks.mjs';
 
-// Emit machine-readable manifest counts
-const manifest = {
-  checks: checks.length,
-  goldenChecks: goldenChecks.length,
-  stressGoldenChecks: stressGoldenChecks.length,
-  allChecks: allChecks.length,
-};
-console.error(JSON.stringify({ event: 'manifest_loaded', ...manifest }));
-
-// Read all files into a map
-const filesByPath = {};
-for (const check of allChecks) {
-  if (existsSync(check.file)) {
-    filesByPath[check.file] = readFileSync(check.file, 'utf8');
-  }
+function log(event, data = {}) {
+  process.stderr.write(
+    `${JSON.stringify({ event, ts: new Date().toISOString(), ...data })}\n`
+  );
 }
 
+const manifest = {
+  ...getCheckManifest(),
+  allChecks: allChecks.length,
+};
+log('manifest_loaded', manifest);
+
+const filesByPath = {};
+let loadedFiles = 0;
+for (const check of allChecks) {
+  if (filesByPath[check.file]) continue;
+  if (!existsSync(check.file)) continue;
+  filesByPath[check.file] = readFileSync(check.file, 'utf8');
+  loadedFiles += 1;
+}
+log('files_loaded', { count: loadedFiles });
+
 const result = validateWorkflowSkillText(allChecks, filesByPath);
+
+for (const item of result.results) {
+  log('check_evaluated', {
+    group: getCheckGroupForRuleId(item.ruleId),
+    ruleId: item.ruleId,
+    file: item.file,
+    status: item.status,
+    reason: item.reason ?? null,
+  });
+}
 
 const summary = result.results.reduce(
   (acc, item) => {
     acc[item.status] = (acc[item.status] ?? 0) + 1;
-    if (item.outOfOrder) acc.outOfOrder = (acc.outOfOrder ?? 0) + 1;
+    if (item.outOfOrder) {
+      acc.outOfOrder = (acc.outOfOrder ?? 0) + 1;
+    }
+    if (item.reason) {
+      acc.reasons[item.reason] = (acc.reasons[item.reason] ?? 0) + 1;
+    }
     return acc;
   },
-  { pass: 0, fail: 0, error: 0, outOfOrder: 0 }
+  { pass: 0, fail: 0, error: 0, outOfOrder: 0, reasons: {} },
 );
 
+const output = {
+  ...result,
+  summary,
+  manifest,
+};
+
 if (!result.ok) {
-  const errors = result.results.filter((r) => r.status !== 'pass');
-  console.error(
-    JSON.stringify(
-      {
-        ok: false,
-        checked: result.checked,
-        summary,
-        errors,
-      },
-      null,
-      2
-    )
-  );
+  log('validation_failed', {
+    checked: result.checked,
+    summary,
+  });
+  console.error(JSON.stringify(output, null, 2));
   process.exit(1);
 }
 
-console.log(JSON.stringify({ ...result, summary, manifest }, null, 2));
+log('validation_passed', {
+  checked: result.checked,
+  summary,
+});
+console.log(JSON.stringify(output, null, 2));

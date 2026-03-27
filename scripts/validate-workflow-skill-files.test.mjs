@@ -7,6 +7,7 @@ import {
   heroGoldenChecks,
   stressGoldenChecks,
   teachGoldenChecks,
+  getCheckManifest,
 } from './lib/workflow-skill-checks.mjs';
 
 function runSingleCheck(check, content) {
@@ -2114,5 +2115,20 @@ Generate a WorkflowBlueprint with contractVersion for backward compatibility.
 
     expect(result.ok).toBe(true);
     expect(result.results[0].ruleId).toBe('downstream.design.contractVersion');
+  });
+
+  it('exposes every validator rule group in the manifest helper', () => {
+    const manifest = getCheckManifest();
+
+    expect(manifest).toHaveProperty('checks');
+    expect(manifest).toHaveProperty('goldenChecks');
+    expect(manifest).toHaveProperty('stressGoldenChecks');
+    expect(manifest).toHaveProperty('teachGoldenChecks');
+    expect(manifest).toHaveProperty('heroGoldenChecks');
+    expect(manifest).toHaveProperty('downstreamChecks');
+
+    expect(
+      Object.values(manifest).reduce((sum, count) => sum + count, 0)
+    ).toBe(allChecks.length);
   });
 });

@@ -575,11 +575,31 @@ export const downstreamChecks = [
   },
 ];
 
-export const allChecks = [
-  ...checks,
-  ...goldenChecks,
-  ...stressGoldenChecks,
-  ...teachGoldenChecks,
-  ...heroGoldenChecks,
-  ...downstreamChecks,
-];
+export const checkGroups = {
+  checks,
+  goldenChecks,
+  stressGoldenChecks,
+  teachGoldenChecks,
+  heroGoldenChecks,
+  downstreamChecks,
+};
+
+export function getCheckManifest() {
+  return Object.fromEntries(
+    Object.entries(checkGroups).map(([groupName, groupChecks]) => [
+      groupName,
+      groupChecks.length,
+    ])
+  );
+}
+
+export function getCheckGroupForRuleId(ruleId) {
+  for (const [groupName, groupChecks] of Object.entries(checkGroups)) {
+    if (groupChecks.some((check) => check.ruleId === ruleId)) {
+      return groupName;
+    }
+  }
+  return 'unknown';
+}
+
+export const allChecks = Object.values(checkGroups).flat();
