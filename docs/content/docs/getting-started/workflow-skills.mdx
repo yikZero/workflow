@@ -25,14 +25,14 @@ handles the full design loop for you.
 
 Pick the command that matches the workflow problem you are solving:
 
-| Command | When to use | Example |
-|---------|-------------|---------|
-| `/workflow-approval` | Human approval, expiry, or escalation | `refund approvals with escalation after 48h` |
-| `/workflow-webhook` | External ingress and duplicate delivery risk | `ingest Stripe checkout completion safely` |
-| `/workflow-saga` | Partial-success side effects and compensation | `reserve inventory, charge payment, compensate on shipping failure` |
-| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior | `wait 24h for approval, then expire` |
-| `/workflow-idempotency` | Retries and replay can duplicate effects | `make duplicate webhook delivery safe` |
-| `/workflow-observe` | Operators need progress streams and terminal signals | `stream operator progress and final status` |
+| Command | When to use | Example | Emits |
+|---------|-------------|---------|-------|
+| `/workflow-approval` | Human approval, expiry, or escalation | `refund approvals with escalation after 48h` | `.workflow-skills/blueprints/approval-expiry-escalation.json` |
+| `/workflow-webhook` | External ingress and duplicate delivery risk | `ingest Stripe checkout completion safely` | `.workflow-skills/blueprints/webhook-ingress.json` |
+| `/workflow-saga` | Partial-success side effects and compensation | `reserve inventory, charge payment, compensate on shipping failure` | `.workflow-skills/blueprints/compensation-saga.json` |
+| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior | `wait 24h for approval, then expire` | `.workflow-skills/blueprints/approval-timeout-streaming.json` |
+| `/workflow-idempotency` | Retries and replay can duplicate effects | `make duplicate webhook delivery safe` | `.workflow-skills/blueprints/duplicate-webhook-order.json` |
+| `/workflow-observe` | Operators need progress streams and terminal signals | `stream operator progress and final status` | `.workflow-skills/blueprints/operator-observability-streams.json` |
 
 Each command accepts an optional argument describing your specific flow:
 
@@ -85,7 +85,7 @@ Once installed, run the scenario command that matches your problem:
 The command will:
 
 1. **Teach** — capture your project context (or reuse `.workflow-skills/context.json` if it already exists)
-2. **Design** — produce a `WorkflowBlueprint` in `.workflow-skills/blueprints/<scenario>.json`
+2. **Design** — produce a `WorkflowBlueprint` in `.workflow-skills/blueprints/<name>.json`
 3. **Stress** — pressure-test the blueprint against a 12-point edge-case checklist
 4. **Verify** — generate a test matrix and integration test skeleton
 
