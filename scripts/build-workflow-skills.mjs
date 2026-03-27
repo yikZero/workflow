@@ -55,6 +55,14 @@ function log(event, data = {}) {
 
 const REQUIRED_FIELDS = ['name', 'description'];
 const REQUIRED_META = ['author', 'version'];
+const SCENARIO_SKILLS = new Set([
+  'workflow-approval',
+  'workflow-webhook',
+  'workflow-saga',
+  'workflow-timeout',
+  'workflow-idempotency',
+  'workflow-observe',
+]);
 
 function parseFrontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -63,7 +71,7 @@ function parseFrontmatter(text) {
   const fm = {};
   let currentKey = null;
   for (const line of raw.split('\n')) {
-    const topLevel = line.match(/^(\w[\w.-]*):\s*(.*)/);
+    const topLevel = line.match(/^([\w][\w.\-]*):\s*(.*)/);
     if (topLevel) {
       const [, key, val] = topLevel;
       if (key === 'metadata') {
@@ -75,7 +83,7 @@ function parseFrontmatter(text) {
       }
       continue;
     }
-    const nested = line.match(/^\s{2}(\w[\w.-]*):\s*(.*)/);
+    const nested = line.match(/^\s{2}([\w][\w.\-]*):\s*(.*)/);
     if (nested && currentKey === 'metadata') {
       fm.metadata[nested[1]] = nested[2].replace(/^['"]|['"]$/g, '').trim();
     }
@@ -99,6 +107,23 @@ function validateFrontmatter(fm, skillDir) {
       if (!fm.metadata[f]) errors.push(`${skillDir}: missing metadata.${f}`);
     }
   }
+
+  // Scenario skills must have user-invocable and argument-hint
+  if (SCENARIO_SKILLS.has(skillDir)) {
+    if (fm['user-invocable'] !== 'true') {
+      errors.push(`${skillDir}: scenario skill must set "user-invocable: true"`);
+    }
+    if (!fm['argument-hint']) {
+      errors.push(`${skillDir}: scenario skill must provide "argument-hint"`);
+    }
+    log('scenario_validation', {
+      skill: skillDir,
+      'user-invocable': fm['user-invocable'] ?? null,
+      'argument-hint': fm['argument-hint'] ?? null,
+      valid: errors.length === 0,
+    });
+  }
+
   return errors;
 }
 

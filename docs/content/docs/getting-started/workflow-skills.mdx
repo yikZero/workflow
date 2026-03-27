@@ -1,6 +1,6 @@
 ---
 title: Workflow Skills
-description: Install the workflow skills bundle and use the teach-design-stress-verify loop to design durable workflows with AI assistance.
+description: Use scenario commands to design durable workflows with AI assistance, or walk through the teach-design-stress-verify loop manually.
 type: guide
 summary: Use AI skills to design, stress-test, and verify workflows.
 prerequisites:
@@ -11,16 +11,40 @@ related:
   - /docs/api-reference/workflow-vitest
 ---
 
-Workflow skills are an AI-assisted design loop that guides you through creating
-durable workflows. The loop has four stages: **teach** your project context,
-**design** a blueprint, **stress**-test it for edge cases, and **verify** it
-with a generated test matrix.
+Workflow skills are AI-assisted commands that guide you through creating durable
+workflows. Start from the problem you need to solve — each scenario command
+handles the full design loop for you.
 
 <Callout>
   Workflow skills require an AI coding assistant that supports user-invocable
   skills, such as [Claude Code](https://claude.ai/code) or
   [Cursor](https://cursor.com).
 </Callout>
+
+## Choose Your Scenario
+
+Pick the command that matches the workflow problem you are solving:
+
+| Command | When to use | Example |
+|---------|-------------|---------|
+| `/workflow-approval` | Human approval, expiry, or escalation | `refund approvals with escalation after 48h` |
+| `/workflow-webhook` | External ingress and duplicate delivery risk | `ingest Stripe checkout completion safely` |
+| `/workflow-saga` | Partial-success side effects and compensation | `reserve inventory, charge payment, compensate on shipping failure` |
+| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior | `wait 24h for approval, then expire` |
+| `/workflow-idempotency` | Retries and replay can duplicate effects | `make duplicate webhook delivery safe` |
+| `/workflow-observe` | Operators need progress streams and terminal signals | `stream operator progress and final status` |
+
+Each command accepts an optional argument describing your specific flow:
+
+```bash
+/workflow-approval refund approvals with escalation after 48h
+/workflow-webhook ingest Stripe checkout completion safely
+/workflow-saga reserve inventory, charge payment, compensate on shipping failure
+```
+
+Behind the scenes, every scenario command runs the full **teach → design →
+stress → verify** loop automatically. You don't need to learn those stages
+to get started — just pick a scenario and describe your flow.
 
 <Steps>
 
@@ -41,17 +65,45 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see six skill directories: `workflow-init`,
-`workflow`, `workflow-teach`, `workflow-design`, `workflow-stress`, and
-`workflow-verify`.
+After copying, you should see skill directories for the core loop
+(`workflow-teach`, `workflow-design`, `workflow-stress`, `workflow-verify`) and
+the scenario commands (`workflow-approval`, `workflow-webhook`, `workflow-saga`,
+`workflow-timeout`, `workflow-idempotency`, `workflow-observe`), plus
+`workflow-init` and the `workflow` reference.
 
 </Step>
 
 <Step>
-## Teach Your Project Context
+## Run a Scenario Command
 
-Run the `/workflow-teach` command in your AI assistant. This starts an
-interactive interview that captures your project's domain knowledge:
+Once installed, run the scenario command that matches your problem:
+
+```bash
+/workflow-approval refund approvals with escalation after 48h
+```
+
+The command will:
+
+1. **Teach** — capture your project context (or reuse `.workflow-skills/context.json` if it already exists)
+2. **Design** — produce a `WorkflowBlueprint` in `.workflow-skills/blueprints/<scenario>.json`
+3. **Stress** — pressure-test the blueprint against a 12-point edge-case checklist
+4. **Verify** — generate a test matrix and integration test skeleton
+
+If you prefer to run each stage manually, see the [Manual Loop](#manual-loop-teach-design-stress-verify) section below.
+
+</Step>
+
+</Steps>
+
+## Manual Loop: Teach, Design, Stress, Verify
+
+If your workflow doesn't fit a named scenario, or you want fine-grained control
+over each stage, run the four commands individually.
+
+### 1. Teach Your Project Context
+
+Run `/workflow-teach` to start an interactive interview that captures your
+project's domain knowledge:
 
 ```bash
 /workflow-teach
@@ -69,19 +121,15 @@ The skill scans your repository and asks about:
 The output is saved to `.workflow-skills/context.json`. This file is
 git-ignored and stays local to your checkout.
 
-</Step>
+### 2. Design a Blueprint
 
-<Step>
-## Design a Blueprint
-
-Run `/workflow-design` and describe the workflow you want to build. The skill
-reads your project context and produces a machine-readable blueprint.
+Run `/workflow-design` and describe the workflow you want to build:
 
 ```bash
 /workflow-design
 ```
 
-For example, you might describe:
+For example:
 
 > Design a workflow that routes purchase orders for manager approval, escalates
 > to a director after 48 hours, and auto-rejects after a further 24 hours.
@@ -97,10 +145,7 @@ The skill emits a `WorkflowBlueprint` JSON file to
 - **Policy arrays** — `invariants`, `compensationPlan`, and `operatorSignals`
   that the workflow must uphold
 
-</Step>
-
-<Step>
-## Stress-Test the Blueprint
+### 3. Stress-Test the Blueprint
 
 Run `/workflow-stress` to pressure-test your blueprint against a 12-point
 checklist of common workflow pitfalls:
@@ -124,16 +169,11 @@ The stress skill checks for:
 11. Observability coverage
 12. Integration test coverage
 
-Any issues are patched directly into the blueprint file. The original is
-overwritten in place.
+Any issues are patched directly into the blueprint file.
 
-</Step>
+### 4. Verify with Generated Tests
 
-<Step>
-## Verify with Generated Tests
-
-Run `/workflow-verify` to generate implementation-ready verification artifacts
-from the final blueprint:
+Run `/workflow-verify` to generate implementation-ready verification artifacts:
 
 ```bash
 /workflow-verify
@@ -147,13 +187,10 @@ The skill produces:
   `resumeHook`, `waitForSleep`, and `wakeUp`
 - **Runtime verification commands** you can paste into your terminal
 
-</Step>
-
-</Steps>
-
 ## Inspect Generated Artifacts
 
-After running the full loop, your project contains two artifacts:
+After running a scenario command or the full manual loop, your project contains
+two artifacts:
 
 ### Project context
 
