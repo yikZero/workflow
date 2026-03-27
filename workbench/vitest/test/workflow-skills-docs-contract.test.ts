@@ -200,6 +200,80 @@ describe('workflow skills docs contract surfaces', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Legacy artifact ownership regression guards
+  // -----------------------------------------------------------------------
+  describe('legacy artifact ownership regression', () => {
+    it('getting-started doc no longer uses the legacy artifact ownership layout', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      // The legacy table used "Written By" as a column header
+      expect(docs).not.toContain('| Artifact | Path | Written By |');
+      // Legacy docs described JSON paths as individual sections owned by skills
+      expect(docs).not.toContain('### `.workflow-skills/context.json`');
+      expect(docs).not.toContain('### `.workflow-skills/blueprints/<name>.json`');
+      expect(docs).not.toContain('### `.workflow-skills/verification/<name>.json`');
+    });
+
+    it('getting-started doc explicitly says host-managed JSON paths are not referenced by skill text', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain(
+        'The skill text never references these JSON paths directly',
+      );
+      expect(docs).toContain(
+        'managed by the host runtime or persistence layer',
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Integration test path convention
+  // -----------------------------------------------------------------------
+  describe('integration test path convention', () => {
+    it('workflow-build uses one integration-test path convention', () => {
+      const skill = read('skills/workflow-build/SKILL.md');
+      expect(skill).toContain('workflows/<name>.integration.test.ts');
+      expect(skill).not.toContain('__tests__/<name>.test.ts');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Verification schema: testMatrix field
+  // -----------------------------------------------------------------------
+  describe('verification schema completeness', () => {
+    it('getting-started verification example includes a testMatrix field', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('"testMatrix"');
+    });
+
+    it('workflow-build verification artifact includes a testMatrix field', () => {
+      const skill = read('skills/workflow-build/SKILL.md');
+      expect(skill).toContain('"testMatrix"');
+    });
+
+    it('workflow-build Phase 4 lists optional route file', () => {
+      const skill = read('skills/workflow-build/SKILL.md');
+      expect(skill).toContain('app/api/<name>/route.ts');
+      expect(skill).toContain('Optional route file');
+    });
+
+    it('files-array sentinel sentence appears in both skill and docs', () => {
+      const skill = read('skills/workflow-build/SKILL.md');
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      const sentinel =
+        'The `files` array must list only files that are actually produced.';
+      expect(skill).toContain(sentinel);
+      expect(docs).toContain(sentinel);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Verification summary contract (workflow-build)
   // -----------------------------------------------------------------------
   describe('verification summary contract', () => {

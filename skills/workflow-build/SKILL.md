@@ -3,7 +3,7 @@ name: workflow-build
 description: Build durable workflows interactively, guided by project context from .workflow.md. Reads the API reference, applies a stress checklist, and produces TypeScript code + tests. Use after workflow-teach. Triggers on "build workflow", "workflow-build", "implement workflow", or "create workflow".
 metadata:
   author: Vercel Inc.
-  version: '0.2'
+  version: '0.4'
 ---
 
 # workflow-build
@@ -65,14 +65,15 @@ Present the failure model to the user and wait for confirmation.
 
 ### Phase 4 — Write code + tests
 
-Produce two files:
+Produce these files:
 
 1. **Workflow file** (`workflows/<name>.ts`) — contains `"use workflow"` orchestrator and `"use step"` functions following the confirmed step boundaries, failure modes, and idempotency strategies.
-2. **Test file** (`__tests__/<name>.test.ts`) — integration tests using `vitest` and `@workflow/vitest`. Must cover:
+2. **Test file** (`workflows/<name>.integration.test.ts`) — integration tests using `vitest` and `@workflow/vitest`. Must cover:
    - Happy path
    - Each suspension point (hook → `waitForHook`/`resumeHook`, webhook → `waitForHook`/`resumeWebhook`, sleep → `waitForSleep`/`wakeUp`)
    - At least one failure path per error classification
    - Compensation paths if applicable
+3. **Optional route file** (`app/api/<name>/route.ts`) — include this only when the workflow needs an HTTP start surface, a streaming endpoint, or an external resume surface.
 
 Use the test helpers and patterns documented in `skills/workflow/SKILL.md`.
 
@@ -86,7 +87,9 @@ After presenting the final code and self-review, emit a **Verification Artifact*
 
 #### Verification Artifact
 
-Present the full verification plan as a fenced JSON block:
+Present the full verification plan as a fenced JSON block.
+
+The `files` array must list only files that are actually produced. Add the `route` entry only when a route file is generated.
 
 ```json
 {
@@ -94,8 +97,12 @@ Present the full verification plan as a fenced JSON block:
   "blueprintName": "<workflow-name>",
   "files": [
     { "kind": "workflow", "path": "workflows/<name>.ts" },
-    { "kind": "route", "path": "app/api/<name>/route.ts" },
     { "kind": "test", "path": "workflows/<name>.integration.test.ts" }
+  ],
+  "testMatrix": [
+    { "name": "happy-path", "helpers": [], "expects": "Workflow completes successfully" },
+    { "name": "hook-suspension", "helpers": ["waitForHook", "resumeHook"], "expects": "Workflow resumes from hook" },
+    { "name": "sleep-suspension", "helpers": ["waitForSleep", "wakeUp"], "expects": "Workflow resumes after sleep" }
   ],
   "runtimeCommands": [
     { "name": "typecheck", "command": "pnpm typecheck", "expects": "No TypeScript errors" },
@@ -217,5 +224,5 @@ Flag these explicitly when they apply to the workflow being built:
 1. **Phase 1** proposes: webhook ingress step, approval hook with `approval:${refundId}` token, refund step, notification step, stream progress step — all side effects in `"use step"` functions.
 2. **Phase 2** flags: idempotency needed on refund step, compensation plan for refund-then-notification-failure, stream I/O must happen in a step.
 3. **Phase 3** decides: `RetryableError` on refund with `maxRetries: 3`, `FatalError` if already processed, idempotency key from `refundId`.
-4. **Phase 4** writes: `workflows/refund-approval.ts` with `"use workflow"` orchestrator and `"use step"` functions, plus `__tests__/refund-approval.test.ts` using `resumeWebhook()`, `waitForHook()`/`resumeHook()`, and `run.returnValue` assertions.
+4. **Phase 4** writes: `workflows/refund-approval.ts` with `"use workflow"` orchestrator and `"use step"` functions, plus `workflows/refund-approval.integration.test.ts` using `resumeWebhook()`, `waitForHook()`/`resumeHook()`, and `run.returnValue` assertions.
 5. **Phase 5** self-review confirms: no stream I/O in workflow context, all tokens deterministic, compensation documented, test coverage complete.

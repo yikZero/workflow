@@ -22,7 +22,7 @@ Visit [https://useworkflow.dev](https://useworkflow.dev) to view the full docume
 
 ### Workflow Skills (AI-Assisted Design)
 
-Workflow skills are an AI-driven design loop that helps you create durable workflows. Install the skills bundle into your AI coding assistant, then run the four-stage loop: **teach** your project context, **design** a blueprint, **stress**-test it for edge cases, and **verify** it with generated tests. See the [Workflow Skills quick-start](https://useworkflow.dev/docs/getting-started/workflow-skills) for details.
+Workflow skills are an AI-driven design loop that helps you create durable workflows. Install the skills bundle into your AI coding assistant, then run the two-stage loop: **teach** your project context, then **build** the workflow interactively with guided stress-testing and verification. See the [Workflow Skills quick-start](https://useworkflow.dev/docs/getting-started/workflow-skills) for details.
 
 ## Community
 

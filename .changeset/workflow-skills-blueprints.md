@@ -1,4 +1,6 @@
 ---
+'workflow': patch
+'@workflow/core': patch
 ---
 
-Add workflow-teach and workflow-build skills with golden scenarios and validator
+Align workflow skills docs and README with two-stage teach-then-build contract

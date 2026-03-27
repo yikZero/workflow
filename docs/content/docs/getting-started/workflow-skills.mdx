@@ -142,6 +142,8 @@ artifacts.
 - **`blueprints/<name>.json`** — workflow blueprint with step boundaries, suspension points, and trap analysis
 - **`verification/<name>.json`** — verification plan with files, test matrix, runtime commands, and implementation notes
 
+The `files` array must list only files that are actually produced. Add the `route` entry only when a route file is generated.
+
 Example verification plan:
 
 ```json
@@ -150,8 +152,24 @@ Example verification plan:
   "blueprintName": "approval-expiry-escalation",
   "files": [
     { "kind": "workflow", "path": "workflows/approval-expiry-escalation.ts" },
-    { "kind": "route", "path": "app/api/approval-expiry-escalation/route.ts" },
     { "kind": "test", "path": "workflows/approval-expiry-escalation.integration.test.ts" }
+  ],
+  "testMatrix": [
+    {
+      "name": "happy-path",
+      "helpers": [],
+      "expects": "Workflow completes successfully"
+    },
+    {
+      "name": "hook-suspension",
+      "helpers": ["waitForHook", "resumeHook"],
+      "expects": "Workflow resumes from hook"
+    },
+    {
+      "name": "sleep-suspension",
+      "helpers": ["waitForSleep", "wakeUp"],
+      "expects": "Workflow resumes after sleep"
+    }
   ],
   "runtimeCommands": [
     {
