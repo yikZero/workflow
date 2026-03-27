@@ -123,4 +123,350 @@ Stream writes must be inside \`"use step"\` functions
     expect(r.missing).toContain('hook.token');
     expect(r.forbidden).toContain('resumeWebhook(run, {');
   });
+
+  // --- Skill sequencing validation tests ---
+
+  it('returns ok:true when workflow-design includes stress-before-verify sequencing', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-design.sequencing',
+        file: 'skills/workflow-design/SKILL.md',
+        mustInclude: [
+          'workflow-stress',
+          'workflow-verify',
+          'hooks, webhooks, sleep, streams, retries, or child workflows',
+        ],
+      },
+    ];
+
+    const content = `
+After generating a blueprint, run workflow-stress before workflow-verify when the design includes hooks, webhooks, sleep, streams, retries, or child workflows.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns ok:false when workflow-design drops stress-before-verify sequencing', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-design.sequencing',
+        file: 'skills/workflow-design/SKILL.md',
+        mustInclude: [
+          'workflow-stress',
+          'workflow-verify',
+          'hooks, webhooks, sleep, streams, retries, or child workflows',
+        ],
+      },
+    ];
+
+    const content = `
+After generating a blueprint, run workflow-verify.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('workflow-stress');
+  });
+
+  it('returns ok:true when workflow-verify accepts original or patched blueprint', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-verify.sequencing',
+        file: 'skills/workflow-verify/SKILL.md',
+        mustInclude: ['original or a stress-patched version'],
+      },
+    ];
+
+    const content = `
+The current workflow blueprint — the original or a stress-patched version, either from the conversation or from files.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-verify/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-verify lacks patched blueprint acceptance', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-verify.sequencing',
+        file: 'skills/workflow-verify/SKILL.md',
+        mustInclude: ['original or a stress-patched version'],
+      },
+    ];
+
+    const content = `
+The current workflow blueprint from the conversation.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-verify/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('original or a stress-patched version');
+  });
+
+  it('returns ok:true when workflow-teach routes externally-driven to design then stress', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-teach.sequencing',
+        file: 'skills/workflow-teach/SKILL.md',
+        mustInclude: [
+          'workflow-design',
+          'workflow-stress',
+          'externally-driven workflows',
+        ],
+      },
+    ];
+
+    const content = `
+For externally-driven workflows (webhooks, hooks, sleep, child workflows), recommend workflow-design followed immediately by workflow-stress.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-teach/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-teach drops stress from externally-driven routing', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-teach.sequencing',
+        file: 'skills/workflow-teach/SKILL.md',
+        mustInclude: [
+          'workflow-design',
+          'workflow-stress',
+          'externally-driven workflows',
+        ],
+      },
+    ];
+
+    const content = `
+For externally-driven workflows, recommend workflow-design.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-teach/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('workflow-stress');
+  });
+
+  // --- Stress golden validation tests ---
+
+  it('returns ok:true for valid compensation-saga golden', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        mustInclude: [
+          'compensation',
+          'idempotency',
+          'Rollback',
+          'Retry semantics',
+          'Integration test coverage',
+          'refundPayment',
+        ],
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Compensation Saga
+compensation idempotency Rollback refundPayment
+Retry semantics
+Integration test coverage
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns ok:false when compensation-saga golden drops required safeguard text', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        mustInclude: [
+          'compensation',
+          'idempotency',
+          'Rollback',
+          'Retry semantics',
+          'Integration test coverage',
+          'refundPayment',
+        ],
+      },
+    ];
+
+    // Missing 'refundPayment' and 'Rollback'
+    const content = `
+# Golden Scenario: Compensation Saga
+compensation idempotency
+Retry semantics
+Integration test coverage
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].missing).toContain('Rollback');
+    expect(result.results[0].missing).toContain('refundPayment');
+  });
+
+  it('returns ok:true for valid approval-timeout-streaming golden', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.approval-timeout-streaming',
+        file: 'skills/workflow-stress/goldens/approval-timeout-streaming.md',
+        mustInclude: [
+          'getWritable()',
+          'stream',
+          'waitForSleep',
+          'wakeUp',
+          'Determinism boundary',
+          'Stream I/O placement',
+          'getWritable()` may be called in workflow context',
+        ],
+        mustNotInclude: ['`getWritable()` must be in a step'],
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Approval Timeout with Streaming
+getWritable() stream waitForSleep wakeUp
+Determinism boundary
+Stream I/O placement
+getWritable()\` may be called in workflow context
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/approval-timeout-streaming.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns ok:false when approval-timeout-streaming golden contains forbidden stream wording', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.approval-timeout-streaming',
+        file: 'skills/workflow-stress/goldens/approval-timeout-streaming.md',
+        mustInclude: ['getWritable()', 'stream'],
+        mustNotInclude: ['`getWritable()` must be in a step'],
+      },
+    ];
+
+    const content = `
+getWritable() stream
+\`getWritable()\` must be in a step
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/approval-timeout-streaming.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].forbidden).toContain('`getWritable()` must be in a step');
+  });
+
+  it('returns ok:false for missing stress golden file', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.rate-limit-retry',
+        file: 'skills/workflow-stress/goldens/rate-limit-retry.md',
+        mustInclude: ['RetryableError', '429'],
+      },
+    ];
+
+    const result = validateWorkflowSkillText(checks, {});
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('error');
+    expect(result.results[0].error).toBe('file_not_found');
+  });
+
+  it('returns ok:true for valid workflow-stress SKILL.md', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-stress',
+        file: 'skills/workflow-stress/SKILL.md',
+        mustInclude: [
+          'determinism boundary',
+          'step granularity',
+          'serialization issues',
+          'idempotency keys',
+          'Blueprint Patch',
+          'getWritable()` is called in workflow context',
+          'seeded workflow-context APIs',
+        ],
+        mustNotInclude: [
+          'Is `getWritable()` called from workflow context? (It must be in a step.)',
+          'access `Date.now()`, `Math.random()`',
+          'Are all non-deterministic operations isolated in `"use step"` functions?',
+        ],
+      },
+    ];
+
+    const content = `
+determinism boundary step granularity serialization issues
+idempotency keys Blueprint Patch
+getWritable()\` is called in workflow context
+seeded workflow-context APIs
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns ok:false when workflow-stress SKILL.md contains forbidden anti-patterns', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-stress',
+        file: 'skills/workflow-stress/SKILL.md',
+        mustInclude: ['determinism boundary'],
+        mustNotInclude: [
+          'Are all non-deterministic operations isolated in `"use step"` functions?',
+        ],
+      },
+    ];
+
+    const content = `
+determinism boundary
+Are all non-deterministic operations isolated in \`"use step"\` functions?
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].forbidden).toContain(
+      'Are all non-deterministic operations isolated in `"use step"` functions?'
+    );
+  });
 });

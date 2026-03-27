@@ -3,7 +3,7 @@ name: workflow-verify
 description: Turn a workflow blueprint into implementation-ready file lists, test matrices, integration test skeletons, and runtime verification commands. Use when the user is ready to implement and test a designed workflow. Triggers on "verify workflow", "workflow tests", "implement blueprint", or "workflow-verify".
 metadata:
   author: Vercel Inc.
-  version: '0.1'
+  version: '0.2'
 ---
 
 # workflow-verify
@@ -16,7 +16,7 @@ Always read these before producing output:
 
 1. **`skills/workflow/SKILL.md`** — the authoritative API truth source.
 2. **`lib/ai/workflow-blueprint.ts`** — the `WorkflowBlueprint` type contract.
-3. **The current workflow blueprint** — either from the conversation or from `.workflow-skills/blueprints/*.json`.
+3. **The current workflow blueprint** — the original or a stress-patched version, either from the conversation or from `.workflow-skills/blueprints/*.json`.
 
 ## Output Sections
 

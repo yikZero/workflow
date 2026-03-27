@@ -21,6 +21,15 @@ const checks = [
     ],
   },
   {
+    ruleId: 'skill.workflow-teach.sequencing',
+    file: 'skills/workflow-teach/SKILL.md',
+    mustInclude: [
+      'workflow-design',
+      'workflow-stress',
+      'externally-driven workflows',
+    ],
+  },
+  {
     ruleId: 'skill.workflow-design',
     file: 'skills/workflow-design/SKILL.md',
     mustInclude: [
@@ -37,6 +46,15 @@ const checks = [
     ],
     mustNotInclude: [
       '`getWritable()` and any stream consumption must be inside `"use step"`',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-design.sequencing',
+    file: 'skills/workflow-design/SKILL.md',
+    mustInclude: [
+      'workflow-stress',
+      'workflow-verify',
+      'hooks, webhooks, sleep, streams, retries, or child workflows',
     ],
   },
   {
@@ -71,6 +89,13 @@ const checks = [
       'JSON.stringify(',
     ],
     mustNotInclude: ["resumeWebhook('webhook-token', {", 'status: 200,'],
+  },
+  {
+    ruleId: 'skill.workflow-verify.sequencing',
+    file: 'skills/workflow-verify/SKILL.md',
+    mustInclude: [
+      'original or a stress-patched version',
+    ],
   },
 ];
 
@@ -128,7 +153,74 @@ const goldenChecks = [
   },
 ];
 
-const allChecks = [...checks, ...goldenChecks];
+const stressGoldenChecks = [
+  {
+    ruleId: 'golden.stress.compensation-saga',
+    file: 'skills/workflow-stress/goldens/compensation-saga.md',
+    mustInclude: [
+      'compensation',
+      'idempotency',
+      'Rollback',
+      'Retry semantics',
+      'Integration test coverage',
+      'refundPayment',
+    ],
+  },
+  {
+    ruleId: 'golden.stress.child-workflow-handoff',
+    file: 'skills/workflow-stress/goldens/child-workflow-handoff.md',
+    mustInclude: [
+      'start()',
+      'runtime',
+      'step',
+      'serialization',
+      'Step granularity',
+      'start()` in workflow context must be wrapped in a step',
+    ],
+  },
+  {
+    ruleId: 'golden.stress.multi-event-hook-loop',
+    file: 'skills/workflow-stress/goldens/multi-event-hook-loop.md',
+    mustInclude: [
+      'AsyncIterable',
+      'Promise.all',
+      'resumeHook',
+      'deterministic',
+      'Hook token strategy',
+      'Suspension primitive choice',
+    ],
+  },
+  {
+    ruleId: 'golden.stress.rate-limit-retry',
+    file: 'skills/workflow-stress/goldens/rate-limit-retry.md',
+    mustInclude: [
+      'RetryableError',
+      'FatalError',
+      '429',
+      'idempotency',
+      'Retry semantics',
+      'backoff',
+    ],
+  },
+  {
+    ruleId: 'golden.stress.approval-timeout-streaming',
+    file: 'skills/workflow-stress/goldens/approval-timeout-streaming.md',
+    mustInclude: [
+      'getWritable()',
+      'stream',
+      'waitForSleep',
+      'wakeUp',
+      'Determinism boundary',
+      'Stream I/O placement',
+      'getWritable()` may be called in workflow context',
+    ],
+    mustNotInclude: [
+      '`getWritable()` must be in a step',
+    ],
+  },
+];
+
+const allChecks = [...checks, ...goldenChecks, ...stressGoldenChecks];
 
 // Read all files into a map
 const filesByPath = {};

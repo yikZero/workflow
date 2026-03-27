@@ -3,7 +3,7 @@ name: workflow-design
 description: Design a workflow before writing code. Reads project context and produces a machine-readable blueprint matching WorkflowBlueprint. Use when the user wants to plan step boundaries, suspensions, streams, and tests for a new workflow. Triggers on "design workflow", "plan workflow", "workflow blueprint", or "workflow-design".
 metadata:
   author: Vercel Inc.
-  version: '0.2'
+  version: '0.3'
 ---
 
 # workflow-design
@@ -81,3 +81,7 @@ Every blueprint must explicitly note which of these anti-patterns it avoids (in 
 - `FatalError` if the refund is already processed
 - A test plan using both `resumeWebhook()` and `resumeHook()` helpers
 - `antiPatternsAvoided` listing all relevant patterns from above
+
+## Next Step
+
+After generating a blueprint, run `workflow-stress` before `workflow-verify` when the design includes hooks, webhooks, sleep, streams, retries, or child workflows.

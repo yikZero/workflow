@@ -3,7 +3,7 @@ name: workflow-stress
 description: Pressure-test an existing workflow blueprint for edge cases, determinism violations, and missing coverage. Produces severity-ranked fixes and a patched blueprint. Use after workflow-design. Triggers on "stress test workflow", "pressure test blueprint", "workflow edge cases", or "workflow-stress".
 metadata:
   author: Vercel Inc.
-  version: '0.3'
+  version: '0.4'
 ---
 
 # workflow-stress

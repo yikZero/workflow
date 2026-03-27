@@ -3,7 +3,7 @@ name: workflow-teach
 description: One-time setup that captures project context for workflow design skills. Use when the user wants to teach the assistant how workflows should be designed for this project. Triggers on "teach workflow", "set up workflow context", "configure workflow skills", or "workflow-teach".
 metadata:
   author: Vercel Inc.
-  version: '0.2'
+  version: '0.3'
 ---
 
 # workflow-teach
@@ -81,7 +81,7 @@ List anything that could not be determined from the repo alone and needs user co
 
 ## Next Recommended Skill
 
-Recommend the next skill to use based on what was captured. Typically this is `workflow-design` to create a workflow blueprint, or `workflow` if the user is ready to implement directly.
+Recommend the next skill to use based on what was captured. Typically this is `workflow-design` to create a workflow blueprint, or `workflow` if the user is ready to implement directly. For externally-driven workflows (webhooks, hooks, sleep, child workflows), recommend `workflow-design` followed immediately by `workflow-stress` to pressure-test the blueprint before implementation.
 
 ---
 
