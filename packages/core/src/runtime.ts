@@ -4,8 +4,6 @@ import {
   RunExpiredError,
   WorkflowRuntimeError,
 } from '@workflow/errors';
-import { classifyRunError } from './classify-error.js';
-import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
@@ -13,9 +11,11 @@ import {
   WorkflowInvokePayloadSchema,
   type WorkflowRun,
 } from '@workflow/world';
+import { classifyRunError } from './classify-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
+import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import {
   getAllWorkflowRunEvents,
   getQueueOverhead,
@@ -105,6 +105,7 @@ export function workflowEntrypoint(
         runId,
         traceCarrier: traceContext,
         requestedAt,
+        runInput,
       } = WorkflowInvokePayloadSchema.parse(message_);
       const { requestId } = metadata;
       // Extract the workflow name from the topic name
@@ -192,14 +193,15 @@ export function workflowEntrypoint(
 
                 let workflowStartedAt = -1;
                 let workflowRun: WorkflowRun | undefined;
-                // Pre-loaded events from the run_started response.
-                // When present, we skip the events.list call to reduce TTFB.
+                // Pre-loaded events from run_started response (first caller optimization)
                 let preloadedEvents: Event[] | undefined;
 
                 // --- Infrastructure: prepare the run state ---
                 // Always call run_started directly — this both transitions
                 // the run to 'running' AND returns the run entity, saving
-                // a separate runs.get round-trip.
+                // a separate runs.get round-trip. When runInput is present
+                // (resilient start), pass it so the server can create the
+                // run if run_created was missed.
                 // Network/server errors propagate to the queue handler for retry.
                 // WorkflowRuntimeError (data integrity issues) are fatal and
                 // produce run_failed since retrying won't fix them.
@@ -209,6 +211,18 @@ export function workflowEntrypoint(
                     {
                       eventType: 'run_started',
                       specVersion: SPEC_VERSION_CURRENT,
+                      // Pass run input from queue so server can create
+                      // the run if run_created was missed
+                      ...(runInput
+                        ? {
+                            eventData: {
+                              input: runInput.input,
+                              deploymentId: runInput.deploymentId,
+                              workflowName: runInput.workflowName,
+                              executionContext: runInput.executionContext,
+                            },
+                          }
+                        : {}),
                     },
                     { requestId }
                   );
@@ -219,7 +233,7 @@ export function workflowEntrypoint(
                   }
                   workflowRun = result.run;
 
-                  // If the world returned events, use them to skip
+                  // If the response includes events, use them to skip
                   // the initial events.list call and reduce TTFB.
                   if (result.events && result.events.length > 0) {
                     preloadedEvents = result.events;
@@ -231,15 +245,14 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
-                  // Run was concurrently completed/failed/cancelled
-                  if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
+                  if (RunExpiredError.is(err)) {
+                    // 410: already finished — log and exit
                     runtimeLogger.info(
                       'Run already finished during setup, skipping',
                       { workflowRunId: runId, message: err.message }
                     );
                     return;
-                  }
-                  if (err instanceof WorkflowRuntimeError) {
+                  } else if (err instanceof WorkflowRuntimeError) {
                     runtimeLogger.error(
                       'Fatal runtime error during workflow setup',
                       { workflowRunId: runId, error: err.message }
@@ -270,8 +283,15 @@ export function workflowEntrypoint(
                       throw failErr;
                     }
                     return;
+                  } else {
+                    throw err;
                   }
-                  throw err;
+                }
+
+                if (!workflowRun.startedAt) {
+                  throw new WorkflowRuntimeError(
+                    `Workflow run "${runId}" has no "startedAt" timestamp`
+                  );
                 }
                 workflowStartedAt = +workflowRun.startedAt;
 
@@ -300,7 +320,7 @@ export function workflowEntrypoint(
                 }
 
                 // Load all events into memory before running.
-                // If we got pre-loaded events from the run_started response,
+                // If we got events from the run_started response,
                 // skip the events.list round-trip to reduce TTFB.
                 const events =
                   preloadedEvents ??

@@ -64,6 +64,7 @@ const EventResultResolveWireSchema = z.object({
   run: WorkflowRunSchema.optional(),
   step: StepWireSchema.optional(),
   hook: HookSchema.optional(),
+  events: z.array(EventSchema).optional(),
 });
 
 const EventResultLazyWireSchema = z.object({
@@ -71,6 +72,7 @@ const EventResultLazyWireSchema = z.object({
   run: WorkflowRunWireBaseSchema.optional(),
   step: StepWireSchema.optional(),
   hook: HookSchema.optional(),
+  events: z.array(EventSchema).optional(),
 });
 
 // Schema for events returned with `remoteRefBehavior=lazy`.
@@ -461,6 +463,7 @@ async function createWorkflowRunEventInner(
       run: wireResult.run,
       step: wireResult.step ? deserializeStep(wireResult.step) : undefined,
       hook: wireResult.hook,
+      events: wireResult.events,
     };
   }
 
@@ -487,5 +490,6 @@ async function createWorkflowRunEventInner(
       : undefined,
     step: wireResult.step ? deserializeStep(wireResult.step) : undefined,
     hook: wireResult.hook,
+    events: wireResult.events,
   };
 }
