@@ -131,8 +131,19 @@ describe("orderFulfillment", () => {
   "blueprintName": "compensation-saga",
   "files": [
     { "kind": "workflow", "path": "workflows/order-fulfillment.ts" },
-    { "kind": "route", "path": "app/api/order-fulfillment/route.ts" },
     { "kind": "test", "path": "workflows/order-fulfillment.integration.test.ts" }
+  ],
+  "testMatrix": [
+    {
+      "name": "happy-path",
+      "helpers": [],
+      "expects": "Order completes successfully with payment charged and inventory reserved"
+    },
+    {
+      "name": "compensation-on-inventory-failure",
+      "helpers": [],
+      "expects": "Payment is refunded when inventory reservation fails"
+    }
   ],
   "runtimeCommands": [
     { "name": "typecheck", "command": "pnpm typecheck", "expects": "No TypeScript errors" },
@@ -141,14 +152,15 @@ describe("orderFulfillment", () => {
   ],
   "implementationNotes": [
     "Invariant: A payment charge must be compensated by a refund if inventory reservation fails",
-    "Invariant: Idempotency keys derived from orderId prevent duplicate charges on replay"
+    "Invariant: Idempotency keys derived from orderId prevent duplicate charges on replay",
+    "Operator signal: Log compensation.triggered with orderId when refund begins after inventory failure"
   ]
 }
 ```
 
 ### Verification Summary
 
-{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":3,"testCount":1,"runtimeCommandCount":3,"contractVersion":"1"}
+{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":2,"testCount":2,"runtimeCommandCount":3,"contractVersion":"1"}
 
 ## Checklist Items Exercised
 

@@ -223,6 +223,27 @@ export const buildGoldenChecks = [
       'compensation',
       'idempotency',
       'refund',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
     ],
   },
   {

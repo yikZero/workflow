@@ -304,4 +304,56 @@ describe('workflow skills docs contract surfaces', () => {
     expect(docs).toContain('"name": "test"');
     expect(docs).toContain('"name": "focused-workflow-test"');
   });
+
+  // -----------------------------------------------------------------------
+  // Six-phase build flow
+  // -----------------------------------------------------------------------
+  describe('six-phase build flow', () => {
+    it('getting-started doc describes six interactive phases', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('six interactive phases');
+      expect(docs).not.toContain('five interactive phases');
+    });
+
+    it('getting-started doc includes Phase 6 verification summary', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('Verification summary');
+      expect(docs).toContain('verification_plan_ready');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Package README parity with teach→build vocabulary
+  // -----------------------------------------------------------------------
+  describe('package README parity', () => {
+    it('package README describes teach-then-build two-stage loop', () => {
+      const readme = read('packages/workflow/README.md');
+      expect(readme).toContain('two-stage loop');
+      expect(readme).toContain('teach');
+      expect(readme).toContain('build');
+    });
+
+    it('package README contains no legacy four-stage vocabulary', () => {
+      const readme = read('packages/workflow/README.md');
+      for (const legacy of LEGACY_STAGES) {
+        expect(readme).not.toContain(legacy);
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Compensation-saga golden includes testMatrix
+  // -----------------------------------------------------------------------
+  describe('golden verification artifact schema', () => {
+    it('compensation-saga golden includes testMatrix field', () => {
+      const golden = read(
+        'skills/workflow-build/goldens/compensation-saga.md',
+      );
+      expect(golden).toContain('"testMatrix"');
+    });
+  });
 });

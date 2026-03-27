@@ -400,6 +400,144 @@ describe('build golden validation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Verification artifact schema checks
+// ---------------------------------------------------------------------------
+
+describe('verification artifact schema enforcement', () => {
+  const compensationCheck = buildGoldenChecks.find(
+    (c) => c.ruleId === 'golden.build.compensation-saga'
+  );
+
+  it('fails with structured_validation_failed when testMatrix is missing from JSON', () => {
+    const content = [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '"use step"',
+      'compensation',
+      'idempotency',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'compensation-saga',
+        files: [{ kind: 'workflow', path: 'workflows/order-fulfillment.ts' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['some note'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":1,"testCount":0,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(compensationCheck, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toContain('testMatrix');
+  });
+
+  it('fails when testMatrix is present but empty', () => {
+    const content = [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '"use step"',
+      'compensation',
+      'idempotency',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'compensation-saga',
+        files: [{ kind: 'workflow', path: 'workflows/order-fulfillment.ts' }],
+        testMatrix: [],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['some note'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":1,"testCount":0,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(compensationCheck, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].emptyJsonKeys).toContain('testMatrix');
+  });
+
+  it('fails when verification_plan_ready summary line is missing', () => {
+    const content = [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '"use step"',
+      'compensation',
+      'idempotency',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'compensation-saga',
+        files: [{ kind: 'workflow', path: 'workflows/order-fulfillment.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['some note'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      'No summary here',
+    ].join('\n');
+    const result = runSingleCheck(compensationCheck, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('verification_plan_ready');
+  });
+
+  it('passes when all schema requirements are met', () => {
+    const content = [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '"use step"',
+      'compensation',
+      'idempotency',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'compensation-saga',
+        files: [{ kind: 'workflow', path: 'workflows/order-fulfillment.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['Operator signal: log compensation.triggered'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(compensationCheck, content);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Regression: stale 4-stage pipeline references
 // ---------------------------------------------------------------------------
 

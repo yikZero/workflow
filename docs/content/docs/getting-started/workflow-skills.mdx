@@ -96,13 +96,14 @@ For example:
 > Build a workflow that routes purchase orders for manager approval, escalates
 > to a director after 48 hours, and auto-rejects after a further 24 hours.
 
-The build skill reads `.workflow.md` and walks through five interactive phases:
+The build skill reads `.workflow.md` and walks through six interactive phases:
 
 1. **Propose step boundaries** — which functions need `"use workflow"` vs `"use step"`, suspension points, stream requirements
 2. **Flag relevant traps** — run a 12-point stress checklist against the design
 3. **Decide failure modes** — `FatalError` vs `RetryableError`, idempotency strategies, compensation plans
 4. **Write code + tests** — produce the workflow file and integration tests
 5. **Self-review** — run the stress checklist again against the generated code
+6. **Verification summary** — emit a structured verification artifact and a single-line `verification_plan_ready` event for machine consumption
 
 Each phase waits for your confirmation before proceeding.
 
