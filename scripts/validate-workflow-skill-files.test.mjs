@@ -1528,12 +1528,89 @@ Use resumeHook() for approval flows.
     expect(result.results[0].missing).toContain('wakeUp');
   });
 
-  it('returns ok:false when workflow-verify ignores invariants/compensationPlan/operatorSignals', () => {
+  it('returns ok:true when workflow-verify maps policy arrays inside Test Matrix', () => {
     const checks = [
       {
         ruleId: 'skill.workflow-verify.contract-fields',
         file: 'skills/workflow-verify/SKILL.md',
-        mustInclude: [
+        sectionHeading: '### `## Test Matrix`',
+        mustIncludeWithinSection: [
+          'invariants',
+          'compensationPlan',
+          'operatorSignals',
+          'failure-path',
+          'stream/log',
+        ],
+      },
+    ];
+
+    const content = `
+### \`## Test Matrix\`
+
+- invariants
+- compensationPlan
+- operatorSignals
+- failure-path
+- stream/log
+
+### \`## Integration Test Skeleton\`
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-verify/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns section-specific diagnostics when workflow-verify mentions tokens outside Test Matrix only', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-verify.contract-fields',
+        file: 'skills/workflow-verify/SKILL.md',
+        sectionHeading: '### `## Test Matrix`',
+        mustIncludeWithinSection: [
+          'invariants',
+          'compensationPlan',
+          'operatorSignals',
+          'failure-path',
+          'stream/log',
+        ],
+      },
+    ];
+
+    const content = `
+invariants compensationPlan operatorSignals failure-path stream/log
+
+### \`## Test Matrix\`
+
+Tests for hooks only.
+
+### \`## Integration Test Skeleton\`
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-verify/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].sectionHeading).toBe('### `## Test Matrix`');
+    expect(result.results[0].missingSectionTokens).toEqual(
+      expect.arrayContaining([
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
+      ])
+    );
+  });
+
+  it('returns ok:false when workflow-verify has no Test Matrix section at all', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-verify.contract-fields',
+        file: 'skills/workflow-verify/SKILL.md',
+        sectionHeading: '### `## Test Matrix`',
+        mustIncludeWithinSection: [
           'invariants',
           'compensationPlan',
           'operatorSignals',
@@ -1552,7 +1629,7 @@ The verification step should create tests for hooks, webhooks, and sleeps.
     });
 
     expect(result.ok).toBe(false);
-    expect(result.results[0].missing).toEqual(
+    expect(result.results[0].missingSectionTokens).toEqual(
       expect.arrayContaining([
         'invariants',
         'compensationPlan',
@@ -1561,16 +1638,78 @@ The verification step should create tests for hooks, webhooks, and sleeps.
     );
   });
 
-  it('returns ok:false when compensation-saga golden omits required WorkflowBlueprint arrays', () => {
+  // --- JSON fence validation tests ---
+
+  it('returns ok:true when compensation-saga golden keeps required WorkflowBlueprint arrays', () => {
     const checks = [
       {
         ruleId: 'golden.stress.compensation-saga.schema',
         file: 'skills/workflow-stress/goldens/compensation-saga.md',
-        mustInclude: [
-          '"invariants": [',
-          '"compensationPlan": [',
-          '"operatorSignals": [',
-        ],
+        jsonFence: {
+          language: 'json',
+          requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+        },
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Compensation Saga
+
+\`\`\`json
+{
+  "name": "order-fulfillment",
+  "invariants": [],
+  "compensationPlan": [],
+  "operatorSignals": []
+}
+\`\`\`
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns structured jsonFence diagnostics when compensation-saga golden is invalid JSON', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga.schema',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        jsonFence: {
+          language: 'json',
+          requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+        },
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Compensation Saga
+
+\`\`\`json
+{ "name": "order-fulfillment", }
+\`\`\`
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].jsonFenceError).toBe('invalid_json');
+  });
+
+  it('returns missingJsonKeys when compensation-saga golden omits required keys', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga.schema',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        jsonFence: {
+          language: 'json',
+          requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+        },
       },
     ];
 
@@ -1590,12 +1729,133 @@ The verification step should create tests for hooks, webhooks, and sleeps.
     });
 
     expect(result.ok).toBe(false);
-    expect(result.results[0].missing).toEqual(
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toEqual(
       expect.arrayContaining([
-        '"invariants": [',
-        '"compensationPlan": [',
-        '"operatorSignals": [',
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
       ])
     );
+  });
+
+  // --- forbiddenContext diagnostic tests ---
+
+  it('includes forbiddenContext excerpts for forbidden-token failures', () => {
+    const checks = [
+      {
+        ruleId: 'golden.webhook-ingress',
+        file: 'skills/workflow-design/goldens/webhook-ingress.md',
+        mustNotInclude: ['resumeWebhook(run, {'],
+      },
+    ];
+
+    const content = `
+Some preamble text here.
+await resumeWebhook(run, { status: 200, body: {} });
+Some trailing text here.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/goldens/webhook-ingress.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('forbidden_content_present');
+    expect(result.results[0].forbiddenContext).toBeDefined();
+    expect(
+      result.results[0].forbiddenContext['resumeWebhook(run, {']
+    ).toContain('resumeWebhook(run, {');
+  });
+
+  it('emits reason field for missing_required_content failures', () => {
+    const checks = [
+      {
+        ruleId: 'test.reason',
+        file: 'test.md',
+        mustInclude: ['foo'],
+      },
+    ];
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': 'bar baz',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('missing_required_content');
+  });
+
+  it('emits reason field for content_out_of_order failures', () => {
+    const checks = [
+      {
+        ruleId: 'test.order',
+        file: 'test.md',
+        mustInclude: ['alpha', 'beta'],
+        mustAppearInOrder: ['alpha', 'beta'],
+      },
+    ];
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': 'beta comes before alpha here',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('content_out_of_order');
+  });
+
+  it('emits reason structured_validation_failed for section-only failures', () => {
+    const checks = [
+      {
+        ruleId: 'test.section',
+        file: 'test.md',
+        sectionHeading: '## Target',
+        mustIncludeWithinSection: ['required-token'],
+      },
+    ];
+
+    const content = `
+required-token appears above the section
+
+## Target
+
+Nothing relevant here.
+
+## Next
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingSectionTokens).toContain('required-token');
+  });
+
+  it('returns missing_code_fence when compensation-saga golden has no JSON fence', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga.schema',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        jsonFence: {
+          language: 'json',
+          requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+        },
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Compensation Saga
+
+No code fence here, just plain text about invariants.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].jsonFenceError).toBe('missing_code_fence');
   });
 });

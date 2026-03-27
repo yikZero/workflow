@@ -135,7 +135,8 @@ export const checks = [
   {
     ruleId: 'skill.workflow-verify.contract-fields',
     file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: [
+    sectionHeading: '### `## Test Matrix`',
+    mustIncludeWithinSection: [
       'invariants',
       'compensationPlan',
       'operatorSignals',
@@ -253,11 +254,10 @@ export const stressGoldenChecks = [
   {
     ruleId: 'golden.stress.compensation-saga.schema',
     file: 'skills/workflow-stress/goldens/compensation-saga.md',
-    mustInclude: [
-      '"invariants": [',
-      '"compensationPlan": [',
-      '"operatorSignals": [',
-    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+    },
     suggestedFix:
       'Keep defective stress goldens semantically wrong, but structurally valid against WorkflowBlueprint.',
   },
