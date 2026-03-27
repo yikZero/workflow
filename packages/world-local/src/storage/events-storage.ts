@@ -112,8 +112,6 @@ export function createEventsStorage(
       // on running steps, and running steps are always allowed to modify regardless
       // of run state. This optimization saves filesystem reads per step event.
       let currentRun: WorkflowRun | null = null;
-      // Track whether run was created via resilient start fallback
-      let runCreatedViaRunStarted = false;
       const skipRunValidationEvents = ['step_completed', 'step_retrying'];
       if (
         data.eventType !== 'run_created' &&
@@ -190,7 +188,6 @@ export function createEventsStorage(
             );
 
             currentRun = createdRun;
-            runCreatedViaRunStarted = true;
           }
         }
       }
@@ -350,17 +347,8 @@ export function createEventsStorage(
           throw new HookNotFoundError(data.correlationId);
         }
       }
-      // Strip eventData from run_started events — the run input belongs
-      // on the run_created event only, not on run_started.
-      const eventData =
-        data.eventType === 'run_started'
-          ? undefined
-          : 'eventData' in data
-            ? data.eventData
-            : undefined;
       const event: Event = {
         ...data,
-        ...(eventData !== undefined ? { eventData } : {}),
         runId: effectiveRunId,
         eventId,
         createdAt: now,
