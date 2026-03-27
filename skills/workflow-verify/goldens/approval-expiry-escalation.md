@@ -12,7 +12,7 @@ teach → design → stress → verify.
 |------|---------|
 | `workflows/approval-expiry-escalation.ts` | Workflow function with `"use workflow"` orchestrating manager/director approval with timeout escalation, plus `"use step"` functions for validation, notifications, and decision recording |
 | `app/api/purchase-orders/route.ts` | API route trigger entrypoint for PO submission |
-| `__tests__/approval-expiry-escalation.test.ts` | Integration tests using `@workflow/vitest` covering happy path, escalation, and auto-rejection |
+| `workflows/approval-expiry-escalation.integration.test.ts` | Integration tests using `@workflow/vitest` covering happy path, escalation, and auto-rejection |
 
 Each workflow file must place `"use workflow"` at the top of the orchestrator function and `"use step"` at the top of each step function (`validatePurchaseOrder`, `notifyManager`, `notifyDirector`, `recordDecision`, `notifyRequester`).
 
@@ -119,11 +119,11 @@ cd workbench/nextjs-turbopack && pnpm dev
 
 # Run integration tests
 DEPLOYMENT_URL="http://localhost:3000" APP_NAME="nextjs-turbopack" \
-  pnpm vitest run __tests__/approval-expiry-escalation.test.ts
+  pnpm vitest run workflows/approval-expiry-escalation.integration.test.ts
 
 # Run specific test
 DEPLOYMENT_URL="http://localhost:3000" APP_NAME="nextjs-turbopack" \
-  pnpm vitest run __tests__/approval-expiry-escalation.test.ts -t "manager approves"
+  pnpm vitest run workflows/approval-expiry-escalation.integration.test.ts -t "manager approves"
 
 # Trigger a PO approval manually
 curl -X POST http://localhost:3000/api/purchase-orders \

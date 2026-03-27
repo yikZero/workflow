@@ -64,6 +64,7 @@ describe('workflow skills docs contract surfaces', () => {
     expect(docs).toContain('.workflow-skills/context.json');
     expect(docs).toContain('.workflow-skills/blueprints/<name>.json');
     expect(docs).toContain('updated in place');
-    expect(docs).toContain('no persisted file path is promised');
+    expect(docs).toContain('.workflow-skills/verification/<name>.json');
+    expect(docs).not.toContain('no persisted file path is promised');
   });
 });

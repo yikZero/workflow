@@ -250,7 +250,7 @@ cat .workflow-skills/verification/approval-expiry-escalation.json
 ## Inspect Generated Artifacts
 
 After running a scenario command or the full manual loop, your project contains
-two artifacts:
+three persisted artifacts:
 
 ### Project context
 
@@ -397,8 +397,55 @@ cat .workflow-skills/blueprints/approval-expiry-escalation.json
 }
 ```
 
-Both files are git-ignored. They persist locally so you can re-run any stage
-of the loop without starting over.
+### Verification plan
+
+```bash
+cat .workflow-skills/verification/approval-expiry-escalation.json
+```
+
+```json
+{
+  "contractVersion": "1",
+  "blueprintName": "approval-expiry-escalation",
+  "files": [
+    {
+      "path": "workflows/approval-expiry-escalation.ts",
+      "kind": "workflow",
+      "purpose": "Workflow orchestration and step implementations"
+    },
+    {
+      "path": "app/api/purchase-orders/route.ts",
+      "kind": "route",
+      "purpose": "Entrypoint that starts or resumes the workflow"
+    },
+    {
+      "path": "workflows/approval-expiry-escalation.integration.test.ts",
+      "kind": "test",
+      "purpose": "Integration coverage for hooks, sleeps, retries, and return values"
+    }
+  ],
+  "testMatrix": [
+    {
+      "name": "manager approves within window",
+      "helpers": ["start", "waitForHook", "resumeHook"],
+      "verifies": ["PO approved by manager", "requester notified"]
+    }
+  ],
+  "runtimeCommands": [
+    {
+      "name": "focused-workflow-test",
+      "command": "pnpm vitest run workflows/approval-expiry-escalation.integration.test.ts",
+      "expects": "approval-expiry-escalation integration tests pass"
+    }
+  ],
+  "implementationNotes": [
+    "Invariant: A purchase order must receive exactly one final decision"
+  ]
+}
+```
+
+All three artifact directories are git-ignored. They persist locally so you can
+re-run any stage of the loop without starting over.
 
 ## Hero Scenario: Approval Expiry Escalation
 

@@ -27,8 +27,8 @@ scenario. The full loop is:
 - `workflow-verify` → create `.workflow-skills/verification/<name>.json` and emit the same verification artifact inline, plus the integration test skeleton
 
 Each scenario command reads your project context, emits a blueprint, stress-tests
-it, and generates a verification matrix — without requiring you to learn the
-underlying four-stage model first.
+it, and produces a persisted verification plan — without requiring you to learn
+the underlying four-stage model first.
 
 If your workflow doesn't fit a named scenario, run the four stages individually:
 `/workflow-teach` → `/workflow-design` → `/workflow-stress` → `/workflow-verify`.
@@ -150,8 +150,8 @@ Start from the problem, not the stage:
 - Use `/workflow-observe` when operators need progress streams and terminal signals.
 
 Each scenario command reads your project context, emits a blueprint, stress-tests
-it, and generates a verification matrix — without requiring you to learn the
-underlying four-stage model first.
+it, and produces a persisted verification plan — without requiring you to learn
+the underlying four-stage model first.
 
 ## User journey
 
@@ -176,7 +176,7 @@ skill is an always-on API reference available at any point.
 
 ## Persistence contract
 
-The skill loop persists two types of artifacts on disk. Both paths are
+The skill loop persists three types of artifacts on disk. All paths are
 git-ignored so they stay local to each developer's checkout.
 
 ### Contract version
@@ -205,6 +205,15 @@ Written by `workflow-design` (stage 2), patched in-place by `workflow-stress`
 `lib/ai/workflow-blueprint.ts`.
 
 Required policy arrays: `invariants`, `compensationPlan`, `operatorSignals`.
+
+### `.workflow-skills/verification/<name>.json`
+
+Written by `workflow-verify` (stage 4). Contains a single
+`WorkflowVerificationPlan` object as defined in
+`lib/ai/workflow-verification.ts`.
+
+Key fields: `contractVersion`, `blueprintName`, `files`, `testMatrix`,
+`runtimeCommands`, `implementationNotes`.
 
 ### Backward compatibility
 

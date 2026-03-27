@@ -3,7 +3,7 @@ name: workflow-verify
 description: Turn a workflow blueprint into implementation-ready file lists, test matrices, integration test skeletons, and runtime verification commands. Use when the user is ready to implement and test a designed workflow. Triggers on "verify workflow", "workflow tests", "implement blueprint", or "workflow-verify".
 metadata:
   author: Vercel Inc.
-  version: '0.5'
+  version: '0.6'
 ---
 
 # workflow-verify
@@ -76,7 +76,7 @@ A table of every file that needs to be created or modified to implement the work
 |------|---------|
 | `workflows/<name>.ts` | Workflow function with `"use workflow"` and step functions with `"use step"` |
 | `app/api/...` | API route or trigger entrypoint |
-| `__tests__/<name>.test.ts` | Integration tests using `@workflow/vitest` |
+| `workflows/<name>.integration.test.ts` | Integration tests using `@workflow/vitest` |
 | ... | ... |
 
 Include the `"use workflow"` and `"use step"` directive placement for each workflow file.
@@ -186,11 +186,11 @@ cd workbench/nextjs-turbopack && pnpm dev
 
 # Run integration tests
 DEPLOYMENT_URL="http://localhost:3000" APP_NAME="nextjs-turbopack" \
-  pnpm vitest run __tests__/<workflow-name>.test.ts
+  pnpm vitest run workflows/<workflow-name>.integration.test.ts
 
 # Run with specific test filter
 DEPLOYMENT_URL="http://localhost:3000" APP_NAME="nextjs-turbopack" \
-  pnpm vitest run __tests__/<workflow-name>.test.ts -t "happy path"
+  pnpm vitest run workflows/<workflow-name>.integration.test.ts -t "happy path"
 ```
 
 Include workflow-specific commands for any manual verification steps (e.g. triggering a webhook via `curl`, inspecting run state via CLI).
