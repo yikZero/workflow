@@ -74,6 +74,7 @@ dispatch so that runs can still be accepted when storage is degraded.
 ## Implementation notes
 
 ### Error type mapping for terminal runs
+
 Previously, calling `run_started` on a terminal run threw `InvalidOperationStateError`
 (HTTP 409). This was changed to `EntityGoneError` (HTTP 410) so the runtime correctly
 distinguishes "already running" (409 → fetch and proceed) from "already finished"
@@ -81,16 +82,19 @@ distinguishes "already running" (409 → fetch and proceed) from "already finish
 `events-materialization.integration.ts`.
 
 ### run_started on already-running runs
+
 Added an explicit check in `handleRunStateTransition`: if the run is already `running`,
 throw `EntityConflictError` (409) instead of idempotently patching and creating a
 duplicate `run_started` event. This prevents event log pollution from concurrent workers.
 
 ### RunStartedEventSchema eventData stripping
+
 The run input is passed through to `run_started`'s `eventData` but stripped before
 the event is persisted — the data belongs on the `run_created` event only. The server
 sets `effectiveEventData = undefined` for `run_started` events.
 
 ### ULID threshold test updates
+
 Both `workflow-server/test/helpers/ulid.test.ts` and
 `test/api/events.integration.ts` had tests expecting 10-minute-old ULIDs to be
 rejected. These were updated to use 25-hour offsets to match the new 24-hour threshold.
@@ -106,3 +110,4 @@ rejected. These were updated to use 25-hour offsets to match the new 24-hour thr
   to re-enqueue cycles (currently only first invocation).
 - [ ] Consider adding a Datadog metric for the run_started → already running (409)
   path to track concurrent start frequency.
+- [ ] Edit run ID validation so that we still allow up to 24 hours in the past, but only up to 5 minutes in the future
