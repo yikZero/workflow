@@ -49,8 +49,10 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see skill directories for `workflow-teach`,
-`workflow-build`, `workflow-init`, and the `workflow` reference.
+After copying, you should see the three core skill directories — `workflow`
+(always-on reference), `workflow-teach` (stage 1), and `workflow-build`
+(stage 2) — plus the optional `workflow-init` helper for first-time
+project setup before `workflow` is installed as a dependency.
 
 </Step>
 
@@ -110,30 +112,37 @@ Each phase waits for your confirmation before proceeding.
 
 ## Persisted Artifacts
 
-The skill loop leaves three persisted artifacts in the workspace:
+The skill loop produces two categories of artifacts:
 
-| Artifact | Path | Written By |
-|----------|------|------------|
-| Project context | `.workflow-skills/context.json` | `workflow-teach` |
-| Workflow blueprint | `.workflow-skills/blueprints/<name>.json` | `workflow-build` |
-| Verification plan | `.workflow-skills/verification/<name>.json` | `workflow-build` |
+| Category | Artifact | Path | Owner |
+|----------|----------|------|-------|
+| Skill-managed | Project context | `.workflow.md` | `workflow-teach` |
+| Host-managed | Project context (JSON) | `.workflow-skills/context.json` | Host runtime |
+| Host-managed | Workflow blueprint | `.workflow-skills/blueprints/<name>.json` | Host runtime |
+| Host-managed | Verification plan | `.workflow-skills/verification/<name>.json` | Host runtime |
 
-### `.workflow-skills/context.json`
+### Skill-managed: `.workflow.md`
 
-Written by `workflow-teach`. Contains project context, business rules, failure
-expectations, observability needs, and approved patterns in a machine-readable
-format. Read by `workflow-build` to inform step boundaries, failure modes,
-idempotency strategies, and test coverage.
+Written directly by `workflow-teach`. A plain-English markdown file containing
+project context, business rules, failure expectations, and approved patterns.
+This is the primary bridge between teach and build — `workflow-build` reads
+this file to inform step boundaries, failure modes, and test coverage.
 
-### `.workflow-skills/blueprints/<name>.json`
+### Host-managed: `.workflow-skills/*.json`
 
-Written by `workflow-build`. Contains the workflow blueprint with step boundaries,
-suspension points, stream requirements, and trap analysis.
+The `.workflow-skills/` directory contains machine-readable companion artifacts
+managed by the host runtime or persistence layer — not by the skill prompts
+themselves. The skill text never references these JSON paths directly; instead,
+the host extracts structured data from the skill conversation and persists it
+for agent consumption. This separation keeps the skill prompts focused on
+human-readable guidance while enabling programmatic queries against the JSON
+artifacts.
 
-### `.workflow-skills/verification/<name>.json`
+- **`context.json`** — structured project context derived from `workflow-teach`
+- **`blueprints/<name>.json`** — workflow blueprint with step boundaries, suspension points, and trap analysis
+- **`verification/<name>.json`** — verification plan with files, test matrix, runtime commands, and implementation notes
 
-Written by `workflow-build`. Contains the verification plan with files to generate,
-test matrix, runtime commands, and implementation notes. Example:
+Example verification plan:
 
 ```json
 {
@@ -172,8 +181,7 @@ test matrix, runtime commands, and implementation notes. Example:
 
 ## The `.workflow.md` Bridge
 
-The `.workflow.md` file is the human-readable companion to `.workflow-skills/context.json`.
-Written by `workflow-teach`, read by `workflow-build`, it contains:
+Written by `workflow-teach`, read by `workflow-build`, `.workflow.md` contains:
 
 | Section | Contents |
 |---------|----------|

@@ -57,20 +57,33 @@ Each `SKILL.md` must begin with YAML frontmatter containing:
 
 ## Skill inventory
 
+### Core surface (the two-stage loop)
+
 | Skill              | Purpose                                         |
 |--------------------|-------------------------------------------------|
-| `workflow`         | Core API reference for writing workflows         |
-| `workflow-teach`   | Capture project context into `.workflow.md`       |
-| `workflow-build`   | Build workflow code guided by context             |
+| `workflow`         | Always-on API reference for writing workflows    |
+| `workflow-teach`   | Stage 1 — capture project context into `.workflow.md` |
+| `workflow-build`   | Stage 2 — build workflow code guided by context  |
+
+### Optional helpers
+
+| Skill              | Purpose                                         |
+|--------------------|-------------------------------------------------|
+| `workflow-init`    | First-time project setup before `workflow` is installed as a dependency |
 
 ## Persisted artifacts
 
-The skill loop produces a persisted verification plan at
-`.workflow-skills/verification/<name>.json` alongside the project context
-(`.workflow-skills/context.json`) and workflow blueprint
-(`.workflow-skills/blueprints/<name>.json`). These machine-readable artifacts
-survive across runs and allow agents to query correctness without re-running
-the full skill loop.
+The skill loop produces two categories of persisted artifacts:
+
+**Skill-managed** — `.workflow.md` is written directly by `workflow-teach` and
+read by `workflow-build`. This is the primary bridge between the two stages.
+
+**Host-managed** — `.workflow-skills/*.json` files (context, blueprints,
+verification plans) are managed by the host runtime or persistence layer —
+not by the skill prompts themselves. The host extracts structured data from the skill
+conversation and persists it for agent consumption. These machine-readable
+artifacts survive across runs and allow agents to query correctness without
+re-running the full skill loop.
 
 ## Golden scenarios
 

@@ -20,12 +20,15 @@ const PROVIDER_PATHS = {
   cursor: '.cursor/skills',
 };
 
-const LOOP_SKILLS = [
-  'workflow-teach',
-  'workflow-design',
-  'workflow-stress',
-  'workflow-verify',
-];
+// Core skills that must ship for every provider — the two-stage pipeline
+// plus the always-on reference skill.
+const CORE_SKILLS = ['workflow', 'workflow-teach', 'workflow-build'];
+
+// Dynamically discover all skills from the source directory so the test
+// covers any additional/helper skills without requiring constant updates.
+const ALL_SKILLS = readdirSync(SKILLS_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory() && existsSync(join(SKILLS_DIR, d.name, 'SKILL.md')))
+  .map((d) => d.name);
 
 function sha256(content) {
   return createHash('sha256').update(content).digest('hex').slice(0, 16);
@@ -50,6 +53,31 @@ describe('build-workflow-skills builder smoke tests', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Guard: no stale four-stage references in this test file
+  // -----------------------------------------------------------------------
+
+  it('does not reference deleted four-stage skills', () => {
+    const source = readFileSync(new URL(import.meta.url), 'utf8');
+    // Build stale names dynamically so the assertion strings themselves
+    // don't trigger a false positive when scanning this file.
+    const prefix = 'workflow-';
+    for (const suffix of ['desi' + 'gn', 'stre' + 'ss', 'veri' + 'fy']) {
+      const stale = prefix + suffix;
+      expect(source).not.toContain(stale);
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Dynamic discovery covers core skills
+  // -----------------------------------------------------------------------
+
+  it('ALL_SKILLS includes every CORE_SKILL', () => {
+    for (const core of CORE_SKILLS) {
+      expect(ALL_SKILLS).toContain(core);
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // Manifest
   // -----------------------------------------------------------------------
 
@@ -67,7 +95,7 @@ describe('build-workflow-skills builder smoke tests', () => {
     expect(manifest).toHaveProperty('skills');
     expect(manifest).toHaveProperty('totalOutputs');
     expect(manifest.providers).toEqual(expect.arrayContaining(PROVIDERS));
-    expect(manifest.skills.length).toBeGreaterThanOrEqual(LOOP_SKILLS.length);
+    expect(manifest.skills.length).toBeGreaterThanOrEqual(CORE_SKILLS.length);
     for (const skill of manifest.skills) {
       expect(skill).toHaveProperty('name');
       expect(skill).toHaveProperty('version');
@@ -76,12 +104,21 @@ describe('build-workflow-skills builder smoke tests', () => {
     }
   });
 
+  it('manifest includes all core skills', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(DIST, 'manifest.json'), 'utf8'),
+    );
+    for (const core of CORE_SKILLS) {
+      expect(manifest.skills.some((s) => s.name === core)).toBe(true);
+    }
+  });
+
   // -----------------------------------------------------------------------
-  // Provider outputs — SKILL.md for each loop skill
+  // Provider outputs — SKILL.md for every discovered skill
   // -----------------------------------------------------------------------
 
   for (const provider of PROVIDERS) {
-    for (const skill of LOOP_SKILLS) {
+    for (const skill of ALL_SKILLS) {
       const relPath = `${provider}/${PROVIDER_PATHS[provider]}/${skill}/SKILL.md`;
 
       it(`${relPath} exists`, () => {
@@ -154,7 +191,13 @@ describe('build-workflow-skills builder smoke tests', () => {
     expect(plan.outputs.length).toBeGreaterThan(0);
     expect(plan.totalOutputs).toBe(plan.outputs.length);
 
-    for (const skill of LOOP_SKILLS) {
+    // Core skills must appear in the check plan
+    for (const core of CORE_SKILLS) {
+      expect(plan.skills.some((s) => s.name === core)).toBe(true);
+    }
+
+    // All discovered skills must appear in the check plan
+    for (const skill of ALL_SKILLS) {
       expect(plan.skills.some((s) => s.name === skill)).toBe(true);
     }
   });
