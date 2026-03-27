@@ -18,67 +18,60 @@ The workflow-teach interview should surface these answers:
 | Compensation requirements | If storage provisioning fails after DB schema creation, drop the schema; if email fails, do not compensate — tenant is provisioned, email retried separately |
 | Operator observability | Log each provisioning step with tenant ID, log compensation actions, stream progress to admin dashboard |
 
-## Expected Context Fields
+## Expected `.workflow.md` Sections
 
-```json
-{
-  "businessInvariants": [
-    "A tenant must not exist in a half-provisioned state — either fully provisioned or fully rolled back",
-    "Email failure does not block tenant provisioning"
-  ],
-  "idempotencyRequirements": [
-    "Database schema creation uses CREATE SCHEMA IF NOT EXISTS",
-    "Storage provisioning uses deterministic bucket name from tenant ID"
-  ],
-  "approvalRules": [],
-  "timeoutRules": [
-    "Entire onboarding workflow must complete within 5 minutes"
-  ],
-  "compensationRules": [
-    "Drop database schema if storage provisioning fails after schema creation",
-    "No compensation for email failure — tenant is considered provisioned"
-  ],
-  "observabilityRequirements": [
-    "Log provision.schema with tenant ID and status",
-    "Log provision.storage with tenant ID and status",
-    "Log compensation.schema_drop with tenant ID when rollback triggers",
-    "Stream onboarding progress to admin dashboard"
-  ]
-}
-```
+### Project Context
+
+SaaS tenant onboarding system. Needs durable workflows because provisioning involves multiple external services that must be orchestrated with compensation on failure.
+
+### Business Rules
+
+- A tenant must not exist in a half-provisioned state — either fully provisioned or fully rolled back.
+- Email failure does not block tenant provisioning.
+- Database schema creation uses `CREATE SCHEMA IF NOT EXISTS`.
+- Storage provisioning uses deterministic bucket name from tenant ID.
+
+### External Systems
+
+- Database (schema creation, teardown). Supports idempotent creation. Trigger: API call from admin dashboard.
+- Cloud storage (bucket provisioning). Idempotent by naming convention.
+- Email service (welcome email). Retryable, non-critical.
+
+### Failure Expectations
+
+- Schema creation failure: retryable (transient DB errors).
+- Storage quota exceeded: permanent (fatal).
+- Email failure: retryable, non-critical — does not block provisioning.
+- Compensation: drop database schema if storage provisioning fails after schema creation.
+- No compensation for email failure — tenant is considered provisioned.
+- Entire onboarding must complete within 5 minutes.
+
+### Observability Needs
+
+- Log provision.schema with tenant ID and status.
+- Log provision.storage with tenant ID and status.
+- Log compensation.schema_drop with tenant ID when rollback triggers.
+- Stream onboarding progress to admin dashboard.
+
+### Open Questions
+
+(none for this scenario)
 
 ## Downstream Expectations
 
-### workflow-design
+### workflow-build
 
-The blueprint must include:
+When building this workflow, the build skill should:
 
-- `compensationPlan` with schema teardown for storage failure
-- `compensationPlan` explicitly noting email has no compensation
-- `invariants` echoing the no-half-provisioned-state rule
-- `operatorSignals` including compensation action logging
-
-### workflow-stress
-
-Must flag:
-
-- Missing compensation step if storage failure lacks schema rollback
-- Timeout policy for the entire workflow
-- Whether email step failure mode is correctly classified as retryable (not fatal)
-
-### workflow-verify
-
-Must generate:
-
-- Test for happy path (all steps succeed)
-- Test for storage failure triggering schema compensation
-- Test for email failure not triggering any compensation
-- Test for overall timeout
+- Include a compensation step that drops the schema on storage failure
+- Classify email failure as retryable and non-blocking
+- Flag the 5-minute overall timeout
+- Produce tests for: happy path, storage failure triggering schema compensation, email failure not triggering compensation, overall timeout
 
 ## Verification Criteria
 
 - [ ] Interview distinguishes compensable failures (storage) from non-compensable ones (email)
-- [ ] `compensationRules` captures both the positive case (schema drop) and the negative case (no email compensation)
-- [ ] `businessInvariants` captures the no-half-provisioned-state rule
-- [ ] `observabilityRequirements` includes compensation action logging
-- [ ] Downstream stress test flags missing compensation for the storage→schema path
+- [ ] `.workflow.md` Failure Expectations captures both the positive case (schema drop) and the negative case (no email compensation)
+- [ ] `.workflow.md` Business Rules captures the no-half-provisioned-state rule
+- [ ] `.workflow.md` Observability Needs includes compensation action logging
+- [ ] Next skill recommendation is `workflow-build`

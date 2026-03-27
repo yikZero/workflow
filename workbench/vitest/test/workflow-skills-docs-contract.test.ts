@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { WORKFLOW_SCENARIOS } from '../../../lib/ai/workflow-scenarios';
 
 const ROOT = resolve(import.meta.dirname, '..', '..', '..');
 
@@ -9,62 +8,42 @@ function read(relativePath: string): string {
   return readFileSync(resolve(ROOT, relativePath), 'utf-8');
 }
 
-function extractJsonFenceAfter(
-  text: string,
-  marker: string
-): Record<string, unknown> {
-  const start = text.indexOf(marker);
-  expect(start).toBeGreaterThanOrEqual(0);
-  const afterMarker = text.slice(start);
-  const fenceStart = afterMarker.indexOf('```json');
-  expect(fenceStart).toBeGreaterThanOrEqual(0);
-  const fenceEnd = afterMarker.indexOf('\n```', fenceStart + 7);
-  expect(fenceEnd).toBeGreaterThan(fenceStart);
-  return JSON.parse(afterMarker.slice(fenceStart + 7, fenceEnd).trim());
-}
-
 describe('workflow skills docs contract surfaces', () => {
-  it('keeps README quick-start aligned with scenario registry and emitted blueprint names', () => {
-    const readme = read('skills/README.md');
-    for (const scenario of WORKFLOW_SCENARIOS) {
-      expect(readme).toContain(`/${scenario.name}`);
-      expect(readme).toContain(
-        `.workflow-skills/blueprints/${scenario.blueprintName}.json`
-      );
-    }
-  });
-
-  it('keeps the getting-started blueprint example contract-valid', () => {
+  it('documents three persisted artifacts', () => {
     const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
-    const blueprint = extractJsonFenceAfter(
-      docs,
-      'cat .workflow-skills/blueprints/approval-expiry-escalation.json'
-    );
-    expect(blueprint).toMatchObject({
-      contractVersion: '1',
-      name: 'approval-expiry-escalation',
-    });
-    for (const key of [
-      'inputs',
-      'steps',
-      'suspensions',
-      'streams',
-      'tests',
-      'antiPatternsAvoided',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-    ]) {
-      expect(blueprint[key as keyof typeof blueprint]).toBeDefined();
-    }
-  });
-
-  it('documents the full persisted artifact story honestly', () => {
-    const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
+    expect(docs).toContain('three persisted artifacts');
     expect(docs).toContain('.workflow-skills/context.json');
     expect(docs).toContain('.workflow-skills/blueprints/<name>.json');
-    expect(docs).toContain('updated in place');
     expect(docs).toContain('.workflow-skills/verification/<name>.json');
-    expect(docs).not.toContain('no persisted file path is promised');
+  });
+
+  it('shows the full verification runtime command set', () => {
+    const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
+    expect(docs).toContain('"name": "typecheck"');
+    expect(docs).toContain('"name": "test"');
+    expect(docs).toContain('"name": "focused-workflow-test"');
+  });
+
+  it('keeps README aligned with persisted verification-plan language', () => {
+    const readme = read('skills/README.md');
+    expect(readme).toContain('produces a persisted verification plan');
+    expect(readme).toContain('.workflow-skills/verification/<name>.json');
+  });
+
+  it('workflow-build skill requires a machine-parseable verification summary', () => {
+    const skill = read('skills/workflow-build/SKILL.md');
+    expect(skill).toContain('verification_plan_ready');
+    expect(skill).toContain('blueprintName');
+    expect(skill).toContain('fileCount');
+    expect(skill).toContain('testCount');
+    expect(skill).toContain('runtimeCommandCount');
+    expect(skill).toContain('contractVersion');
+  });
+
+  it('workflow-build golden demonstrates verification summary format', () => {
+    const golden = read('skills/workflow-build/goldens/compensation-saga.md');
+    expect(golden).toContain('## Verification Artifact');
+    expect(golden).toContain('### Verification Summary');
+    expect(golden).toContain('"event":"verification_plan_ready"');
   });
 });

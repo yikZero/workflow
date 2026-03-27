@@ -1,10 +1,8 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
-import {
-  allChecks,
-  getCheckManifest,
-  getCheckGroupForRuleId,
-} from './lib/workflow-skill-checks.mjs';
+import { checks, allGoldenChecks } from './lib/workflow-skill-checks.mjs';
+
+const allChecks = [...checks, ...allGoldenChecks];
 
 function log(event, data = {}) {
   process.stderr.write(
@@ -12,11 +10,11 @@ function log(event, data = {}) {
   );
 }
 
-const manifest = {
-  ...getCheckManifest(),
-  allChecks: allChecks.length,
-};
-log('manifest_loaded', manifest);
+log('manifest_loaded', {
+  skillChecks: checks.length,
+  goldenChecks: allGoldenChecks.length,
+  total: allChecks.length,
+});
 
 const filesByPath = {};
 let loadedFiles = 0;
@@ -32,7 +30,6 @@ const result = validateWorkflowSkillText(allChecks, filesByPath);
 
 for (const item of result.results) {
   log('check_evaluated', {
-    group: getCheckGroupForRuleId(item.ruleId),
     ruleId: item.ruleId,
     file: item.file,
     status: item.status,
@@ -51,13 +48,12 @@ const summary = result.results.reduce(
     }
     return acc;
   },
-  { pass: 0, fail: 0, error: 0, outOfOrder: 0, reasons: {} },
+  { pass: 0, fail: 0, error: 0, outOfOrder: 0, reasons: {} }
 );
 
 const output = {
   ...result,
   summary,
-  manifest,
 };
 
 if (!result.ok) {

@@ -1,9 +1,9 @@
 ---
 name: workflow-teach
-description: One-time setup that captures project context for workflow design skills. Use when the user wants to teach the assistant how workflows should be designed for this project. Triggers on "teach workflow", "set up workflow context", "configure workflow skills", or "workflow-teach".
+description: One-time setup that captures project context for workflow building. Use when the user wants to teach the assistant how workflows should be designed for this project. Triggers on "teach workflow", "set up workflow context", "configure workflow skills", or "workflow-teach".
 metadata:
   author: Vercel Inc.
-  version: '0.5'
+  version: '0.6'
 ---
 
 # workflow-teach
@@ -12,17 +12,14 @@ Use this skill when the user wants to teach the assistant how workflows should b
 
 ## Skill Loop Position
 
-**Stage 1 of 4** in the workflow skill loop: **teach** → design → stress → verify
+**Stage 1 of 2** in the workflow skill loop: **teach** → build
 
 | Stage | Skill | Purpose |
 |-------|-------|---------|
-| **1** | **workflow-teach** (you are here) | Capture project context |
-| 2 | workflow-design | Emit a WorkflowBlueprint |
-| 3 | workflow-stress | Pressure-test the blueprint |
-| 4 | workflow-verify | Generate test matrices and verification artifacts |
+| **1** | **workflow-teach** (you are here) | Capture project context into `.workflow.md` |
+| 2 | workflow-build | Build workflow code guided by context |
 
-**Prerequisite:** `workflow-init` (Workflow DevKit must be installed).
-**Next:** Run `workflow-design` after this skill completes.
+**Next:** Run `workflow-build` after this skill completes.
 
 ## Steps
 
@@ -60,52 +57,61 @@ Cover these exact buckets, skipping any that are already resolved from the repo:
 
 Ask only the unresolved questions in a single batch. Wait for the user's answers before proceeding to step 4.
 
-### 4. Create or update context file
+### 4. Create or update `.workflow.md`
 
-Create or update `.workflow-skills/context.json` with this exact shape:
+Create or update `.workflow.md` in the project root with the following sections. Write in plain English — this file is for humans and agents to read, not a machine schema.
 
-```json
-{
-  "contractVersion": "1",
-  "projectName": "",
-  "productGoal": "",
-  "triggerSurfaces": [],
-  "externalSystems": [],
-  "antiPatterns": [],
-  "canonicalExamples": [],
-  "businessInvariants": [],
-  "idempotencyRequirements": [],
-  "approvalRules": [],
-  "timeoutRules": [],
-  "compensationRules": [],
-  "observabilityRequirements": [],
-  "openQuestions": []
-}
+```markdown
+# .workflow.md
+
+## Project Context
+
+Project name, what it does, why it needs durable workflows, and paths to any
+existing workflow files or tests found in the repo.
+
+## Business Rules
+
+Rules that must never be violated. Include idempotency requirements here —
+which side effects must be safe to repeat and how.
+
+Examples: "An order must not be charged twice", "Refund cannot exceed original
+amount", "Payment charge uses idempotency key from order ID".
+
+## External Systems
+
+Third-party services and infrastructure the workflows interact with. Note
+which are idempotent, which have compensation APIs, and which are rate-limited.
+
+Also list trigger surfaces: API routes, webhooks, queue messages, cron jobs,
+or UI actions that start workflows.
+
+## Failure Expectations
+
+What counts as a permanent failure vs. a retryable failure in this project.
+Include approval rules (who approves, what happens on timeout), timeout and
+expiry policies, and compensation rules (what to undo when a later step fails).
+
+## Observability Needs
+
+What operators need to see in logs or streams. What the UI needs streamed
+for real-time progress.
+
+## Approved Patterns
+
+Anti-patterns that are relevant to this project's workflow surfaces. These
+serve as awareness for anyone building workflows in this codebase.
+
+## Open Questions
+
+Unresolved questions that could not be answered from the repo scan or the
+interview. These will be surfaced again by workflow-build.
 ```
 
-Field guidance:
-
-| Field | What to capture |
-|-------|----------------|
-| `projectName` | The name of the project from `package.json` or repo root |
-| `productGoal` | A one-sentence summary of what the project does and why workflows are needed |
-| `triggerSurfaces` | How workflows get started: API routes, webhooks, queue messages, cron jobs, UI actions |
-| `externalSystems` | Third-party services the workflows interact with: databases, payment providers, email services, storage, etc. |
-| `antiPatterns` | Which anti-patterns from the list below are relevant to this project |
-| `canonicalExamples` | Paths to existing workflow files or tests that demonstrate the project's patterns |
-| `businessInvariants` | Rules that must never be violated (e.g. "an order must not be charged twice", "refund cannot exceed original amount") |
-| `idempotencyRequirements` | Side effects that must be safe to repeat and the strategy for each (e.g. "payment charge uses idempotency key from order ID") |
-| `approvalRules` | Steps requiring human approval: who approves, token strategy, and what happens on timeout |
-| `timeoutRules` | Expiry and timeout policies (e.g. "approval expires after 72 hours", "webhook must respond within 30 seconds") |
-| `compensationRules` | What to undo when a later step fails (e.g. "refund payment if shipping fails", "revoke access if onboarding incomplete") |
-| `observabilityRequirements` | What operators need to see in logs or streams (e.g. "stream step progress to UI", "log payment confirmation with transaction ID") |
-| `openQuestions` | Unresolved questions that could not be answered from the repo or the interview — carry these forward for downstream skills |
-
-Populate fields from both the repo scan (step 2) and the interview answers (step 3). For any question the user could not answer, add it to `openQuestions` so downstream skills can surface it again.
+Populate sections from both the repo scan (step 2) and the interview answers (step 3). For any question the user could not answer, add it to **Open Questions** so `workflow-build` can surface it again.
 
 ### 5. Evaluate anti-patterns
 
-Include the following anti-patterns in `antiPatterns` when they are relevant to the project's workflow surfaces:
+Include the following anti-patterns in the **Approved Patterns** section when they are relevant to the project's workflow surfaces:
 
 - **Node.js APIs in `"use workflow"`** — Workflow functions run in a sandboxed VM without full Node.js access. Any use of `fs`, `path`, `crypto`, `Buffer`, `process`, or other Node.js built-ins must live in a `"use step"` function.
 - **Side effects split across too many tiny steps** — Each step is persisted and replayed. Over-granular step boundaries add latency, increase event log size, and make debugging harder. Group related I/O into a single step unless you need independent retry or suspension between them.
@@ -120,15 +126,15 @@ When you finish, output these exact sections:
 
 ## Captured Context
 
-Summarize what was discovered: project name, goal, trigger surfaces found, external systems identified, relevant anti-patterns, and any canonical examples located in the repo. Also summarize the business invariants, idempotency requirements, approval rules, timeout rules, compensation rules, and observability requirements gathered from the interview.
+Summarize what was discovered: project name, goal, trigger surfaces found, external systems identified, relevant anti-patterns, and any canonical examples located in the repo. Also summarize the business rules, failure expectations, and observability needs gathered from the interview.
 
 ## Open Questions
 
-List anything that could not be determined from the repo scan or the interview and needs further investigation. These should match the `openQuestions` field in `context.json`.
+List anything that could not be determined from the repo scan or the interview and needs further investigation. These should match the **Open Questions** section in `.workflow.md`.
 
 ## Next Recommended Skill
 
-Recommend the next skill to use based on what was captured. Typically this is `workflow-design` to create a workflow blueprint, or `workflow` if the user is ready to implement directly. For externally-driven workflows (webhooks, hooks, sleep, child workflows), recommend `workflow-design` followed immediately by `workflow-stress` to pressure-test the blueprint before implementation.
+Recommend `workflow-build` to start building workflows using the captured context. For simple workflows with no suspensions, the user can also use `workflow` directly.
 
 ---
 
@@ -136,4 +142,4 @@ Recommend the next skill to use based on what was captured. Typically this is `w
 
 **Input:** `Teach workflow skills about our refund approval system.`
 
-**Expected output:** A filled `.workflow-skills/context.json` capturing the refund approval domain — including business invariants like "refund cannot exceed original charge", idempotency requirements for the payment refund call, approval rules for who can authorize refunds, timeout rules for approval expiry, compensation rules for partial refund failures, and observability requirements for audit logging — plus the three headings above with specific findings about the project's workflow surfaces, open questions that need follow-up, and which skill to use next.
+**Expected output:** A `.workflow.md` file capturing the refund approval domain — including business rules like "refund cannot exceed original charge" and "payment charge uses idempotency key from order ID", failure expectations covering approval timeout behavior and compensation rules, observability needs for audit logging — plus the three output headings above with specific findings, open questions, and a recommendation to run `workflow-build` next.

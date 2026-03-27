@@ -1,69 +1,72 @@
 /**
- * Shared check registry for workflow skill validation.
- * Imported by both the CLI validator and the test suite.
+ * Validation rules for the two-skill workflow pipeline: teach → build.
+ *
+ * Each check targets a specific file and declares required/forbidden content.
+ * The validator engine in validate-workflow-skill-files.mjs runs these checks
+ * against actual file contents.
  */
 
-export const checks = [
+// ---------------------------------------------------------------------------
+// workflow-teach checks
+// ---------------------------------------------------------------------------
+
+export const teachChecks = [
   {
     ruleId: 'skill.workflow-teach',
     file: 'skills/workflow-teach/SKILL.md',
     mustInclude: [
-      '.workflow-skills/context.json',
-      'contractVersion',
-      'projectName',
-      'productGoal',
-      'triggerSurfaces',
-      'externalSystems',
-      'antiPatterns',
-      'canonicalExamples',
-      'businessInvariants',
-      'idempotencyRequirements',
-      'approvalRules',
-      'timeoutRules',
-      'compensationRules',
-      'observabilityRequirements',
-      'openQuestions',
-      'getWritable()` may be called in either',
+      '.workflow.md',
+      '## Project Context',
+      '## Business Rules',
+      '## External Systems',
+      '## Failure Expectations',
+      '## Observability Needs',
+      '## Approved Patterns',
+      '## Open Questions',
     ],
     mustNotInclude: [
-      '`getWritable()` and stream consumption must happen inside',
-      '`getWritable()` must be in a step',
+      '.workflow-skills/context.json',
+      'contractVersion',
+      'WorkflowBlueprint',
     ],
   },
   {
     ruleId: 'skill.workflow-teach.interview',
     file: 'skills/workflow-teach/SKILL.md',
     mustInclude: [
-      'What starts this workflow, and who or what emits that event?',
+      'What starts this workflow',
       'Which side effects must be safe to repeat',
-      'What counts as a permanent failure vs. a retryable failure?',
-      'Does any step require human approval, and who is allowed to approve?',
-      'What timeout or expiry rules exist?',
-      'If a side effect succeeds and a later step fails, what compensation is required?',
-      'What must operators be able to observe in logs/streams?',
-      'not already inferable from the repo',
+      'What counts as a permanent failure',
+      'Does any step require human approval',
+      'What timeout or expiry rules exist',
+      'what compensation is required',
+      'What must operators be able to observe',
     ],
   },
   {
-    ruleId: 'skill.workflow-teach.sequencing',
+    ruleId: 'skill.workflow-teach.loop-position',
     file: 'skills/workflow-teach/SKILL.md',
-    mustInclude: [
+    mustInclude: ['Stage 1 of 2', 'workflow-build'],
+    mustNotInclude: [
+      'Stage 1 of 4',
       'workflow-design',
       'workflow-stress',
-      'externally-driven workflows',
+      'workflow-verify',
     ],
-    mustAppearInOrder: [
-      'recommend `workflow-design` followed immediately by',
-      '`workflow-stress` to pressure-test the blueprint',
-    ],
-    suggestedFix:
-      'For externally-driven workflows, recommend workflow-design before workflow-stress.',
   },
+];
+
+// ---------------------------------------------------------------------------
+// workflow-build checks
+// ---------------------------------------------------------------------------
+
+export const buildChecks = [
   {
-    ruleId: 'skill.workflow-design',
-    file: 'skills/workflow-design/SKILL.md',
+    ruleId: 'skill.workflow-build',
+    file: 'skills/workflow-build/SKILL.md',
     mustInclude: [
-      'WorkflowBlueprint',
+      '.workflow.md',
+      'skills/workflow/SKILL.md',
       '"use workflow"',
       '"use step"',
       'createHook',
@@ -72,819 +75,214 @@ export const checks = [
       'RetryableError',
       'FatalError',
       'start()',
-      'getWritable()` may be called in workflow or step context',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'businessInvariants',
-      'compensationRules',
-      'observabilityRequirements',
-      'idempotency rationale',
-    ],
-    mustNotInclude: [
-      '`getWritable()` and any stream consumption must be inside `"use step"`',
-    ],
-  },
-  {
-    ruleId: 'skill.workflow-design.sequencing',
-    file: 'skills/workflow-design/SKILL.md',
-    mustInclude: [
-      'workflow-stress',
-      'workflow-verify',
-      'hooks, webhooks, sleep, streams, retries, or child workflows',
-    ],
-    mustAppearInOrder: [
-      'run `workflow-stress` before `workflow-verify`',
-      'hooks, webhooks, sleep, streams, retries, or child workflows',
-    ],
-    suggestedFix:
-      'Mention workflow-stress before workflow-verify in the next-step guidance.',
-  },
-  {
-    ruleId: 'skill.workflow-stress',
-    file: 'skills/workflow-stress/SKILL.md',
-    mustInclude: [
-      'determinism boundary',
-      'step granularity',
-      'serialization issues',
-      'idempotency keys',
-      'Blueprint Patch',
-      'getWritable()` is called in workflow context',
-      'seeded workflow-context APIs',
-    ],
-    mustNotInclude: [
-      'Is `getWritable()` called from workflow context? (It must be in a step.)',
-      'access `Date.now()`, `Math.random()`',
-      'Are all non-deterministic operations isolated in `"use step"` functions?',
-    ],
-  },
-  {
-    ruleId: 'skill.workflow-verify',
-    file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: [
-      'waitForHook()',
-      'resumeHook()',
-      'resumeWebhook()',
-      'waitForSleep()',
-      'wakeUp',
-      'run.returnValue',
-      'new Request(',
-      'JSON.stringify(',
-    ],
-    mustNotInclude: ["resumeWebhook('webhook-token', {", 'status: 200,'],
-  },
-  {
-    ruleId: 'skill.workflow-verify.contract-fields',
-    file: 'skills/workflow-verify/SKILL.md',
-    sectionHeading: '### `## Test Matrix`',
-    mustIncludeWithinSection: [
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'failure-path',
-      'stream/log',
-    ],
-    suggestedFix:
-      'Make workflow-verify turn invariants into assertions, compensationPlan into failure-path coverage, and operatorSignals into runtime observability checks.',
-  },
-  {
-    ruleId: 'skill.workflow-verify.sequencing',
-    file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: ['original or a stress-patched version'],
-  },
-  {
-    ruleId: 'skill.workflow-teach.loop-position',
-    file: 'skills/workflow-teach/SKILL.md',
-    mustInclude: [
-      'Skill Loop Position',
-      'Stage 1 of 4',
-      'teach',
-      'design',
-      'stress',
-      'verify',
-    ],
-    mustAppearInOrder: ['Stage 1 of 4', 'workflow-design'],
-    suggestedFix:
-      'workflow-teach must declare its position as Stage 1 of 4 in the skill loop.',
-  },
-  {
-    ruleId: 'skill.workflow-design.loop-position',
-    file: 'skills/workflow-design/SKILL.md',
-    mustInclude: ['Skill Loop Position', 'Stage 2 of 4', 'contractVersion'],
-    suggestedFix:
-      'workflow-design must declare Stage 2 of 4 and require contractVersion in blueprints.',
-  },
-  {
-    ruleId: 'skill.workflow-stress.loop-position',
-    file: 'skills/workflow-stress/SKILL.md',
-    mustInclude: ['Skill Loop Position', 'Stage 3 of 4'],
-    suggestedFix:
-      'workflow-stress must declare its position as Stage 3 of 4 in the skill loop.',
-  },
-  {
-    ruleId: 'skill.workflow-verify.loop-position',
-    file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: ['Skill Loop Position', 'Stage 4 of 4'],
-    suggestedFix:
-      'workflow-verify must declare its position as Stage 4 of 4 in the skill loop.',
-  },
-];
-
-export const heroGoldenChecks = [
-  {
-    ruleId: 'golden.hero.teach',
-    file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
-    mustInclude: [
-      'approvalRules',
-      'timeoutRules',
-      'escalation',
-      'deterministic',
-      'hook',
-      'sleep',
-      'observabilityRequirements',
-      'businessInvariants',
-      'idempotencyRequirements',
-      'approval:po-${poNumber}',
-      'escalation:po-${poNumber}',
-      '48 hours',
-      '24 hours',
-    ],
-  },
-  {
-    ruleId: 'golden.hero.design',
-    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
-    mustInclude: [
-      'createHook',
-      'sleep',
-      'resumeHook',
-      'waitForHook',
-      'waitForSleep',
-      'wakeUp',
-      'antiPatternsAvoided',
-      'deterministic',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'idempotencyKey',
-      'approval:po-',
-      'escalation:po-',
-      'contractVersion',
-    ],
-  },
-  {
-    ruleId: 'golden.hero.design.sequence',
-    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
-    mustInclude: [
-      'await waitForHook(run',
-      'await resumeHook(',
-      'await waitForSleep(run)',
-      '.wakeUp(',
-    ],
-    mustAppearInOrder: [
-      'await waitForHook(run',
-      'await resumeHook(',
-      'await waitForSleep(run)',
-      '.wakeUp(',
-    ],
-    suggestedFix:
-      'Show hook wait/resume before sleep wait/wakeUp in the example flow.',
-  },
-  {
-    ruleId: 'golden.hero.design.blueprint-schema',
-    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-        'suspensions',
-        'tests',
-      ],
-    },
-    suggestedFix:
-      'The hero design golden must contain a valid JSON blueprint with all required WorkflowBlueprint fields.',
-  },
-  {
-    ruleId: 'golden.hero.stress',
-    file: 'skills/workflow-stress/goldens/approval-expiry-escalation.md',
-    mustInclude: [
-      'Idempotency keys',
-      'Integration test coverage',
-      'escalation',
-      'timeout',
-      'Blueprint Patch',
-      'waitForSleep',
-      'wakeUp',
-      'resumeHook',
-      'Retry semantics',
       'Determinism boundary',
-    ],
-  },
-  {
-    ruleId: 'golden.hero.stress.schema',
-    file: 'skills/workflow-stress/goldens/approval-expiry-escalation.md',
-    jsonFence: {
-      language: 'json',
-      requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
-    },
-    suggestedFix:
-      'The hero stress golden must contain a structurally valid blueprint patch with policy arrays.',
-  },
-];
-
-export const goldenChecks = [
-  {
-    ruleId: 'golden.approval-hook-sleep',
-    file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
-    mustInclude: [
-      'createHook',
-      'sleep',
-      'resumeHook',
-      'waitForHook',
-      'waitForSleep',
-      'wakeUp',
-      'antiPatternsAvoided',
-      'deterministic',
-    ],
-  },
-  {
-    ruleId: 'golden.approval-hook-sleep.sequence',
-    file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
-    mustInclude: [
-      'await waitForHook(run',
-      'await resumeHook(',
-      'await waitForSleep(run)',
-      '.wakeUp(',
-    ],
-    mustAppearInOrder: [
-      'await waitForHook(run',
-      'await resumeHook(',
-      'await waitForSleep(run)',
-      '.wakeUp(',
-    ],
-    suggestedFix:
-      'Show hook wait/resume before sleep wait/wakeUp in the example flow.',
-  },
-  {
-    ruleId: 'golden.webhook-ingress',
-    file: 'skills/workflow-design/goldens/webhook-ingress.md',
-    mustInclude: [
-      'createWebhook',
-      'resumeWebhook',
-      'waitForHook',
-      'hook.token',
-      'new Request(',
-      'JSON.stringify(',
-      'antiPatternsAvoided',
-      'webhook',
-    ],
-    mustNotInclude: [
-      'resumeWebhook(run, {',
-      "resumeWebhook('webhook-token', {",
-    ],
-    suggestedFix:
-      'Use waitForHook(run) to obtain hook.token, then call resumeWebhook(hook.token, new Request(...)).',
-  },
-  {
-    ruleId: 'golden.webhook-ingress.sequence',
-    file: 'skills/workflow-design/goldens/webhook-ingress.md',
-    mustInclude: [
-      'const hook = await waitForHook(run);',
-      'await resumeWebhook(',
-    ],
-    mustAppearInOrder: [
-      'const hook = await waitForHook(run);',
-      'await resumeWebhook(',
-    ],
-    suggestedFix: 'Wait for webhook registration before calling resumeWebhook.',
-  },
-  {
-    ruleId: 'golden.human-in-the-loop-streaming',
-    file: 'skills/workflow-design/goldens/human-in-the-loop-streaming.md',
-    mustInclude: [
-      'createHook',
-      'getWritable',
-      'stream',
-      'resumeHook',
-      'waitForHook',
-      'antiPatternsAvoided',
-      'getWritable()` may be called in workflow or step context',
-    ],
-    mustNotInclude: [
-      '`getWritable()` and any stream\n  consumption must be inside steps',
-      'Stream writes must be inside `"use step"` functions',
-    ],
-  },
-];
-
-export const stressGoldenChecks = [
-  {
-    ruleId: 'golden.stress.compensation-saga',
-    file: 'skills/workflow-stress/goldens/compensation-saga.md',
-    mustInclude: [
-      'compensation',
-      'idempotency',
-      'Rollback',
-      'Retry semantics',
-      'Integration test coverage',
-      'refundPayment',
-    ],
-  },
-  {
-    ruleId: 'golden.stress.compensation-saga.schema',
-    file: 'skills/workflow-stress/goldens/compensation-saga.md',
-    jsonFence: {
-      language: 'json',
-      requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
-    },
-    suggestedFix:
-      'Keep defective stress goldens semantically wrong, but structurally valid against WorkflowBlueprint.',
-  },
-  {
-    ruleId: 'golden.stress.child-workflow-handoff',
-    file: 'skills/workflow-stress/goldens/child-workflow-handoff.md',
-    mustInclude: [
-      'start()',
-      'runtime',
-      'step',
-      'serialization',
       'Step granularity',
-      'start()` in workflow context must be wrapped in a step',
+      'Idempotency keys',
+      'Rollback',
+      'compensation',
+      'self-review',
+      'Self-review',
+    ],
+    mustNotInclude: [
+      'WorkflowBlueprint',
+      '.workflow-skills/context.json',
+      '.workflow-skills/blueprints',
     ],
   },
   {
-    ruleId: 'golden.stress.multi-event-hook-loop',
-    file: 'skills/workflow-stress/goldens/multi-event-hook-loop.md',
+    ruleId: 'skill.workflow-build.loop-position',
+    file: 'skills/workflow-build/SKILL.md',
+    mustInclude: ['Stage 2 of 2'],
+    mustNotInclude: ['Stage 2 of 4', 'Stage 3 of 4', 'Stage 4 of 4'],
+  },
+  {
+    ruleId: 'skill.workflow-build.stress-checklist',
+    file: 'skills/workflow-build/SKILL.md',
     mustInclude: [
-      'AsyncIterable',
-      'Promise.all',
-      'resumeHook',
-      'deterministic',
-      'Hook token strategy',
-      'Suspension primitive choice',
+      '### 1. Determinism boundary',
+      '### 2. Step granularity',
+      '### 3. Pass-by-value',
+      '### 4. Hook token strategy',
+      '### 5. Webhook response mode',
+      '### 6. `start()` placement',
+      '### 7. Stream I/O placement',
+      '### 8. Idempotency keys',
+      '### 9. Retry semantics',
+      '### 10. Rollback',
+      '### 11. Observability streams',
+      '### 12. Integration test coverage',
     ],
   },
   {
-    ruleId: 'golden.stress.rate-limit-retry',
-    file: 'skills/workflow-stress/goldens/rate-limit-retry.md',
+    ruleId: 'skill.workflow-build.hard-rules',
+    file: 'skills/workflow-build/SKILL.md',
     mustInclude: [
-      'RetryableError',
-      'FatalError',
-      '429',
-      'idempotency',
-      'Retry semantics',
-      'backoff',
+      'Workflow functions orchestrate only',
+      'All side effects live in',
+      '`createHook()` may use deterministic tokens',
+      '`createWebhook()` may NOT use deterministic tokens',
+      'Stream I/O happens in steps',
+      '`start()` inside a workflow must be wrapped in a step',
+      'Return mutated values from steps',
     ],
   },
   {
-    ruleId: 'golden.stress.approval-timeout-streaming',
-    file: 'skills/workflow-stress/goldens/approval-timeout-streaming.md',
+    ruleId: 'skill.workflow-build.interactive-phases',
+    file: 'skills/workflow-build/SKILL.md',
     mustInclude: [
-      'getWritable()',
-      'stream',
-      'waitForSleep',
-      'wakeUp',
-      'Determinism boundary',
-      'Stream I/O placement',
-      'getWritable()` may be called in workflow context',
+      'Phase 1',
+      'Phase 2',
+      'Phase 3',
+      'Phase 4',
+      'Phase 5',
+      'Propose step boundaries',
+      'Flag relevant traps',
+      'Decide failure modes',
+      'Write code',
     ],
-    mustNotInclude: ['`getWritable()` must be in a step'],
+    mustAppearInOrder: ['Phase 1', 'Phase 2', 'Phase 3', 'Phase 4', 'Phase 5'],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Teach golden checks
+// ---------------------------------------------------------------------------
 
 export const teachGoldenChecks = [
-  {
-    ruleId: 'golden.teach.duplicate-webhook-order',
-    file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
-    mustInclude: [
-      'idempotency',
-      'businessInvariants',
-      'idempotencyRequirements',
-      'compensationRules',
-      'observabilityRequirements',
-      'duplicate',
-      'webhook',
-    ],
-  },
   {
     ruleId: 'golden.teach.approval-expiry-escalation',
     file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
     mustInclude: [
-      'approvalRules',
-      'timeoutRules',
-      'escalation',
-      'deterministic',
-      'hook',
-      'sleep',
-      'observabilityRequirements',
+      '## Interview Context',
+      '## Expected `.workflow.md` Sections',
+      '### Business Rules',
+      '### Failure Expectations',
+      '### Observability Needs',
+      'workflow-build',
+    ],
+    mustNotInclude: [
+      'context.json',
+      'WorkflowBlueprint',
+      'workflow-design',
+      'workflow-stress',
+      'workflow-verify',
     ],
   },
   {
-    ruleId: 'golden.teach.partial-side-effect-compensation',
-    file: 'skills/workflow-teach/goldens/partial-side-effect-compensation.md',
+    ruleId: 'golden.teach.duplicate-webhook-order',
+    file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
     mustInclude: [
-      'compensationRules',
-      'businessInvariants',
-      'compensation',
-      'rollback',
-      'idempotencyRequirements',
-      'observabilityRequirements',
+      '## Interview Context',
+      '## Expected `.workflow.md` Sections',
+      '### Business Rules',
+      'idempotency',
+      'workflow-build',
     ],
+    mustNotInclude: ['context.json', 'WorkflowBlueprint'],
   },
   {
     ruleId: 'golden.teach.operator-observability-streams',
     file: 'skills/workflow-teach/goldens/operator-observability-streams.md',
     mustInclude: [
-      'observabilityRequirements',
-      'streams',
-      'getWritable',
-      'operatorSignals',
-      'namespace',
-      'businessInvariants',
-    ],
-  },
-];
-
-export const downstreamChecks = [
-  {
-    ruleId: 'downstream.design.invariants',
-    file: 'skills/workflow-design/SKILL.md',
-    mustInclude: [
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'businessInvariants',
-      'compensationRules',
-      'observabilityRequirements',
-    ],
-    suggestedFix:
-      'workflow-design must surface invariants, compensationPlan, and operatorSignals from context.',
-  },
-  {
-    ruleId: 'downstream.design.idempotency-rationale',
-    file: 'skills/workflow-design/SKILL.md',
-    mustInclude: ['idempotency rationale', 'idempotency key'],
-    suggestedFix:
-      'workflow-design must require idempotency rationale for every irreversible side effect.',
-  },
-  {
-    ruleId: 'downstream.stress.idempotency',
-    file: 'skills/workflow-stress/SKILL.md',
-    mustInclude: ['idempotency keys', 'idempotency strategy'],
-    suggestedFix:
-      'workflow-stress must enforce idempotency checks for every step with external side effects.',
-  },
-  {
-    ruleId: 'downstream.stress.compensation',
-    file: 'skills/workflow-stress/SKILL.md',
-    mustInclude: ['compensation', 'Rollback', 'partial-success'],
-    suggestedFix:
-      'workflow-stress must enforce compensation policy for partial-success scenarios.',
-  },
-  {
-    ruleId: 'downstream.stress.timeout',
-    file: 'skills/workflow-stress/SKILL.md',
-    mustInclude: ['timeout', 'failure paths'],
-    suggestedFix:
-      'workflow-stress must check timeout and expiry behavior for suspensions.',
-  },
-  {
-    ruleId: 'downstream.verify.expiry-tests',
-    file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: ['waitForSleep', 'wakeUp', 'resumeHook'],
-    suggestedFix:
-      'workflow-verify must generate tests exercising sleep/wakeUp for expiry and resumeHook for approvals.',
-  },
-  {
-    ruleId: 'downstream.design.contractVersion',
-    file: 'skills/workflow-design/SKILL.md',
-    mustInclude: ['contractVersion'],
-    suggestedFix:
-      'workflow-design must require contractVersion in emitted blueprints for backward compatibility.',
-  },
-  {
-    ruleId: 'downstream.teach.contractVersion',
-    file: 'skills/workflow-teach/SKILL.md',
-    mustInclude: ['contractVersion'],
-    suggestedFix:
-      'workflow-teach must include contractVersion in the context.json template.',
-  },
-];
-
-export const scenarioSkillChecks = [
-  {
-    ruleId: 'scenario.workflow-approval',
-    file: 'skills/workflow-approval/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'hook',
-      'sleep',
-      'approval',
-      'expiry',
-      'escalation',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
-    ],
-  },
-  {
-    ruleId: 'scenario.workflow-webhook',
-    file: 'skills/workflow-webhook/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'webhook',
-      'duplicate delivery',
-      'idempotency',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
-    ],
-  },
-  {
-    ruleId: 'scenario.workflow-saga',
-    file: 'skills/workflow-saga/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'compensation',
-      'partial',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
-    ],
-  },
-  {
-    ruleId: 'scenario.workflow-timeout',
-    file: 'skills/workflow-timeout/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'sleep',
-      'hook',
-      'waitForSleep',
-      'wakeUp',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
-    ],
-  },
-  {
-    ruleId: 'scenario.workflow-idempotency',
-    file: 'skills/workflow-idempotency/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'retry',
-      'duplicate',
-      'idempotency',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
-    ],
-  },
-  {
-    ruleId: 'scenario.workflow-observe',
-    file: 'skills/workflow-observe/SKILL.md',
-    mustInclude: [
-      'user-invocable: true',
-      'argument-hint:',
-      'workflow-teach',
-      'workflow-design',
-      'workflow-stress',
-      'workflow-verify',
-      'operatorSignals',
+      '## Interview Context',
+      '## Expected `.workflow.md` Sections',
+      '### Observability Needs',
       'stream',
-      'namespace',
-      '.workflow-skills/context.json',
-      '.workflow-skills/blueprints/',
+      'workflow-build',
     ],
+    mustNotInclude: ['context.json', 'WorkflowBlueprint'],
+  },
+  {
+    ruleId: 'golden.teach.partial-side-effect-compensation',
+    file: 'skills/workflow-teach/goldens/partial-side-effect-compensation.md',
+    mustInclude: [
+      '## Interview Context',
+      '## Expected `.workflow.md` Sections',
+      '### Failure Expectations',
+      'compensation',
+      'workflow-build',
+    ],
+    mustNotInclude: ['context.json', 'WorkflowBlueprint'],
   },
 ];
 
-export const scenarioGoldenChecks = [
+// ---------------------------------------------------------------------------
+// Build golden checks
+// ---------------------------------------------------------------------------
+
+export const buildGoldenChecks = [
   {
-    ruleId: 'golden.scenario.approval',
-    file: 'skills/workflow-approval/goldens/approval-expiry-escalation.md',
+    ruleId: 'golden.build.compensation-saga',
+    file: 'skills/workflow-build/goldens/compensation-saga.md',
     mustInclude: [
-      'approval',
-      'escalation',
-      'hook',
-      'sleep',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'start',
-      'getRun',
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '"use step"',
+      'compensation',
+      'idempotency',
+      'refund',
+    ],
+  },
+  {
+    ruleId: 'golden.build.child-workflow-handoff',
+    file: 'skills/workflow-build/goldens/child-workflow-handoff.md',
+    mustInclude: [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '## Expected Code Output',
+      '"use step"',
+      'start()',
+    ],
+  },
+  {
+    ruleId: 'golden.build.rate-limit-retry',
+    file: 'skills/workflow-build/goldens/rate-limit-retry.md',
+    mustInclude: [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      'RetryableError',
+      'FatalError',
+      '429',
+    ],
+  },
+  {
+    ruleId: 'golden.build.approval-timeout-streaming',
+    file: 'skills/workflow-build/goldens/approval-timeout-streaming.md',
+    mustInclude: [
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      'getWritable',
       'waitForHook',
       'resumeHook',
       'waitForSleep',
       'wakeUp',
-      'run.returnValue',
     ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-        'suspensions',
-        'tests',
-      ],
-    },
   },
   {
-    ruleId: 'golden.scenario.webhook',
-    file: 'skills/workflow-webhook/goldens/duplicate-webhook-order.md',
+    ruleId: 'golden.build.multi-event-hook-loop',
+    file: 'skills/workflow-build/goldens/multi-event-hook-loop.md',
     mustInclude: [
-      'duplicate',
-      'webhook',
-      'idempotency',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'start',
-      'getRun',
-      'resumeWebhook',
-      'run.returnValue',
+      '## What the Build Skill Should Catch',
+      '### Phase 2',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      'createHook',
+      'Promise.all',
+      'deterministic',
     ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-      ],
-    },
-  },
-  {
-    ruleId: 'golden.scenario.saga',
-    file: 'skills/workflow-saga/goldens/partial-side-effect-compensation.md',
-    mustInclude: [
-      'compensation',
-      'partial',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'start',
-      'getRun',
-      'run.returnValue',
-    ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-      ],
-    },
-  },
-  {
-    ruleId: 'golden.scenario.timeout',
-    file: 'skills/workflow-timeout/goldens/approval-timeout-streaming.md',
-    mustInclude: [
-      'timeout',
-      'sleep',
-      'hook',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'waitForSleep',
-      'wakeUp',
-      'start',
-      'getRun',
-      'run.returnValue',
-    ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-        'suspensions',
-      ],
-    },
-  },
-  {
-    ruleId: 'golden.scenario.idempotency',
-    file: 'skills/workflow-idempotency/goldens/duplicate-webhook-order.md',
-    mustInclude: [
-      'idempotency',
-      'duplicate',
-      'webhook',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'operatorSignals',
-      'start',
-      'getRun',
-      'resumeWebhook',
-      'run.returnValue',
-    ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-      ],
-    },
-  },
-  {
-    ruleId: 'golden.scenario.observe',
-    file: 'skills/workflow-observe/goldens/operator-observability-streams.md',
-    mustInclude: [
-      'operatorSignals',
-      'stream',
-      'namespace',
-      'contractVersion',
-      'invariants',
-      'compensationPlan',
-      'start',
-      'getRun',
-      'run.returnValue',
-    ],
-    jsonFence: {
-      language: 'json',
-      requiredKeys: [
-        'contractVersion',
-        'name',
-        'invariants',
-        'compensationPlan',
-        'operatorSignals',
-        'steps',
-        'streams',
-      ],
-    },
   },
 ];
 
-export const checkGroups = {
-  checks,
-  goldenChecks,
-  stressGoldenChecks,
-  teachGoldenChecks,
-  heroGoldenChecks,
-  downstreamChecks,
-  scenarioSkillChecks,
-  scenarioGoldenChecks,
-};
+// ---------------------------------------------------------------------------
+// Aggregated check lists
+// ---------------------------------------------------------------------------
 
-export function getCheckManifest() {
-  return Object.fromEntries(
-    Object.entries(checkGroups).map(([groupName, groupChecks]) => [
-      groupName,
-      groupChecks.length,
-    ])
-  );
-}
+export const checks = [...teachChecks, ...buildChecks];
 
-export function getCheckGroupForRuleId(ruleId) {
-  for (const [groupName, groupChecks] of Object.entries(checkGroups)) {
-    if (groupChecks.some((check) => check.ruleId === ruleId)) {
-      return groupName;
-    }
-  }
-  return 'unknown';
-}
-
-export const allChecks = Object.values(checkGroups).flat();
+export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks];

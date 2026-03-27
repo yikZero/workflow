@@ -18,69 +18,55 @@ The workflow-teach interview should surface these answers:
 | Compensation requirements | No compensation needed — approval flow is read-only until final decision; if auto-rejected, requester is notified but no side effects to undo |
 | Operator observability | Log approval request with PO number and assigned approver, log escalation trigger, log final decision (approved/rejected/auto-rejected) |
 
-## Expected Context Fields
+## Expected `.workflow.md` Sections
 
-```json
-{
-  "businessInvariants": [
-    "A purchase order must receive exactly one final decision: approved, rejected, or auto-rejected",
-    "Escalation must only trigger after the primary approval window expires"
-  ],
-  "idempotencyRequirements": [
-    "Notification emails use PO number as deduplication key"
-  ],
-  "approvalRules": [
-    "Manager approves POs over $5,000 with token approval:po-${poNumber}",
-    "Director is escalation approver with token escalation:po-${poNumber}",
-    "Manager timeout: 48 hours triggers escalation",
-    "Director timeout: 24 hours triggers auto-rejection"
-  ],
-  "timeoutRules": [
-    "Manager approval expires after 48 hours",
-    "Director escalation expires after 24 hours",
-    "Total approval window is 72 hours maximum"
-  ],
-  "compensationRules": [],
-  "observabilityRequirements": [
-    "Log approval.requested with PO number and assigned manager",
-    "Log approval.escalated with PO number and director",
-    "Log approval.decided with final status and decision maker"
-  ]
-}
-```
+### Project Context
+
+Procurement approval system. Needs durable workflows because approval chains span hours to days and must survive server restarts.
+
+### Business Rules
+
+- A purchase order must receive exactly one final decision: approved, rejected, or auto-rejected.
+- Escalation must only trigger after the primary approval window expires.
+- Notification emails use PO number as deduplication key.
+
+### External Systems
+
+- Internal notification service (email). Trigger: API call when PO is submitted.
+
+### Failure Expectations
+
+- Approval timeout is permanent — escalate to director or auto-reject.
+- Email delivery failure is retryable.
+- Manager approval: `approval:po-${poNumber}` hook, 48-hour timeout.
+- Director escalation: `escalation:po-${poNumber}` hook, 24-hour timeout.
+- No compensation needed — approval flow is read-only until final decision.
+
+### Observability Needs
+
+- Log approval.requested with PO number and assigned manager.
+- Log approval.escalated with PO number and director.
+- Log approval.decided with final status and decision maker.
+
+### Open Questions
+
+(none for this scenario)
 
 ## Downstream Expectations
 
-### workflow-design
+### workflow-build
 
-The blueprint must include:
+When building this workflow, the build skill should:
 
-- Two hook suspensions with deterministic tokens: `approval:po-${poNumber}` and `escalation:po-${poNumber}`
-- Sleep suspensions for 48h and 24h timeouts
-- `invariants` echoing the single-decision and escalation-ordering rules
-- `operatorSignals` for each approval lifecycle event
-
-### workflow-stress
-
-Must flag:
-
-- Missing expiry behavior if approval hooks lack paired sleep timeouts
-- Missing test for the escalation path
-- Missing test for the auto-rejection path
-
-### workflow-verify
-
-Must generate:
-
-- Test for manager-approves-within-window (happy path)
-- Test for manager-timeout → director-escalation → director-approves
-- Test for full-timeout → auto-rejection
-- Each test must use `waitForHook`, `resumeHook`, `waitForSleep`, `wakeUp`
+- Use two hook suspensions with deterministic tokens: `approval:po-${poNumber}` and `escalation:po-${poNumber}`
+- Pair each hook with a sleep timeout (48h and 24h) using `Promise.race`
+- Produce tests for: manager-approves (happy path), manager-timeout → director-approves, full-timeout → auto-rejection
+- Each test uses `waitForHook`, `resumeHook`, `waitForSleep`, `wakeUp`
 
 ## Verification Criteria
 
 - [ ] Interview captures both approval actors with their token strategies
-- [ ] `approvalRules` includes timeout behavior for each actor
-- [ ] `timeoutRules` captures both the 48h and 24h windows
-- [ ] `observabilityRequirements` covers the full approval lifecycle
-- [ ] Downstream blueprint pairs every approval hook with a timeout sleep
+- [ ] `.workflow.md` Business Rules includes the single-decision invariant
+- [ ] `.workflow.md` Failure Expectations captures both timeout windows
+- [ ] `.workflow.md` Observability Needs covers the full approval lifecycle
+- [ ] Next skill recommendation is `workflow-build`

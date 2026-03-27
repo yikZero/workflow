@@ -1,4 +1,4 @@
 ---
 ---
 
-Add golden scenario files and deterministic validator for workflow design skills
+Add workflow-teach and workflow-build skills with golden scenarios and validator

@@ -18,70 +18,60 @@ The workflow-teach interview should surface these answers:
 | Compensation requirements | If warehouse load fails after partial insert, no rollback needed (upsert makes re-run safe); if report fails, pipeline is still considered successful |
 | Operator observability | Stream row-level progress (processed/total), stream validation error summary, log batch ID with row counts at each stage, log final status with duration |
 
-## Expected Context Fields
+## Expected `.workflow.md` Sections
 
-```json
-{
-  "businessInvariants": [
-    "Data warehouse loads must be idempotent — re-running the same batch produces the same result",
-    "Validation errors must be surfaced to operators, not silently dropped"
-  ],
-  "idempotencyRequirements": [
-    "Warehouse load uses upsert keyed by row content hash",
-    "Report generation overwrites by batch ID"
-  ],
-  "approvalRules": [],
-  "timeoutRules": [
-    "Batch must complete within 30 minutes",
-    "Individual step timeout of 5 minutes"
-  ],
-  "compensationRules": [
-    "No rollback for partial warehouse load — upsert makes re-run safe",
-    "Report failure does not require compensation"
-  ],
-  "observabilityRequirements": [
-    "Stream row-level progress: rows processed vs total rows",
-    "Stream validation error summary with row numbers and error types",
-    "Log batch.started with batch ID and source file",
-    "Log batch.validated with valid/invalid row counts",
-    "Log batch.loaded with inserted/updated/skipped counts",
-    "Log batch.completed with final status and total duration"
-  ]
-}
-```
+### Project Context
+
+Data pipeline for CSV ingestion. Needs durable workflows because batches can take up to 30 minutes and operators need real-time progress visibility.
+
+### Business Rules
+
+- Data warehouse loads must be idempotent — re-running the same batch produces the same result.
+- Validation errors must be surfaced to operators, not silently dropped.
+- Warehouse load uses upsert keyed by row content hash.
+- Report generation overwrites by batch ID.
+
+### External Systems
+
+- Data warehouse (load, query). Supports upsert. Trigger: cron job or manual ops dashboard.
+- Report generation service (write). Overwrites by batch ID.
+
+### Failure Expectations
+
+- Malformed CSV: permanent (fatal — code/data bug).
+- Warehouse connection timeout: retryable.
+- Report generation failure: retryable. Does not block pipeline success.
+- No rollback for partial warehouse load — upsert makes re-run safe.
+- Batch must complete within 30 minutes; individual step timeout of 5 minutes.
+
+### Observability Needs
+
+- Stream row-level progress: rows processed vs total rows.
+- Stream validation error summary with row numbers and error types.
+- Log batch.started with batch ID and source file.
+- Log batch.validated with valid/invalid row counts.
+- Log batch.loaded with inserted/updated/skipped counts.
+- Log batch.completed with final status and total duration.
+
+### Open Questions
+
+(none for this scenario)
 
 ## Downstream Expectations
 
-### workflow-design
+### workflow-build
 
-The blueprint must include:
+When building this workflow, the build skill should:
 
-- `streams` with at least two namespaces: row progress and validation errors
-- `operatorSignals` echoing every log line from observability requirements
-- `invariants` echoing the idempotent-load and no-silent-drop rules
-- Steps that use `getWritable()` for streaming progress
-
-### workflow-stress
-
-Must flag:
-
-- Missing stream namespaces for separating progress from error data
-- Missing structured log entries for batch lifecycle events
-- Whether `getWritable()` calls comply with stream I/O placement rules
-
-### workflow-verify
-
-Must generate:
-
-- Test for happy path with stream output verification
-- Test for validation errors being streamed (not swallowed)
-- Test for warehouse timeout with retry
-- Test for batch timeout
+- Use separate stream namespaces for row progress and validation errors
+- Ensure `getWritable()` stream I/O happens in steps, not workflow context
+- Flag that report failure should not block pipeline success
+- Produce tests for: happy path with stream verification, validation errors being streamed, warehouse timeout with retry
 
 ## Verification Criteria
 
 - [ ] Interview prioritizes operator observability as a first-class concern
-- [ ] `observabilityRequirements` is the most detailed field in the context
-- [ ] `streams` in the blueprint include separate namespaces for progress and errors
-- [ ] `operatorSignals` in the blueprint maps 1:1 to observability requirements
-- [ ] Downstream stress test validates stream placement and namespace separation
+- [ ] `.workflow.md` Observability Needs is the most detailed section
+- [ ] `.workflow.md` Business Rules captures the no-silent-drop rule
+- [ ] `.workflow.md` Failure Expectations distinguishes fatal CSV errors from retryable warehouse errors
+- [ ] Next skill recommendation is `workflow-build`
