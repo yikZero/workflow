@@ -4,8 +4,6 @@ import {
   RunExpiredError,
   WorkflowRuntimeError,
 } from '@workflow/errors';
-import { classifyRunError } from './classify-error.js';
-import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
@@ -13,9 +11,11 @@ import {
   WorkflowInvokePayloadSchema,
   type WorkflowRun,
 } from '@workflow/world';
+import { classifyRunError } from './classify-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
+import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import {
   getAllWorkflowRunEvents,
   getQueueOverhead,
@@ -105,6 +105,7 @@ export function workflowEntrypoint(
         runId,
         traceCarrier: traceContext,
         requestedAt,
+        runInput,
       } = WorkflowInvokePayloadSchema.parse(message_);
       const { requestId } = metadata;
       // Extract the workflow name from the topic name
@@ -191,30 +192,50 @@ export function workflowEntrypoint(
                 });
 
                 let workflowStartedAt = -1;
-                let workflowRun = await world.runs.get(runId);
+                let workflowRun: WorkflowRun | undefined;
+                // Pre-loaded events from run_started 200 response (first caller optimization)
+                let preloadedEvents: Event[] | undefined;
 
                 // --- Infrastructure: prepare the run state ---
+                // Always call run_started, passing run input from the queue so
+                // the server can create the run if it doesn't exist yet
+                // (resilient start: run_created may have failed during start()).
                 // Network/server errors propagate to the queue handler for retry.
                 // WorkflowRuntimeError (data integrity issues) are fatal and
                 // produce run_failed since retrying won't fix them.
                 try {
-                  if (workflowRun.status === 'pending') {
-                    // Transition run to 'running' via event (event-sourced architecture)
-                    const result = await world.events.create(
-                      runId,
-                      {
-                        eventType: 'run_started',
-                        specVersion: SPEC_VERSION_CURRENT,
-                      },
-                      { requestId }
+                  const result = await world.events.create(
+                    runId,
+                    {
+                      eventType: 'run_started',
+                      specVersion: SPEC_VERSION_CURRENT,
+                      // Pass run input from queue so server can create
+                      // the run if run_created was missed
+                      ...(runInput
+                        ? {
+                            eventData: {
+                              input: runInput.input,
+                              deploymentId: runInput.deploymentId,
+                              workflowName: runInput.workflowName,
+                              executionContext: runInput.executionContext,
+                            },
+                          }
+                        : {}),
+                    },
+                    { requestId }
+                  );
+                  // 200: now running — use the returned Run entity
+                  if (!result.run) {
+                    throw new WorkflowRuntimeError(
+                      `Event creation for 'run_started' did not return the run entity for run "${runId}"`
                     );
-                    // Use the run entity from the event response (no extra get call needed)
-                    if (!result.run) {
-                      throw new WorkflowRuntimeError(
-                        `Event creation for 'run_started' did not return the run entity for run "${runId}"`
-                      );
-                    }
-                    workflowRun = result.run;
+                  }
+                  workflowRun = result.run;
+
+                  // If the response includes events, use them to skip the
+                  // first events.list call (only on 200, first caller)
+                  if (result.events && result.events.length > 0) {
+                    preloadedEvents = result.events;
                   }
 
                   // At this point, the workflow is "running" and `startedAt` should
@@ -225,16 +246,17 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
-                  // Run was concurrently completed/failed/cancelled
-                  // between the GET and the run_started event creation
-                  if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
+                  if (EntityConflictError.is(err)) {
+                    // 409: already running — fetch the run and proceed
+                    workflowRun = await world.runs.get(runId);
+                  } else if (RunExpiredError.is(err)) {
+                    // 410: already finished — log and exit
                     runtimeLogger.info(
                       'Run already finished during setup, skipping',
                       { workflowRunId: runId, message: err.message }
                     );
                     return;
-                  }
-                  if (err instanceof WorkflowRuntimeError) {
+                  } else if (err instanceof WorkflowRuntimeError) {
                     runtimeLogger.error(
                       'Fatal runtime error during workflow setup',
                       { workflowRunId: runId, error: err.message }
@@ -265,8 +287,15 @@ export function workflowEntrypoint(
                       throw failErr;
                     }
                     return;
+                  } else {
+                    throw err;
                   }
-                  throw err;
+                }
+
+                if (!workflowRun.startedAt) {
+                  throw new WorkflowRuntimeError(
+                    `Workflow run "${runId}" has no "startedAt" timestamp`
+                  );
                 }
                 workflowStartedAt = +workflowRun.startedAt;
 
@@ -294,8 +323,12 @@ export function workflowEntrypoint(
                   return;
                 }
 
-                // Load all events into memory before running
-                const events = await getAllWorkflowRunEvents(workflowRun.runId);
+                // Load all events into memory before running.
+                // If we got events from the run_started 200 response (first
+                // caller), skip the events.list call to reduce TTFB.
+                const events =
+                  preloadedEvents ??
+                  (await getAllWorkflowRunEvents(workflowRun.runId));
 
                 // Check for any elapsed waits and create wait_completed events
                 const now = Date.now();

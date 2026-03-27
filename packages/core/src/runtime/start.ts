@@ -1,9 +1,14 @@
 import { waitUntil } from '@vercel/functions';
-import { WorkflowRuntimeError } from '@workflow/errors';
+import {
+  ThrottleError,
+  WorkflowRuntimeError,
+  WorkflowWorldError,
+} from '@workflow/errors';
 import type { WorkflowInvokePayload, World } from '@workflow/world';
 import { isLegacySpecVersion, SPEC_VERSION_CURRENT } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
 import { importKey } from '../encryption.js';
+import { runtimeLogger } from '../logger.js';
 import type { Serializable } from '../schemas.js';
 import { dehydrateWorkflowArguments } from '../serialization.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
@@ -157,33 +162,81 @@ export async function start<TArgs extends unknown[], TResult>(
         globalThis,
         v1Compat
       );
-      const result = await world.events.create(
-        runId,
-        {
-          eventType: 'run_created',
-          specVersion,
-          eventData: {
-            deploymentId: deploymentId,
-            workflowName: workflowName,
-            input: workflowArguments,
-            executionContext: { traceCarrier, workflowCoreVersion },
-          },
-        },
-        { v1Compat }
-      );
 
-      // Assert that the run was created
-      if (!result.run) {
-        throw new WorkflowRuntimeError(
-          "Missing 'run' in server response for 'run_created' event"
-        );
+      const executionContext = { traceCarrier, workflowCoreVersion };
+
+      // Call events.create (run_created) and queue in parallel.
+      // If events.create fails with 429/5xx, the run was still accepted
+      // via the queue and creation will be re-tried async by the runtime.
+      const [runCreatedResult, queueResult] = await Promise.allSettled([
+        world.events.create(
+          runId,
+          {
+            eventType: 'run_created',
+            specVersion,
+            eventData: {
+              deploymentId: deploymentId,
+              workflowName: workflowName,
+              input: workflowArguments,
+              executionContext,
+            },
+          },
+          { v1Compat }
+        ),
+        world.queue(
+          getWorkflowQueueName(workflowName),
+          {
+            runId,
+            traceCarrier,
+            runInput: {
+              input: workflowArguments,
+              deploymentId,
+              workflowName,
+              specVersion,
+              executionContext,
+            },
+          } satisfies WorkflowInvokePayload,
+          {
+            deploymentId,
+          }
+        ),
+      ]);
+
+      // Queue failure is always fatal — the run was not enqueued
+      if (queueResult.status === 'rejected') {
+        throw queueResult.reason;
       }
 
-      // Verify server accepted our runId
-      if (!v1Compat && result.run.runId !== runId) {
-        throw new WorkflowRuntimeError(
-          `Server returned different runId than requested: expected ${runId}, got ${result.run.runId}`
-        );
+      // Handle events.create result
+      if (runCreatedResult.status === 'rejected') {
+        const err = runCreatedResult.reason;
+        // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
+        // are retryable — the run was accepted via the queue and creation
+        // will be re-tried by the runtime when it calls run_started.
+        if (isRetryableStartError(err)) {
+          runtimeLogger.warn(
+            'Run creation event failed, but the run was accepted via the queue. ' +
+              'The run_created event will be re-tried async by the runtime.',
+            { workflowRunId: runId, error: err.message }
+          );
+        } else {
+          throw err;
+        }
+      } else {
+        const result = runCreatedResult.value;
+        // Assert that the run was created
+        if (!result.run) {
+          throw new WorkflowRuntimeError(
+            "Missing 'run' in server response for 'run_created' event"
+          );
+        }
+
+        // Verify server accepted our runId
+        if (!v1Compat && result.run.runId !== runId) {
+          throw new WorkflowRuntimeError(
+            `Server returned different runId than requested: expected ${runId}, got ${result.run.runId}`
+          );
+        }
       }
 
       waitUntil(
@@ -197,22 +250,23 @@ export async function start<TArgs extends unknown[], TResult>(
 
       span?.setAttributes({
         ...Attribute.WorkflowRunId(runId),
-        ...Attribute.WorkflowRunStatus(result.run.status),
         ...Attribute.DeploymentId(deploymentId),
       });
-
-      await world.queue(
-        getWorkflowQueueName(workflowName),
-        {
-          runId,
-          traceCarrier,
-        } satisfies WorkflowInvokePayload,
-        {
-          deploymentId,
-        }
-      );
 
       return new Run<TResult>(runId);
     });
   });
+}
+
+/**
+ * Checks if an error from events.create (run_created) is retryable,
+ * meaning the queue can re-try creation later via the run_started path.
+ * - ThrottleError (429): rate limited, will succeed later
+ * - WorkflowWorldError with status >= 500: server error, will succeed later
+ */
+function isRetryableStartError(err: unknown): boolean {
+  if (ThrottleError.is(err)) return true;
+  if (WorkflowWorldError.is(err) && err.status && err.status >= 500)
+    return true;
+  return false;
 }

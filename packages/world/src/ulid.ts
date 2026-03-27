@@ -4,9 +4,13 @@ import { z } from 'zod';
 const UlidSchema = z.string().ulid();
 
 /**
- * Default threshold for ULID timestamp validation (5 minutes in milliseconds).
+ * Default threshold for ULID timestamp validation (24 hours in milliseconds).
+ *
+ * Set to 24 hours to support the resilient start path: when start() fails to
+ * create run_created, the queue carries the run input and the runtime creates
+ * the run on run_started. VQS supports delayed messages up to 24 hours.
  */
-export const DEFAULT_TIMESTAMP_THRESHOLD_MS = 5 * 60 * 1000;
+export const DEFAULT_TIMESTAMP_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Extracts a Date from a ULID string, or null if the string is not a valid ULID.

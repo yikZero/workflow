@@ -1,0 +1,108 @@
+---
+title: Resilient start()
+description: Overhaul of start() to tolerate world-vercel storage unavailability when the queue is healthy.
+---
+
+# Resilient `start()`
+
+## Motivation
+
+When `world-vercel` storage (DynamoDB) is unavailable but the queue (VQS) is up,
+`start()` previously failed entirely because `world.events.create(run_created)`
+is called before `world.queue()`. This change decouples run creation from queue
+dispatch so that runs can still be accepted when storage is degraded.
+
+## Design
+
+### `start()` changes (packages/core)
+
+- `world.events.create` (run_created) and `world.queue` are now called **in parallel**.
+- If `events.create` errors with **429 or 5xx**, we log a warning saying that run
+  creation failed but the run was accepted — creation will be re-tried async by the
+  runtime when it processes the queue message.
+- If `world.queue` fails, we still throw — the run truly failed and was not enqueued.
+- The queue invocation now receives all the run inputs (`input`, `deploymentId`,
+  `workflowName`, `specVersion`, `executionContext`) so the runtime can create the
+  run later if needed.
+- When the runtime re-enqueues itself, it does **not** pass these inputs — only the
+  first queue cycle carries them.
+
+### `workflowEntrypoint` changes (packages/core)
+
+- We no longer call `world.runs.get` or check the run status before starting.
+- We **always** call `world.events.create` with `run_started`, now also passing the
+  run input that was sent through the queue. The response will be:
+  - **200 (now running)**: use the returned `Run` entity as the run. The response also
+    includes an `events` array of all events up to that point (typically `run_created`
+    and `run_started`), with data resolved. These are used to skip the very first
+    `world.events.list` call, reducing TTFB for the first invocation.
+  - **409 (already running)**: fetch the run via `world.runs.get` and proceed.
+  - **410 (already finished)**: log and exit as usual.
+
+### World / workflow-server changes
+
+- Posting `run_started` to a **non-existent** run is now allowed when the run input is
+  sent along with the payload. The server:
+  1. Creates a `run_created` event first (so the event log is consistent).
+  2. Strips the input from the `run_started` event data (it lives on `run_created`).
+  3. Then creates the `run_started` event normally.
+  4. Emits a log and Datadog metric to track when this fallback path is hit.
+- When posting `run_started` and getting **200**, the response includes an `events`
+  property with all events up to that point (data always resolved).
+- The ULID timestamp validation threshold for `run_created` was relaxed from
+  **5 minutes** to **24 hours** so the queue can correctly re-try creation later.
+
+## Decisions
+
+1. **Parallel not sequential**: We chose `Promise.allSettled` over sequential calls to
+   minimize latency in the happy path. The trade-off is slightly more complex error
+   handling.
+
+2. **409 → extra GET**: When `run_started` returns 409 (already running), we do an
+   extra `world.runs.get` call rather than changing the server to include the run
+   entity in 409 error responses. This keeps the HTTP error contract simple. The 409
+   path is rare (concurrent workers racing) so the extra latency is acceptable.
+
+3. **Events in 200 response**: We only return events on the 200 path (first caller).
+   On 409 (second caller), we fall back to the normal `events.list` call. This is
+   correct because only on 200 can we be certain we know the full event history.
+
+4. **24-hour ULID threshold**: VQS supports delayed messages up to 24 hours. We match
+   this so a run_created retry can succeed even at the maximum queue delay. The
+   threshold still prevents abuse from manipulated timestamps.
+
+## Implementation notes
+
+### Error type mapping for terminal runs
+Previously, calling `run_started` on a terminal run threw `InvalidOperationStateError`
+(HTTP 409). This was changed to `EntityGoneError` (HTTP 410) so the runtime correctly
+distinguishes "already running" (409 → fetch and proceed) from "already finished"
+(410 → exit immediately). This required updating integration tests in
+`events-materialization.integration.ts`.
+
+### run_started on already-running runs
+Added an explicit check in `handleRunStateTransition`: if the run is already `running`,
+throw `EntityConflictError` (409) instead of idempotently patching and creating a
+duplicate `run_started` event. This prevents event log pollution from concurrent workers.
+
+### RunStartedEventSchema eventData stripping
+The run input is passed through to `run_started`'s `eventData` but stripped before
+the event is persisted — the data belongs on the `run_created` event only. The server
+sets `effectiveEventData = undefined` for `run_started` events.
+
+### ULID threshold test updates
+Both `workflow-server/test/helpers/ulid.test.ts` and
+`test/api/events.integration.ts` had tests expecting 10-minute-old ULIDs to be
+rejected. These were updated to use 25-hour offsets to match the new 24-hour threshold.
+
+## Follow-up work
+
+- [ ] Consider including run entity in 409 responses server-side to avoid the extra
+  GET call on the concurrent-start path.
+- [ ] Add e2e tests covering the degraded-storage start path.
+- [ ] Monitor the "run_started created run" Datadog metric in production to understand
+  how often the fallback path is hit.
+- [ ] Consider whether the `events` optimization in the 200 response should also apply
+  to re-enqueue cycles (currently only first invocation).
+- [ ] Consider adding a Datadog metric for the run_started → already running (409)
+  path to track concurrent start frequency.
