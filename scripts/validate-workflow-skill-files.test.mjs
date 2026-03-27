@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
 import {
   allChecks,
+  checks,
   downstreamChecks,
+  heroGoldenChecks,
   stressGoldenChecks,
   teachGoldenChecks,
 } from './lib/workflow-skill-checks.mjs';
@@ -1859,5 +1861,258 @@ No code fence here, just plain text about invariants.
     expect(result.ok).toBe(false);
     expect(result.results[0].reason).toBe('structured_validation_failed');
     expect(result.results[0].jsonFenceError).toBe('missing_code_fence');
+  });
+
+  // --- skill.workflow-teach.loop-position tests ---
+
+  it('returns ok:true when workflow-teach declares Stage 1 of 4 with workflow-design after stage marker', () => {
+    const check = checks.find(
+      (c) => c.ruleId === 'skill.workflow-teach.loop-position'
+    );
+
+    const content = `
+## Skill Loop Position
+
+Stage 1 of 4 in the teach → design → stress → verify loop.
+
+After gathering context, hand off to workflow-design for blueprint generation.
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+    expect(result.results[0].ruleId).toBe('skill.workflow-teach.loop-position');
+  });
+
+  it('returns ok:false when workflow-teach is missing Stage 1 of 4', () => {
+    const check = checks.find(
+      (c) => c.ruleId === 'skill.workflow-teach.loop-position'
+    );
+
+    const content = `
+## Skill Loop Position
+
+This is a teach skill in the teach → design → stress → verify loop.
+
+After gathering context, hand off to workflow-design for blueprint generation.
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].ruleId).toBe('skill.workflow-teach.loop-position');
+    expect(result.results[0].missing).toContain('Stage 1 of 4');
+  });
+
+  it('returns ok:false when workflow-design appears before stage marker in teach loop-position', () => {
+    const check = checks.find(
+      (c) => c.ruleId === 'skill.workflow-teach.loop-position'
+    );
+
+    const content = `
+## Skill Loop Position
+
+Hand off to workflow-design first.
+
+Stage 1 of 4 in the teach → design → stress → verify loop.
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].ruleId).toBe('skill.workflow-teach.loop-position');
+    expect(result.results[0].outOfOrder).toEqual([
+      'Stage 1 of 4',
+      'workflow-design',
+    ]);
+  });
+
+  it('includes skill.workflow-teach.loop-position in allChecks', () => {
+    const ruleIds = allChecks.map((c) => c.ruleId);
+    expect(ruleIds).toContain('skill.workflow-teach.loop-position');
+  });
+
+  // --- contractVersion negative validation tests ---
+
+  it('returns ok:false when teach context JSON omits contractVersion', () => {
+    const check = {
+      ruleId: 'golden.hero.teach.contractVersion',
+      file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+      jsonFence: {
+        language: 'json',
+        requiredKeys: ['contractVersion'],
+      },
+      suggestedFix:
+        'Teach context JSON must include contractVersion for schema compatibility.',
+    };
+
+    const content = `
+# Golden: Approval Expiry Escalation
+
+\`\`\`json
+{
+  "projectName": "po-approval",
+  "productGoal": "Route PO approvals with escalation"
+}
+\`\`\`
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toContain('contractVersion');
+  });
+
+  it('returns ok:true when teach context JSON includes contractVersion', () => {
+    const check = {
+      ruleId: 'golden.hero.teach.contractVersion',
+      file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+      jsonFence: {
+        language: 'json',
+        requiredKeys: ['contractVersion'],
+      },
+    };
+
+    const content = `
+# Golden: Approval Expiry Escalation
+
+\`\`\`json
+{
+  "contractVersion": "1",
+  "projectName": "po-approval"
+}
+\`\`\`
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when design blueprint JSON omits contractVersion', () => {
+    const check = heroGoldenChecks.find(
+      (c) => c.ruleId === 'golden.hero.design.blueprint-schema'
+    );
+
+    const content = `
+# Golden: Approval Expiry Escalation Blueprint
+
+\`\`\`json
+{
+  "name": "po-approval",
+  "invariants": [],
+  "compensationPlan": [],
+  "operatorSignals": [],
+  "steps": [],
+  "suspensions": [],
+  "tests": []
+}
+\`\`\`
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toContain('contractVersion');
+  });
+
+  it('returns ok:true when design blueprint JSON includes contractVersion', () => {
+    const check = heroGoldenChecks.find(
+      (c) => c.ruleId === 'golden.hero.design.blueprint-schema'
+    );
+
+    const content = `
+# Golden: Approval Expiry Escalation Blueprint
+
+\`\`\`json
+{
+  "contractVersion": "1",
+  "name": "po-approval",
+  "invariants": [],
+  "compensationPlan": [],
+  "operatorSignals": [],
+  "steps": [],
+  "suspensions": [],
+  "tests": []
+}
+\`\`\`
+`;
+
+    const result = runSingleCheck(check, content);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false for downstream.teach.contractVersion when contractVersion is missing', () => {
+    const check = downstreamChecks.find(
+      (c) => c.ruleId === 'downstream.teach.contractVersion'
+    );
+
+    const result = runSingleCheck(
+      check,
+      `
+Gather context about the workflow project.
+Save to .workflow-skills/context.json.
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].ruleId).toBe('downstream.teach.contractVersion');
+    expect(result.results[0].missing).toContain('contractVersion');
+  });
+
+  it('returns ok:true for downstream.teach.contractVersion when contractVersion is present', () => {
+    const check = downstreamChecks.find(
+      (c) => c.ruleId === 'downstream.teach.contractVersion'
+    );
+
+    const result = runSingleCheck(
+      check,
+      `
+Gather context about the workflow project.
+Include contractVersion in the emitted context.json.
+`
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].ruleId).toBe('downstream.teach.contractVersion');
+  });
+
+  it('returns ok:false for downstream.design.contractVersion when contractVersion is missing', () => {
+    const check = downstreamChecks.find(
+      (c) => c.ruleId === 'downstream.design.contractVersion'
+    );
+
+    const result = runSingleCheck(
+      check,
+      `
+Generate a WorkflowBlueprint with steps and suspensions.
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].ruleId).toBe('downstream.design.contractVersion');
+    expect(result.results[0].missing).toContain('contractVersion');
+  });
+
+  it('returns ok:true for downstream.design.contractVersion when contractVersion is present', () => {
+    const check = downstreamChecks.find(
+      (c) => c.ruleId === 'downstream.design.contractVersion'
+    );
+
+    const result = runSingleCheck(
+      check,
+      `
+Generate a WorkflowBlueprint with contractVersion for backward compatibility.
+`
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].ruleId).toBe('downstream.design.contractVersion');
   });
 });

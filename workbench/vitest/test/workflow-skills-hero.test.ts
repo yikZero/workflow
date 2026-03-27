@@ -73,6 +73,9 @@ const designContent = readGolden(
 const stressContent = readGolden(
   'skills/workflow-stress/goldens/approval-expiry-escalation.md'
 );
+const verifyContent = readGolden(
+  'skills/workflow-verify/goldens/approval-expiry-escalation.md'
+);
 
 // ---------------------------------------------------------------------------
 // Required runtime helpers that must appear across the loop
@@ -80,6 +83,7 @@ const stressContent = readGolden(
 
 const REQUIRED_HELPERS = [
   'start',
+  'getRun',
   'waitForHook',
   'resumeHook',
   'waitForSleep',
@@ -264,7 +268,50 @@ describe('hero-loop: approval-expiry-escalation', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 4. Cross-stage coherence: the loop produces a consistent hero path
+  // 4. Verify golden produces implementation-ready verification artifacts
+  // -----------------------------------------------------------------------
+  describe('verify stage', () => {
+    it('includes Files to Create section [runtime-helpers]', () => {
+      expect(verifyContent).toContain('## Files to Create');
+    });
+
+    it('includes Test Matrix section [runtime-helpers]', () => {
+      expect(verifyContent).toContain('## Test Matrix');
+    });
+
+    it('includes Integration Test Skeleton section [runtime-helpers]', () => {
+      expect(verifyContent).toContain('## Integration Test Skeleton');
+    });
+
+    it('includes Runtime Verification Commands section [runtime-helpers]', () => {
+      expect(verifyContent).toContain('## Runtime Verification Commands');
+    });
+
+    it('covers all required runtime helpers in test skeleton [runtime-helpers]', () => {
+      for (const helper of REQUIRED_HELPERS) {
+        expect(verifyContent).toContain(helper);
+      }
+    });
+
+    it('carries blueprint invariants into verification work [idempotency]', () => {
+      expect(verifyContent).toContain('one final decision');
+      expect(verifyContent).toContain('Escalation must only trigger after');
+    });
+
+    it('carries compensationPlan into verification work [compensation]', () => {
+      expect(verifyContent).toContain('compensationPlan');
+      expect(verifyContent).toContain('read-only');
+    });
+
+    it('carries operatorSignals into verification work [observability]', () => {
+      expect(verifyContent).toContain('approval.requested');
+      expect(verifyContent).toContain('approval.escalated');
+      expect(verifyContent).toContain('approval.decided');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 5. Cross-stage coherence: the loop produces a consistent hero path
   // -----------------------------------------------------------------------
   describe('cross-stage coherence', () => {
     it('all required runtime helpers appear across the design golden [runtime-helpers]', () => {
@@ -330,10 +377,11 @@ describe('hero-loop: approval-expiry-escalation', () => {
       expect(stillMissing).toHaveLength(0);
     });
 
-    it('scenario name is consistent across all three stages', () => {
+    it('scenario name is consistent across all four stages', () => {
       expect(teachContent).toContain('Approval Expiry Escalation');
       expect(designContent).toContain('Approval Expiry Escalation');
       expect(stressContent).toContain('Approval Expiry Escalation');
+      expect(verifyContent).toContain('Approval Expiry Escalation');
     });
   });
 });
