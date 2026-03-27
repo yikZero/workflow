@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
+import {
+  allChecks,
+  stressGoldenChecks,
+} from './lib/workflow-skill-checks.mjs';
+
+function runSingleCheck(check, content) {
+  return validateWorkflowSkillText([check], {
+    [check.file]: content,
+  });
+}
 
 describe('validateWorkflowSkillText', () => {
   it('returns ok:false for stale webhook golden with resumeWebhook(run, {)', () => {
@@ -136,6 +146,7 @@ Stream writes must be inside \`"use step"\` functions
           'workflow-verify',
           'hooks, webhooks, sleep, streams, retries, or child workflows',
         ],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
       },
     ];
 
@@ -151,6 +162,35 @@ After generating a blueprint, run workflow-stress before workflow-verify when th
     expect(result.results[0].status).toBe('pass');
   });
 
+  it('returns ok:false when sequencing terms appear in the wrong order', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-design.sequencing',
+        file: 'skills/workflow-design/SKILL.md',
+        mustInclude: [
+          'workflow-stress',
+          'workflow-verify',
+          'hooks, webhooks, sleep, streams, retries, or child workflows',
+        ],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+      },
+    ];
+
+    const content = `
+After generating a blueprint, run workflow-verify before workflow-stress when the design includes hooks, webhooks, sleep, streams, retries, or child workflows.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].outOfOrder).toEqual([
+      'workflow-stress',
+      'workflow-verify',
+    ]);
+  });
+
   it('returns ok:false when workflow-design drops stress-before-verify sequencing', () => {
     const checks = [
       {
@@ -161,6 +201,7 @@ After generating a blueprint, run workflow-stress before workflow-verify when th
           'workflow-verify',
           'hooks, webhooks, sleep, streams, retries, or child workflows',
         ],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
       },
     ];
 
@@ -227,6 +268,7 @@ The current workflow blueprint from the conversation.
           'workflow-stress',
           'externally-driven workflows',
         ],
+        mustAppearInOrder: ['workflow-design', 'workflow-stress'],
       },
     ];
 
@@ -241,6 +283,35 @@ For externally-driven workflows (webhooks, hooks, sleep, child workflows), recom
     expect(result.ok).toBe(true);
   });
 
+  it('returns ok:false when workflow-teach has stress before design', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-teach.sequencing',
+        file: 'skills/workflow-teach/SKILL.md',
+        mustInclude: [
+          'workflow-design',
+          'workflow-stress',
+          'externally-driven workflows',
+        ],
+        mustAppearInOrder: ['workflow-design', 'workflow-stress'],
+      },
+    ];
+
+    const content = `
+For externally-driven workflows, recommend workflow-stress followed by workflow-design.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-teach/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].outOfOrder).toEqual([
+      'workflow-design',
+      'workflow-stress',
+    ]);
+  });
+
   it('returns ok:false when workflow-teach drops stress from externally-driven routing', () => {
     const checks = [
       {
@@ -251,6 +322,7 @@ For externally-driven workflows (webhooks, hooks, sleep, child workflows), recom
           'workflow-stress',
           'externally-driven workflows',
         ],
+        mustAppearInOrder: ['workflow-design', 'workflow-stress'],
       },
     ];
 
@@ -333,6 +405,170 @@ Integration test coverage
     expect(result.results[0].missing).toContain('refundPayment');
   });
 
+  // --- child-workflow-handoff golden tests ---
+
+  it('returns ok:true for valid child-workflow-handoff golden', () => {
+    const check = {
+      ruleId: 'golden.stress.child-workflow-handoff',
+      file: 'skills/workflow-stress/goldens/child-workflow-handoff.md',
+      mustInclude: [
+        'start()',
+        'runtime',
+        'step',
+        'serialization',
+        'Step granularity',
+        'start()` in workflow context must be wrapped in a step',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+start() runtime step serialization Step granularity
+start()\` in workflow context must be wrapped in a step
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when child-workflow-handoff drops serialization guidance', () => {
+    const check = {
+      ruleId: 'golden.stress.child-workflow-handoff',
+      file: 'skills/workflow-stress/goldens/child-workflow-handoff.md',
+      mustInclude: [
+        'start()',
+        'runtime',
+        'step',
+        'serialization',
+        'Step granularity',
+        'start()` in workflow context must be wrapped in a step',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+start() runtime step Step granularity
+start()\` in workflow context must be wrapped in a step
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('serialization');
+  });
+
+  // --- multi-event-hook-loop golden tests ---
+
+  it('returns ok:true for valid multi-event-hook-loop golden', () => {
+    const check = {
+      ruleId: 'golden.stress.multi-event-hook-loop',
+      file: 'skills/workflow-stress/goldens/multi-event-hook-loop.md',
+      mustInclude: [
+        'AsyncIterable',
+        'Promise.all',
+        'resumeHook',
+        'deterministic',
+        'Hook token strategy',
+        'Suspension primitive choice',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+AsyncIterable Promise.all resumeHook deterministic
+Hook token strategy
+Suspension primitive choice
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when multi-event-hook-loop drops Promise.all coverage', () => {
+    const check = {
+      ruleId: 'golden.stress.multi-event-hook-loop',
+      file: 'skills/workflow-stress/goldens/multi-event-hook-loop.md',
+      mustInclude: [
+        'AsyncIterable',
+        'Promise.all',
+        'resumeHook',
+        'deterministic',
+        'Hook token strategy',
+        'Suspension primitive choice',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+AsyncIterable resumeHook deterministic
+Hook token strategy
+Suspension primitive choice
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('Promise.all');
+  });
+
+  // --- rate-limit-retry golden tests ---
+
+  it('returns ok:true for valid rate-limit-retry golden', () => {
+    const check = {
+      ruleId: 'golden.stress.rate-limit-retry',
+      file: 'skills/workflow-stress/goldens/rate-limit-retry.md',
+      mustInclude: [
+        'RetryableError',
+        'FatalError',
+        '429',
+        'idempotency',
+        'Retry semantics',
+        'backoff',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+RetryableError FatalError 429 idempotency
+Retry semantics
+backoff
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when rate-limit-retry drops backoff guidance', () => {
+    const check = {
+      ruleId: 'golden.stress.rate-limit-retry',
+      file: 'skills/workflow-stress/goldens/rate-limit-retry.md',
+      mustInclude: [
+        'RetryableError',
+        'FatalError',
+        '429',
+        'idempotency',
+        'Retry semantics',
+        'backoff',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+RetryableError FatalError 429 idempotency
+Retry semantics
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('backoff');
+  });
+
+  // --- approval-timeout-streaming golden tests ---
+
   it('returns ok:true for valid approval-timeout-streaming golden', () => {
     const checks = [
       {
@@ -385,6 +621,37 @@ getWritable() stream
     const result = validateWorkflowSkillText(checks, {
       'skills/workflow-stress/goldens/approval-timeout-streaming.md': content,
     });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].forbidden).toContain('`getWritable()` must be in a step');
+  });
+
+  it('returns ok:false when approval-timeout-streaming reintroduces stale getWritable wording', () => {
+    const check = {
+      ruleId: 'golden.stress.approval-timeout-streaming',
+      file: 'skills/workflow-stress/goldens/approval-timeout-streaming.md',
+      mustInclude: [
+        'getWritable()',
+        'stream',
+        'waitForSleep',
+        'wakeUp',
+        'Determinism boundary',
+        'Stream I/O placement',
+        'getWritable()` may be called in workflow context',
+      ],
+      mustNotInclude: ['`getWritable()` must be in a step'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+getWritable() stream waitForSleep wakeUp
+Determinism boundary
+Stream I/O placement
+getWritable()\` may be called in workflow context
+\`getWritable()\` must be in a step
+`
+    );
 
     expect(result.ok).toBe(false);
     expect(result.results[0].forbidden).toContain('`getWritable()` must be in a step');
@@ -468,5 +735,50 @@ Are all non-deterministic operations isolated in \`"use step"\` functions?
     expect(result.results[0].forbidden).toContain(
       'Are all non-deterministic operations isolated in `"use step"` functions?'
     );
+  });
+
+  // --- Rule registry smoke tests ---
+
+  it('registers every stress golden rule in the validator manifest', () => {
+    expect(stressGoldenChecks.map((check) => check.ruleId)).toEqual([
+      'golden.stress.compensation-saga',
+      'golden.stress.child-workflow-handoff',
+      'golden.stress.multi-event-hook-loop',
+      'golden.stress.rate-limit-retry',
+      'golden.stress.approval-timeout-streaming',
+    ]);
+  });
+
+  it('includes stress golden rules in allChecks', () => {
+    const ruleIds = allChecks.map((check) => check.ruleId);
+
+    expect(ruleIds).toContain('golden.stress.compensation-saga');
+    expect(ruleIds).toContain('golden.stress.child-workflow-handoff');
+    expect(ruleIds).toContain('golden.stress.multi-event-hook-loop');
+    expect(ruleIds).toContain('golden.stress.rate-limit-retry');
+    expect(ruleIds).toContain('golden.stress.approval-timeout-streaming');
+  });
+
+  // --- outOfOrder skipped when mustInclude tokens missing ---
+
+  it('does not check order when mustInclude tokens are missing', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-design.sequencing',
+        file: 'skills/workflow-design/SKILL.md',
+        mustInclude: ['workflow-stress', 'workflow-verify'],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+      },
+    ];
+
+    const content = `Only workflow-verify is mentioned here.`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('workflow-stress');
+    expect(result.results[0].outOfOrder).toBeUndefined();
   });
 });
