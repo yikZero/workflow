@@ -44,7 +44,8 @@
     "ci:version": "changeset version",
     "ci:publish": "pnpm build && changeset publish",
     "release:notes": "node scripts/generate-release-notes.mjs",
-    "workbench:stage": "node scripts/stage-workbench-with-tarballs.mjs"
+    "workbench:stage": "node scripts/stage-workbench-with-tarballs.mjs",
+    "test:workflow-skills": "node scripts/validate-workflow-skill-files.mjs"
   },
   "lint-staged": {
     "**/*": "biome format --write --no-errors-on-unmatched"
