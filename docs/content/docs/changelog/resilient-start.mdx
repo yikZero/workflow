@@ -58,13 +58,13 @@ dispatch so that runs can still be accepted when storage is degraded.
    minimize latency in the happy path. The trade-off is slightly more complex error
    handling.
 
-2. **409 → extra GET**: When `run_started` returns 409 (already running), we do an
-   extra `world.runs.get` call rather than changing the server to include the run
-   entity in 409 error responses. This keeps the HTTP error contract simple. The 409
-   path is rare (concurrent workers racing) so the extra latency is acceptable.
+2. **Already-running returns run without event**: When `run_started` encounters an
+   already-running run, all worlds return `{ run }` with `event: undefined` (no
+   `events` array) instead of throwing. The runtime detects this by checking for
+   `result.event === undefined`. This avoids the extra `world.runs.get` round-trip.
 
 3. **Events in 200 response**: We only return events on the 200 path (first caller).
-   On 409 (second caller), we fall back to the normal `events.list` call. This is
+   On the already-running path, we fall back to the normal `events.list` call. This is
    correct because only on 200 can we be certain we know the full event history.
 
 4. **24-hour ULID threshold**: VQS supports delayed messages up to 24 hours. We match
@@ -83,9 +83,22 @@ distinguishes "already running" (409 → fetch and proceed) from "already finish
 
 ### run_started on already-running runs
 
-Added an explicit check in `handleRunStateTransition`: if the run is already `running`,
-throw `EntityConflictError` (409) instead of idempotently patching and creating a
-duplicate `run_started` event. This prevents event log pollution from concurrent workers.
+All worlds (workflow-server, world-local, world-postgres) now return the existing run
+entity directly — with `event: undefined` — when `run_started` is called on an
+already-running run. This avoids both a duplicate event and the extra `world.runs.get`
+call that the previous 409-based approach required. The `EventResultResolveWireSchema`
+in world-vercel was updated to make `event` optional.
+
+### world-local and world-postgres support
+
+Both world-local (filesystem) and world-postgres (Drizzle/SQL) now implement the full
+resilient start behavior:
+
+- Creating runs from `run_started` when the run doesn't exist and eventData is provided
+- Returning `{ run }` without event on already-running
+- Throwing `RunExpiredError` on terminal runs
+- Stripping eventData from stored `run_started` events
+- Returning the `events` array on successful start
 
 ### RunStartedEventSchema eventData stripping
 
@@ -101,13 +114,10 @@ rejected. These were updated to use 25-hour offsets to match the new 24-hour thr
 
 ## Follow-up work
 
-- [ ] Consider including run entity in 409 responses server-side to avoid the extra
-  GET call on the concurrent-start path.
-- [ ] Add e2e tests covering the degraded-storage start path.
+- [ ] Add e2e tests covering the degraded-storage start path against a live deployment.
 - [ ] Monitor the "run_started created run" Datadog metric in production to understand
   how often the fallback path is hit.
 - [ ] Consider whether the `events` optimization in the 200 response should also apply
   to re-enqueue cycles (currently only first invocation).
-- [ ] Consider adding a Datadog metric for the run_started → already running (409)
-  path to track concurrent start frequency.
 - [ ] Edit run ID validation so that we still allow up to 24 hours in the past, but only up to 5 minutes in the future
+- [ ] Add a Datadog metric for the "run_started → already running (409)" path to track concurrent start frequency, so we can add alerting on it later
