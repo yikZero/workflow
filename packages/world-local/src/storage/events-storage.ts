@@ -112,6 +112,8 @@ export function createEventsStorage(
       // on running steps, and running steps are always allowed to modify regardless
       // of run state. This optimization saves filesystem reads per step event.
       let currentRun: WorkflowRun | null = null;
+      // Track whether run was created via resilient start fallback
+      let runCreatedViaRunStarted = false;
       const skipRunValidationEvents = ['step_completed', 'step_retrying'];
       if (
         data.eventType !== 'run_created' &&
@@ -124,6 +126,73 @@ export function createEventsStorage(
           WorkflowRunSchema,
           tag
         );
+
+        // Resilient start: run_started on non-existent run with eventData
+        // creates the run first, so the queue can bootstrap a run that
+        // failed to create during start().
+        if (
+          data.eventType === 'run_started' &&
+          !currentRun &&
+          'eventData' in data &&
+          data.eventData
+        ) {
+          const runInputData = data.eventData as {
+            deploymentId?: string;
+            workflowName?: string;
+            input?: any;
+            executionContext?: Record<string, any>;
+          };
+          if (
+            runInputData.deploymentId &&
+            runInputData.workflowName &&
+            runInputData.input !== undefined
+          ) {
+            // Create the run entity
+            const createdRun: WorkflowRun = {
+              runId: effectiveRunId,
+              deploymentId: runInputData.deploymentId,
+              status: 'pending',
+              workflowName: runInputData.workflowName,
+              specVersion: effectiveSpecVersion,
+              executionContext: runInputData.executionContext,
+              input: runInputData.input,
+              output: undefined,
+              error: undefined,
+              startedAt: undefined,
+              completedAt: undefined,
+              createdAt: now,
+              updatedAt: now,
+            };
+            await writeJSON(
+              taggedPath(basedir, 'runs', effectiveRunId, tag),
+              createdRun
+            );
+
+            // Create run_created event
+            const runCreatedEventId = `evnt_${monotonicUlid()}`;
+            const runCreatedEvent: Event = {
+              eventType: 'run_created',
+              runId: effectiveRunId,
+              eventId: runCreatedEventId,
+              createdAt: now,
+              specVersion: effectiveSpecVersion,
+              eventData: {
+                deploymentId: runInputData.deploymentId,
+                workflowName: runInputData.workflowName,
+                input: runInputData.input,
+                executionContext: runInputData.executionContext,
+              },
+            };
+            const createdCompositeKey = `${effectiveRunId}-${runCreatedEventId}`;
+            await writeJSON(
+              taggedPath(basedir, 'events', createdCompositeKey, tag),
+              runCreatedEvent
+            );
+
+            currentRun = createdRun;
+            runCreatedViaRunStarted = true;
+          }
+        }
       }
 
       // ============================================================
@@ -190,7 +259,15 @@ export function createEventsStorage(
           };
         }
 
-        // Run state transitions are not allowed on terminal runs
+        // For run_started on terminal runs, use RunExpiredError so the
+        // runtime knows to exit without retrying (maps to 410).
+        if (data.eventType === 'run_started') {
+          throw new RunExpiredError(
+            `Workflow run "${effectiveRunId}" is already in terminal state "${currentRun.status}"`
+          );
+        }
+
+        // Other run state transitions are not allowed on terminal runs
         if (
           runTerminalEvents.includes(data.eventType) ||
           data.eventType === 'run_cancelled'
@@ -273,13 +350,26 @@ export function createEventsStorage(
           throw new HookNotFoundError(data.correlationId);
         }
       }
+      // Strip eventData from run_started events — the run input belongs
+      // on the run_created event only, not on run_started.
+      const eventData =
+        data.eventType === 'run_started'
+          ? undefined
+          : 'eventData' in data
+            ? data.eventData
+            : undefined;
       const event: Event = {
         ...data,
+        ...(eventData !== undefined ? { eventData } : {}),
         runId: effectiveRunId,
         eventId,
         createdAt: now,
         specVersion: effectiveSpecVersion,
       };
+      // Remove eventData if it was stripped (spread from data may have included it)
+      if (data.eventType === 'run_started' && 'eventData' in event) {
+        delete (event as any).eventData;
+      }
 
       // Track entity created/updated for EventResult
       let run: WorkflowRun | undefined;
@@ -316,6 +406,13 @@ export function createEventsStorage(
       } else if (data.eventType === 'run_started') {
         // Reuse currentRun from validation (already read above)
         if (currentRun) {
+          // If the run is already running, return it directly without
+          // creating a duplicate event. Runtime uses absence of `event`
+          // to detect this case.
+          if (currentRun.status === 'running') {
+            return { run: currentRun };
+          }
+
           run = {
             runId: currentRun.runId,
             deploymentId: currentRun.deploymentId,
@@ -832,6 +929,21 @@ export function createEventsStorage(
       const resolveData = params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
       const filteredEvent = stripEventDataRefs(event, resolveData);
 
+      // For run_started: include all events so the runtime can skip
+      // the initial events.list call and reduce TTFB.
+      let events: Event[] | undefined;
+      if (data.eventType === 'run_started' && run) {
+        const allEvents = await paginatedFileSystemQuery({
+          directory: path.join(basedir, 'events'),
+          schema: EventSchema,
+          filePrefix: `${effectiveRunId}-`,
+          sortOrder: 'asc',
+          getCreatedAt: getObjectCreatedAt('evnt'),
+          getId: (e) => e.eventId,
+        });
+        events = allEvents.data;
+      }
+
       // Return EventResult with event and any created/updated entity
       return {
         event: filteredEvent,
@@ -839,6 +951,7 @@ export function createEventsStorage(
         step,
         hook,
         wait,
+        events,
       };
     },
 

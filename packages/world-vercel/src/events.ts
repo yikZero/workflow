@@ -60,7 +60,7 @@ function stripEventAndLegacyRefs(
 //   undefined), so we use the looser WorkflowRunWireBaseSchema and normalize
 //   the error via deserializeError() afterward.
 const EventResultResolveWireSchema = z.object({
-  event: EventSchema,
+  event: EventSchema.optional(),
   run: WorkflowRunSchema.optional(),
   step: StepWireSchema.optional(),
   hook: HookSchema.optional(),
@@ -68,7 +68,7 @@ const EventResultResolveWireSchema = z.object({
 });
 
 const EventResultLazyWireSchema = z.object({
-  event: EventSchema,
+  event: EventSchema.optional(),
   run: WorkflowRunWireBaseSchema.optional(),
   step: StepWireSchema.optional(),
   hook: HookSchema.optional(),
