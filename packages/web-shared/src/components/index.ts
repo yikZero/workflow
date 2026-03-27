@@ -1,3 +1,4 @@
+export { type AgentViewProps, AgentView } from './agent-view';
 export { ErrorBoundary } from './error-boundary';
 export { EventListView } from './event-list-view';
 export type {

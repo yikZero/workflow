@@ -49,6 +49,8 @@ export {
   STREAM_REF_TYPE,
   truncateId,
 } from './lib/hydration';
+export type { AgentScanMatch, AgentScanResultType } from './lib/agent-scan';
+export { hasAgentData, scanRunAndSteps, scanValue } from './lib/agent-scan';
 export type { ToastAdapter } from './lib/toast';
 export { ToastProvider, useToast } from './lib/toast';
 export type { StreamStep } from './lib/utils';

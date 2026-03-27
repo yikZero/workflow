@@ -1,6 +1,7 @@
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import type { SpanSelectionInfo } from '@workflow/web-shared';
 import {
+  AgentView,
   DecryptButton,
   ErrorBoundary,
   EventListView,
@@ -10,9 +11,10 @@ import {
   stepEventsToStepEntity,
   WorkflowTraceViewer,
 } from '@workflow/web-shared';
-import type { Event, WorkflowRun } from '@workflow/world';
+import type { Event, Step, WorkflowRun } from '@workflow/world';
 import {
   AlertCircle,
+  Bot,
   GitBranch,
   HelpCircle,
   List,
@@ -20,7 +22,7 @@ import {
   Lock,
   Unlock,
 } from 'lucide-react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert';
@@ -49,13 +51,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '~/components/ui/tooltip';
+import { useEventsListData } from '~/lib/client/hooks/use-events-list-data';
 import { mapRunToExecution } from '~/lib/flow-graph/graph-execution-mapper';
 import { useWorkflowGraphManifest } from '~/lib/flow-graph/use-workflow-graph';
 import { useStreamReader } from '~/lib/hooks/use-stream-reader';
-
-import { fetchEvent, getEncryptionKeyForRun } from '~/lib/rpc-client';
-
-import { useEventsListData } from '~/lib/client/hooks/use-events-list-data';
+import {
+  fetchEvent,
+  fetchStep,
+  getEncryptionKeyForRun,
+} from '~/lib/rpc-client';
 import type { EnvMap } from '~/lib/types';
 import {
   cancelRun,
@@ -203,7 +207,7 @@ interface RunDetailViewProps {
   selectedId?: string;
 }
 
-type Tab = 'trace' | 'graph' | 'streams' | 'events';
+type Tab = 'trace' | 'graph' | 'streams' | 'events' | 'agent';
 
 export function RunDetailView({
   runId,
@@ -363,6 +367,73 @@ export function RunDetailView({
     encryptionKey: encryptionKey ?? undefined,
     enabled: activeTab === 'events',
   });
+
+  // ── Agent tab: lazily fetch step data using IDs from trace events ──
+  const [agentSteps, setAgentSteps] = useState<Step[]>([]);
+  const [agentStepsLoading, setAgentStepsLoading] = useState(false);
+  const agentStepsFetched = useRef(false);
+
+  // Extract unique step IDs from trace events (always available)
+  const stepIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const event of allEvents) {
+      if (event.eventType.startsWith('step_') && event.correlationId) {
+        ids.add(event.correlationId);
+      }
+    }
+    return Array.from(ids);
+  }, [allEvents]);
+
+  useEffect(() => {
+    if (
+      activeTab !== 'agent' ||
+      agentStepsFetched.current ||
+      stepIds.length === 0
+    )
+      return;
+    agentStepsFetched.current = true;
+    setAgentStepsLoading(true);
+
+    (async () => {
+      try {
+        const hydrateWithKey = encryptionKeyRef.current
+          ? (r: Step) => hydrateResourceIOWithKey(r, encryptionKeyRef.current!)
+          : (r: Step) => Promise.resolve(hydrateResourceIO(r));
+
+        const resolved = (
+          await Promise.all(
+            stepIds.map(async (stepId) => {
+              try {
+                const { result } = await unwrapServerActionResult(
+                  fetchStep(env, runId, stepId, 'all')
+                );
+                return result ? hydrateWithKey(result) : null;
+              } catch {
+                return null;
+              }
+            })
+          )
+        ).filter((s): s is Step => s !== null);
+        setAgentSteps(resolved);
+      } catch {
+        // Agent tab will show "no data"
+      } finally {
+        setAgentStepsLoading(false);
+      }
+    })();
+  }, [activeTab, env, runId, stepIds]);
+
+  // Re-hydrate agent steps when encryption key changes
+  useEffect(() => {
+    if (!encryptionKey || agentSteps.length === 0) return;
+    (async () => {
+      const rehydrated = await Promise.all(
+        agentSteps.map((step) => hydrateResourceIOWithKey(step, encryptionKey))
+      );
+      setAgentSteps(rehydrated);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [encryptionKey]);
 
   const [spanSelection, setSpanSelection] = useState<SpanSelectionInfo | null>(
     null
@@ -735,6 +806,10 @@ export function RunDetailView({
                 <List className="h-4 w-4" />
                 Streams
               </TabsTrigger>
+              <TabsTrigger value="agent" className="gap-2">
+                <Bot className="h-4 w-4" />
+                Agent
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="trace" className="mt-0 flex-1 min-h-0">
@@ -901,6 +976,32 @@ export function RunDetailView({
                       </div>
                     )}
                   </div>
+                </div>
+              </ErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="agent" className="mt-0 flex-1 min-h-0">
+              <ErrorBoundary title="Failed to load agent view">
+                <div
+                  className="h-full overflow-y-auto rounded-lg border"
+                  style={{
+                    borderColor: 'var(--ds-gray-300)',
+                    backgroundColor: 'var(--ds-background-100)',
+                  }}
+                >
+                  <AgentView
+                    run={run}
+                    steps={agentSteps}
+                    isLoading={agentStepsLoading}
+                    onDecrypt={handleDecrypt}
+                    encryptionKey={encryptionKey ?? undefined}
+                    isDecrypting={isDecrypting}
+                    teamSlug={serverConfig.publicEnv.WORKFLOW_VERCEL_TEAM}
+                    projectSlug={
+                      serverConfig.publicEnv.WORKFLOW_VERCEL_PROJECT_NAME ||
+                      serverConfig.publicEnv.WORKFLOW_VERCEL_PROJECT
+                    }
+                  />
                 </div>
               </ErrorBoundary>
             </TabsContent>
