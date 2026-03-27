@@ -15,11 +15,32 @@ export const checks = [
       'externalSystems',
       'antiPatterns',
       'canonicalExamples',
+      'businessInvariants',
+      'idempotencyRequirements',
+      'approvalRules',
+      'timeoutRules',
+      'compensationRules',
+      'observabilityRequirements',
+      'openQuestions',
       'getWritable()` may be called in either',
     ],
     mustNotInclude: [
       '`getWritable()` and stream consumption must happen inside',
       '`getWritable()` must be in a step',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-teach.interview',
+    file: 'skills/workflow-teach/SKILL.md',
+    mustInclude: [
+      'What starts this workflow, and who or what emits that event?',
+      'Which side effects must be safe to repeat',
+      'What counts as a permanent failure vs. a retryable failure?',
+      'Does any step require human approval, and who is allowed to approve?',
+      'What timeout or expiry rules exist?',
+      'If a side effect succeeds and a later step fails, what compensation is required?',
+      'What must operators be able to observe in logs/streams?',
+      'not already inferable from the repo',
     ],
   },
   {
@@ -51,6 +72,13 @@ export const checks = [
       'FatalError',
       'start()',
       'getWritable()` may be called in workflow or step context',
+      'invariants',
+      'compensationPlan',
+      'operatorSignals',
+      'businessInvariants',
+      'compensationRules',
+      'observabilityRequirements',
+      'idempotency rationale',
     ],
     mustNotInclude: [
       '`getWritable()` and any stream consumption must be inside `"use step"`',
@@ -107,9 +135,7 @@ export const checks = [
   {
     ruleId: 'skill.workflow-verify.sequencing',
     file: 'skills/workflow-verify/SKILL.md',
-    mustInclude: [
-      'original or a stress-patched version',
-    ],
+    mustInclude: ['original or a stress-patched version'],
   },
 ];
 
@@ -177,8 +203,7 @@ export const goldenChecks = [
       'const hook = await waitForHook(run);',
       'await resumeWebhook(',
     ],
-    suggestedFix:
-      'Wait for webhook registration before calling resumeWebhook.',
+    suggestedFix: 'Wait for webhook registration before calling resumeWebhook.',
   },
   {
     ruleId: 'golden.human-in-the-loop-streaming',
@@ -260,10 +285,119 @@ export const stressGoldenChecks = [
       'Stream I/O placement',
       'getWritable()` may be called in workflow context',
     ],
-    mustNotInclude: [
-      '`getWritable()` must be in a step',
+    mustNotInclude: ['`getWritable()` must be in a step'],
+  },
+];
+
+export const teachGoldenChecks = [
+  {
+    ruleId: 'golden.teach.duplicate-webhook-order',
+    file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
+    mustInclude: [
+      'idempotency',
+      'businessInvariants',
+      'idempotencyRequirements',
+      'compensationRules',
+      'observabilityRequirements',
+      'duplicate',
+      'webhook',
+    ],
+  },
+  {
+    ruleId: 'golden.teach.approval-expiry-escalation',
+    file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      'approvalRules',
+      'timeoutRules',
+      'escalation',
+      'deterministic',
+      'hook',
+      'sleep',
+      'observabilityRequirements',
+    ],
+  },
+  {
+    ruleId: 'golden.teach.partial-side-effect-compensation',
+    file: 'skills/workflow-teach/goldens/partial-side-effect-compensation.md',
+    mustInclude: [
+      'compensationRules',
+      'businessInvariants',
+      'compensation',
+      'rollback',
+      'idempotencyRequirements',
+      'observabilityRequirements',
+    ],
+  },
+  {
+    ruleId: 'golden.teach.operator-observability-streams',
+    file: 'skills/workflow-teach/goldens/operator-observability-streams.md',
+    mustInclude: [
+      'observabilityRequirements',
+      'streams',
+      'getWritable',
+      'operatorSignals',
+      'namespace',
+      'businessInvariants',
     ],
   },
 ];
 
-export const allChecks = [...checks, ...goldenChecks, ...stressGoldenChecks];
+export const downstreamChecks = [
+  {
+    ruleId: 'downstream.design.invariants',
+    file: 'skills/workflow-design/SKILL.md',
+    mustInclude: [
+      'invariants',
+      'compensationPlan',
+      'operatorSignals',
+      'businessInvariants',
+      'compensationRules',
+      'observabilityRequirements',
+    ],
+    suggestedFix:
+      'workflow-design must surface invariants, compensationPlan, and operatorSignals from context.',
+  },
+  {
+    ruleId: 'downstream.design.idempotency-rationale',
+    file: 'skills/workflow-design/SKILL.md',
+    mustInclude: ['idempotency rationale', 'idempotency key'],
+    suggestedFix:
+      'workflow-design must require idempotency rationale for every irreversible side effect.',
+  },
+  {
+    ruleId: 'downstream.stress.idempotency',
+    file: 'skills/workflow-stress/SKILL.md',
+    mustInclude: ['idempotency keys', 'idempotency strategy'],
+    suggestedFix:
+      'workflow-stress must enforce idempotency checks for every step with external side effects.',
+  },
+  {
+    ruleId: 'downstream.stress.compensation',
+    file: 'skills/workflow-stress/SKILL.md',
+    mustInclude: ['compensation', 'Rollback', 'partial-success'],
+    suggestedFix:
+      'workflow-stress must enforce compensation policy for partial-success scenarios.',
+  },
+  {
+    ruleId: 'downstream.stress.timeout',
+    file: 'skills/workflow-stress/SKILL.md',
+    mustInclude: ['timeout', 'failure paths'],
+    suggestedFix:
+      'workflow-stress must check timeout and expiry behavior for suspensions.',
+  },
+  {
+    ruleId: 'downstream.verify.expiry-tests',
+    file: 'skills/workflow-verify/SKILL.md',
+    mustInclude: ['waitForSleep', 'wakeUp', 'resumeHook'],
+    suggestedFix:
+      'workflow-verify must generate tests exercising sleep/wakeUp for expiry and resumeHook for approvals.',
+  },
+];
+
+export const allChecks = [
+  ...checks,
+  ...goldenChecks,
+  ...stressGoldenChecks,
+  ...teachGoldenChecks,
+  ...downstreamChecks,
+];

@@ -5,6 +5,13 @@ export type WorkflowContext = {
   externalSystems: string[];
   antiPatterns: string[];
   canonicalExamples: string[];
+  businessInvariants: string[];
+  idempotencyRequirements: string[];
+  approvalRules: string[];
+  timeoutRules: string[];
+  compensationRules: string[];
+  observabilityRequirements: string[];
+  openQuestions: string[];
 };
 
 export type WorkflowStepPlan = {
@@ -46,4 +53,7 @@ export type WorkflowBlueprint = {
   streams: Array<{ namespace: string | null; payload: string }>;
   tests: WorkflowTestPlan[];
   antiPatternsAvoided: string[];
+  invariants: string[];
+  compensationPlan: string[];
+  operatorSignals: string[];
 };

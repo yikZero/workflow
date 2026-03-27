@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
 import {
   allChecks,
+  downstreamChecks,
   stressGoldenChecks,
+  teachGoldenChecks,
 } from './lib/workflow-skill-checks.mjs';
 
 function runSingleCheck(check, content) {
@@ -17,9 +19,15 @@ describe('validateWorkflowSkillText', () => {
       {
         ruleId: 'golden.webhook-ingress',
         file: 'skills/workflow-design/goldens/webhook-ingress.md',
-        mustInclude: ['createWebhook', 'resumeWebhook', 'hook.token', 'new Request('],
+        mustInclude: [
+          'createWebhook',
+          'resumeWebhook',
+          'hook.token',
+          'new Request(',
+        ],
         mustNotInclude: ['resumeWebhook(run, {'],
-        suggestedFix: 'Use waitForHook(run) to obtain hook.token, then call resumeWebhook(hook.token, new Request(...)).',
+        suggestedFix:
+          'Use waitForHook(run) to obtain hook.token, then call resumeWebhook(hook.token, new Request(...)).',
       },
     ];
 
@@ -45,8 +53,17 @@ await resumeWebhook(run, { status: 200, body: {} });
       {
         ruleId: 'golden.webhook-ingress',
         file: 'skills/workflow-design/goldens/webhook-ingress.md',
-        mustInclude: ['createWebhook', 'resumeWebhook', 'hook.token', 'new Request(', 'JSON.stringify('],
-        mustNotInclude: ['resumeWebhook(run, {', "resumeWebhook('webhook-token', {"],
+        mustInclude: [
+          'createWebhook',
+          'resumeWebhook',
+          'hook.token',
+          'new Request(',
+          'JSON.stringify(',
+        ],
+        mustNotInclude: [
+          'resumeWebhook(run, {',
+          "resumeWebhook('webhook-token', {",
+        ],
       },
     ];
 
@@ -83,7 +100,8 @@ Stream writes must be inside \`"use step"\` functions
 `;
 
     const result = validateWorkflowSkillText(checks, {
-      'skills/workflow-design/goldens/human-in-the-loop-streaming.md': badContent,
+      'skills/workflow-design/goldens/human-in-the-loop-streaming.md':
+        badContent,
     });
 
     expect(result.ok).toBe(false);
@@ -255,7 +273,9 @@ The current workflow blueprint from the conversation.
     });
 
     expect(result.ok).toBe(false);
-    expect(result.results[0].missing).toContain('original or a stress-patched version');
+    expect(result.results[0].missing).toContain(
+      'original or a stress-patched version'
+    );
   });
 
   it('returns ok:true when workflow-teach routes externally-driven to design then stress', () => {
@@ -623,7 +643,9 @@ getWritable() stream
     });
 
     expect(result.ok).toBe(false);
-    expect(result.results[0].forbidden).toContain('`getWritable()` must be in a step');
+    expect(result.results[0].forbidden).toContain(
+      '`getWritable()` must be in a step'
+    );
   });
 
   it('returns ok:false when approval-timeout-streaming reintroduces stale getWritable wording', () => {
@@ -654,7 +676,9 @@ getWritable()\` may be called in workflow context
     );
 
     expect(result.ok).toBe(false);
-    expect(result.results[0].forbidden).toContain('`getWritable()` must be in a step');
+    expect(result.results[0].forbidden).toContain(
+      '`getWritable()` must be in a step'
+    );
   });
 
   it('returns ok:false for missing stress golden file', () => {
@@ -774,7 +798,8 @@ Are all non-deterministic operations isolated in \`"use step"\` functions?
           'const hook = await waitForHook(run);',
           'await resumeWebhook(',
         ],
-        suggestedFix: 'Wait for webhook registration before calling resumeWebhook.',
+        suggestedFix:
+          'Wait for webhook registration before calling resumeWebhook.',
       },
     ];
 
@@ -1078,5 +1103,427 @@ After generating a blueprint, when the design includes hooks, webhooks, sleep, s
     expect(result.results[0].missing).toContain('workflow-stress');
     expect(result.results[0].outOfOrder).toBeUndefined();
     expect(result.results[0].orderDetails).toBeUndefined();
+  });
+
+  // --- Teach golden validation tests ---
+
+  it('registers every teach golden rule in the validator manifest', () => {
+    expect(teachGoldenChecks.map((check) => check.ruleId)).toEqual([
+      'golden.teach.duplicate-webhook-order',
+      'golden.teach.approval-expiry-escalation',
+      'golden.teach.partial-side-effect-compensation',
+      'golden.teach.operator-observability-streams',
+    ]);
+  });
+
+  it('includes teach golden rules in allChecks', () => {
+    const ruleIds = allChecks.map((check) => check.ruleId);
+
+    expect(ruleIds).toContain('golden.teach.duplicate-webhook-order');
+    expect(ruleIds).toContain('golden.teach.approval-expiry-escalation');
+    expect(ruleIds).toContain('golden.teach.partial-side-effect-compensation');
+    expect(ruleIds).toContain('golden.teach.operator-observability-streams');
+  });
+
+  it('returns ok:true for valid duplicate-webhook-order golden', () => {
+    const check = {
+      ruleId: 'golden.teach.duplicate-webhook-order',
+      file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
+      mustInclude: [
+        'idempotency',
+        'businessInvariants',
+        'idempotencyRequirements',
+        'compensationRules',
+        'observabilityRequirements',
+        'duplicate',
+        'webhook',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+idempotency businessInvariants idempotencyRequirements
+compensationRules observabilityRequirements
+duplicate webhook
+`
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns ok:false when duplicate-webhook-order golden drops idempotency', () => {
+    const check = {
+      ruleId: 'golden.teach.duplicate-webhook-order',
+      file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
+      mustInclude: [
+        'idempotency',
+        'businessInvariants',
+        'idempotencyRequirements',
+        'compensationRules',
+        'observabilityRequirements',
+        'duplicate',
+        'webhook',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+businessInvariants compensationRules
+observabilityRequirements duplicate webhook
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('idempotency');
+    expect(result.results[0].missing).toContain('idempotencyRequirements');
+  });
+
+  it('returns ok:true for valid approval-expiry-escalation golden', () => {
+    const check = {
+      ruleId: 'golden.teach.approval-expiry-escalation',
+      file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+      mustInclude: [
+        'approvalRules',
+        'timeoutRules',
+        'escalation',
+        'deterministic',
+        'hook',
+        'sleep',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+approvalRules timeoutRules escalation deterministic
+hook sleep observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when approval-expiry-escalation golden drops escalation', () => {
+    const check = {
+      ruleId: 'golden.teach.approval-expiry-escalation',
+      file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+      mustInclude: [
+        'approvalRules',
+        'timeoutRules',
+        'escalation',
+        'deterministic',
+        'hook',
+        'sleep',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+approvalRules timeoutRules deterministic
+hook sleep observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('escalation');
+  });
+
+  it('returns ok:true for valid partial-side-effect-compensation golden', () => {
+    const check = {
+      ruleId: 'golden.teach.partial-side-effect-compensation',
+      file: 'skills/workflow-teach/goldens/partial-side-effect-compensation.md',
+      mustInclude: [
+        'compensationRules',
+        'businessInvariants',
+        'compensation',
+        'rollback',
+        'idempotencyRequirements',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+compensationRules businessInvariants compensation
+rollback idempotencyRequirements observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when partial-side-effect-compensation golden drops rollback', () => {
+    const check = {
+      ruleId: 'golden.teach.partial-side-effect-compensation',
+      file: 'skills/workflow-teach/goldens/partial-side-effect-compensation.md',
+      mustInclude: [
+        'compensationRules',
+        'businessInvariants',
+        'compensation',
+        'rollback',
+        'idempotencyRequirements',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+compensationRules businessInvariants compensation
+idempotencyRequirements observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('rollback');
+  });
+
+  it('returns ok:true for valid operator-observability-streams golden', () => {
+    const check = {
+      ruleId: 'golden.teach.operator-observability-streams',
+      file: 'skills/workflow-teach/goldens/operator-observability-streams.md',
+      mustInclude: [
+        'observabilityRequirements',
+        'streams',
+        'getWritable',
+        'operatorSignals',
+        'namespace',
+        'businessInvariants',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+observabilityRequirements streams getWritable
+operatorSignals namespace businessInvariants
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when operator-observability-streams golden drops getWritable', () => {
+    const check = {
+      ruleId: 'golden.teach.operator-observability-streams',
+      file: 'skills/workflow-teach/goldens/operator-observability-streams.md',
+      mustInclude: [
+        'observabilityRequirements',
+        'streams',
+        'getWritable',
+        'operatorSignals',
+        'namespace',
+        'businessInvariants',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+observabilityRequirements streams
+operatorSignals namespace businessInvariants
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('getWritable');
+  });
+
+  it('returns ok:false for missing teach golden file', () => {
+    const check = {
+      ruleId: 'golden.teach.duplicate-webhook-order',
+      file: 'skills/workflow-teach/goldens/duplicate-webhook-order.md',
+      mustInclude: ['idempotency'],
+    };
+
+    const result = runSingleCheck(check, undefined);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('error');
+    expect(result.results[0].error).toBe('file_not_found');
+  });
+
+  // --- Downstream check validation tests ---
+
+  it('registers every downstream rule in the validator manifest', () => {
+    expect(downstreamChecks.map((check) => check.ruleId)).toEqual([
+      'downstream.design.invariants',
+      'downstream.design.idempotency-rationale',
+      'downstream.stress.idempotency',
+      'downstream.stress.compensation',
+      'downstream.stress.timeout',
+      'downstream.verify.expiry-tests',
+    ]);
+  });
+
+  it('includes downstream rules in allChecks', () => {
+    const ruleIds = allChecks.map((check) => check.ruleId);
+
+    expect(ruleIds).toContain('downstream.design.invariants');
+    expect(ruleIds).toContain('downstream.design.idempotency-rationale');
+    expect(ruleIds).toContain('downstream.stress.idempotency');
+    expect(ruleIds).toContain('downstream.stress.compensation');
+    expect(ruleIds).toContain('downstream.stress.timeout');
+    expect(ruleIds).toContain('downstream.verify.expiry-tests');
+  });
+
+  it('returns ok:true when workflow-design includes all downstream invariant tokens', () => {
+    const check = {
+      ruleId: 'downstream.design.invariants',
+      file: 'skills/workflow-design/SKILL.md',
+      mustInclude: [
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
+        'businessInvariants',
+        'compensationRules',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+invariants compensationPlan operatorSignals
+businessInvariants compensationRules observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-design drops compensationPlan', () => {
+    const check = {
+      ruleId: 'downstream.design.invariants',
+      file: 'skills/workflow-design/SKILL.md',
+      mustInclude: [
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
+        'businessInvariants',
+        'compensationRules',
+        'observabilityRequirements',
+      ],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+invariants operatorSignals
+businessInvariants compensationRules observabilityRequirements
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('compensationPlan');
+  });
+
+  it('returns ok:true when workflow-stress includes idempotency downstream tokens', () => {
+    const check = {
+      ruleId: 'downstream.stress.idempotency',
+      file: 'skills/workflow-stress/SKILL.md',
+      mustInclude: ['idempotency keys', 'idempotency strategy'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+Check idempotency keys are derived from stable identifiers.
+Does every step have an idempotency strategy?
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-stress drops idempotency strategy', () => {
+    const check = {
+      ruleId: 'downstream.stress.idempotency',
+      file: 'skills/workflow-stress/SKILL.md',
+      mustInclude: ['idempotency keys', 'idempotency strategy'],
+    };
+
+    const result = runSingleCheck(check, `Check idempotency keys.`);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('idempotency strategy');
+  });
+
+  it('returns ok:true when workflow-stress includes compensation downstream tokens', () => {
+    const check = {
+      ruleId: 'downstream.stress.compensation',
+      file: 'skills/workflow-stress/SKILL.md',
+      mustInclude: ['compensation', 'Rollback', 'partial-success'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+compensation Rollback
+Are partial-success scenarios handled?
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-stress drops Rollback', () => {
+    const check = {
+      ruleId: 'downstream.stress.compensation',
+      file: 'skills/workflow-stress/SKILL.md',
+      mustInclude: ['compensation', 'Rollback', 'partial-success'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `compensation and partial-success handling`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('Rollback');
+  });
+
+  it('returns ok:true when workflow-verify includes expiry test helpers', () => {
+    const check = {
+      ruleId: 'downstream.verify.expiry-tests',
+      file: 'skills/workflow-verify/SKILL.md',
+      mustInclude: ['waitForSleep', 'wakeUp', 'resumeHook'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+Use waitForSleep() and wakeUp() for timeouts.
+Use resumeHook() for approval flows.
+`
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false when workflow-verify drops wakeUp', () => {
+    const check = {
+      ruleId: 'downstream.verify.expiry-tests',
+      file: 'skills/workflow-verify/SKILL.md',
+      mustInclude: ['waitForSleep', 'wakeUp', 'resumeHook'],
+    };
+
+    const result = runSingleCheck(
+      check,
+      `
+Use waitForSleep() for timeouts.
+Use resumeHook() for approval flows.
+`
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('wakeUp');
   });
 });

@@ -3,7 +3,7 @@ name: workflow-design
 description: Design a workflow before writing code. Reads project context and produces a machine-readable blueprint matching WorkflowBlueprint. Use when the user wants to plan step boundaries, suspensions, streams, and tests for a new workflow. Triggers on "design workflow", "plan workflow", "workflow blueprint", or "workflow-design".
 metadata:
   author: Vercel Inc.
-  version: '0.3'
+  version: '0.4'
 ---
 
 # workflow-design
@@ -15,8 +15,8 @@ Use this skill when the user wants to design a workflow before writing code.
 Always read these before producing output:
 
 1. **`skills/workflow/SKILL.md`** — the authoritative API truth source. Do not duplicate its guidance; reference it for all runtime behavior questions.
-2. **`.workflow-skills/context.json`** — if it exists, use the captured project context to inform step boundaries, external system integration, and anti-pattern selection.
-3. **`lib/ai/workflow-blueprint.ts`** — the `WorkflowBlueprint` type contract. Every blueprint you produce must conform to this type exactly.
+2. **`.workflow-skills/context.json`** — if it exists, use the captured project context to inform step boundaries, external system integration, and anti-pattern selection. Carry forward persisted `businessInvariants`, `compensationRules`, and `observabilityRequirements` into the blueprint rather than producing a generic runtime-only plan. When `approvalRules`, `timeoutRules`, or `idempotencyRequirements` are present in context, reflect them in the blueprint's suspensions, failure model, and `invariants` array respectively.
+3. **`lib/ai/workflow-blueprint.ts`** — the `WorkflowBlueprint` type contract. Every blueprint you produce must conform to this type exactly. In addition to the base shape, every blueprint JSON block must include `invariants`, `compensationPlan`, and `operatorSignals` arrays.
 
 ## Output Sections
 
@@ -30,6 +30,12 @@ A 2-4 sentence plain-English description of what the workflow does, why it needs
 
 A fenced `json` block containing a single JSON object that matches the `WorkflowBlueprint` type from `lib/ai/workflow-blueprint.ts`. This must be valid, parseable JSON with no comments or trailing commas.
 
+Every blueprint JSON block must include these three policy arrays in addition to the base shape:
+
+- **`invariants`** — business rules that must hold true throughout the workflow's lifetime. Populate from `businessInvariants` and `idempotencyRequirements` in `.workflow-skills/context.json`. If no context file exists, derive invariants from the workflow's stated goal and side effects.
+- **`compensationPlan`** — for each irreversible side effect, state what compensation action runs if a later step fails. Populate from `compensationRules` in context. If a step has no irreversible side effects, omit it from the plan.
+- **`operatorSignals`** — what operators must be able to observe in logs and streams at runtime. Populate from `observabilityRequirements` in context. At minimum, include a signal for every suspension point and every error classification.
+
 The blueprint must be written to `.workflow-skills/blueprints/<workflow-name>.json`.
 
 ### `## Failure Model`
@@ -38,7 +44,9 @@ For each step, explain:
 - What happens on transient failure (retry behavior)
 - What happens on permanent failure (`FatalError` vs `RetryableError`)
 - Whether a rollback or compensation step is needed
-- Idempotency strategy for side effects
+- Idempotency strategy for side effects — every irreversible side effect must include an idempotency rationale explaining why retrying or replaying that step is safe (e.g., idempotency key, upsert, check-before-write, or external deduplication). If the side effect is not naturally idempotent, explain when compensation is required and reference the corresponding entry in `compensationPlan`.
+
+When `approvalRules` or `timeoutRules` are present in `.workflow-skills/context.json`, the Failure Model must address approval expiry behavior (what happens when an approval times out) and timeout-triggered compensation (what side effects are rolled back when a timeout fires).
 
 ### `## Test Strategy`
 
@@ -81,6 +89,9 @@ Every blueprint must explicitly note which of these anti-patterns it avoids (in 
 - `FatalError` if the refund is already processed
 - A test plan using both `resumeWebhook()` and `resumeHook()` helpers
 - `antiPatternsAvoided` listing all relevant patterns from above
+- `invariants` including at minimum `"refunds must be idempotent — duplicate refund requests for the same order must not double-credit"` and any `businessInvariants` from context
+- `compensationPlan` stating that if the refund API call succeeds but a later notification step fails, the refund stands (no reversal) but a dead-letter entry is created for retry
+- `operatorSignals` including `"log refund.initiated with orderId and amount"`, `"log approval.requested with refundId and approver"`, `"stream progress updates via getWritable()"`, and `"log refund.completed or refund.failed with final status"`
 
 ## Next Step
 
