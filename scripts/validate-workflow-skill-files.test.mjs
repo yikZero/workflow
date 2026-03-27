@@ -1361,6 +1361,8 @@ operatorSignals namespace businessInvariants
       'downstream.stress.compensation',
       'downstream.stress.timeout',
       'downstream.verify.expiry-tests',
+      'downstream.design.contractVersion',
+      'downstream.teach.contractVersion',
     ]);
   });
 

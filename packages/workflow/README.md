@@ -20,6 +20,10 @@ The **Workflow Development Kit** lets you easily add durability, reliability, an
 
 Visit [https://useworkflow.dev](https://useworkflow.dev) to view the full documentation.
 
+### Workflow Skills (AI-Assisted Design)
+
+Workflow skills are an AI-driven design loop that helps you create durable workflows. Install the skills bundle into your AI coding assistant, then run the four-stage loop: **teach** your project context, **design** a blueprint, **stress**-test it for edge cases, and **verify** it with generated tests. See the [Workflow Skills quick-start](https://useworkflow.dev/docs/getting-started/workflow-skills) for details.
+
 ## Community
 
 The Workflow DevKit community can be found on [GitHub Discussions](https://github.com/vercel/workflow/discussions), where you can ask questions, voice ideas, and share your projects with other people.

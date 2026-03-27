@@ -3,12 +3,26 @@ name: workflow-teach
 description: One-time setup that captures project context for workflow design skills. Use when the user wants to teach the assistant how workflows should be designed for this project. Triggers on "teach workflow", "set up workflow context", "configure workflow skills", or "workflow-teach".
 metadata:
   author: Vercel Inc.
-  version: '0.4'
+  version: '0.5'
 ---
 
 # workflow-teach
 
 Use this skill when the user wants to teach the assistant how workflows should be designed for this project.
+
+## Skill Loop Position
+
+**Stage 1 of 4** in the workflow skill loop: **teach** → design → stress → verify
+
+| Stage | Skill | Purpose |
+|-------|-------|---------|
+| **1** | **workflow-teach** (you are here) | Capture project context |
+| 2 | workflow-design | Emit a WorkflowBlueprint |
+| 3 | workflow-stress | Pressure-test the blueprint |
+| 4 | workflow-verify | Generate test matrices and verification artifacts |
+
+**Prerequisite:** `workflow-init` (Workflow DevKit must be installed).
+**Next:** Run `workflow-design` after this skill completes.
 
 ## Steps
 
@@ -52,6 +66,7 @@ Create or update `.workflow-skills/context.json` with this exact shape:
 
 ```json
 {
+  "contractVersion": "1",
   "projectName": "",
   "productGoal": "",
   "triggerSurfaces": [],

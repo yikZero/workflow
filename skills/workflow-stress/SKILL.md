@@ -3,12 +3,26 @@ name: workflow-stress
 description: Pressure-test an existing workflow blueprint for edge cases, determinism violations, and missing coverage. Produces severity-ranked fixes and a patched blueprint. Use after workflow-design. Triggers on "stress test workflow", "pressure test blueprint", "workflow edge cases", or "workflow-stress".
 metadata:
   author: Vercel Inc.
-  version: '0.4'
+  version: '0.5'
 ---
 
 # workflow-stress
 
 Use this skill after a workflow blueprint exists. It pressure-tests the blueprint against the full checklist of workflow edge cases and produces a patched version.
+
+## Skill Loop Position
+
+**Stage 3 of 4** in the workflow skill loop: teach → design → **stress** → verify
+
+| Stage | Skill | Purpose |
+|-------|-------|---------|
+| 1 | workflow-teach | Capture project context |
+| 2 | workflow-design | Emit a WorkflowBlueprint |
+| **3** | **workflow-stress** (you are here) | Pressure-test the blueprint |
+| 4 | workflow-verify | Generate test matrices and verification artifacts |
+
+**Prerequisite:** A blueprint must exist from `workflow-design` (in `.workflow-skills/blueprints/<name>.json` or in conversation).
+**Next:** Run `workflow-verify` to generate implementation-ready test matrices.
 
 ## Inputs
 

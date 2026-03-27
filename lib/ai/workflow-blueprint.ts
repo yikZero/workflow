@@ -1,4 +1,5 @@
 export type WorkflowContext = {
+  contractVersion: string;
   projectName: string;
   productGoal: string;
   triggerSurfaces: string[];
@@ -44,6 +45,7 @@ export type WorkflowTestPlan = {
 };
 
 export type WorkflowBlueprint = {
+  contractVersion: string;
   name: string;
   goal: string;
   trigger: { type: string; entrypoint: string };

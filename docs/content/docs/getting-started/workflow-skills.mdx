@@ -1,0 +1,258 @@
+---
+title: Workflow Skills
+description: Install the workflow skills bundle and use the teach-design-stress-verify loop to design durable workflows with AI assistance.
+type: guide
+summary: Use AI skills to design, stress-test, and verify workflows.
+prerequisites:
+  - /docs/getting-started
+related:
+  - /docs/foundations/workflows-and-steps
+  - /docs/testing
+  - /docs/api-reference/workflow-vitest
+---
+
+Workflow skills are an AI-assisted design loop that guides you through creating
+durable workflows. The loop has four stages: **teach** your project context,
+**design** a blueprint, **stress**-test it for edge cases, and **verify** it
+with a generated test matrix.
+
+<Callout>
+  Workflow skills require an AI coding assistant that supports user-invocable
+  skills, such as [Claude Code](https://claude.ai/code) or
+  [Cursor](https://cursor.com).
+</Callout>
+
+<Steps>
+
+<Step>
+## Install the Skills Bundle
+
+Copy the skills into your project. Choose the bundle that matches your AI tool:
+
+**Claude Code:**
+
+```bash
+cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .claude/skills/
+```
+
+**Cursor:**
+
+```bash
+cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
+```
+
+After copying, you should see six skill directories: `workflow-init`,
+`workflow`, `workflow-teach`, `workflow-design`, `workflow-stress`, and
+`workflow-verify`.
+
+</Step>
+
+<Step>
+## Teach Your Project Context
+
+Run the `/workflow-teach` command in your AI assistant. This starts an
+interactive interview that captures your project's domain knowledge:
+
+```bash
+/workflow-teach
+```
+
+The skill scans your repository and asks about:
+
+- **Trigger surfaces** — API routes, webhooks, queues, cron jobs
+- **External systems** — databases, payment providers, notification services
+- **Business invariants** — rules that must never be violated
+- **Idempotency requirements** — which operations must be safe to retry
+- **Timeout and approval rules** — human-in-the-loop constraints
+- **Compensation rules** — what to undo when later steps fail
+
+The output is saved to `.workflow-skills/context.json`. This file is
+git-ignored and stays local to your checkout.
+
+</Step>
+
+<Step>
+## Design a Blueprint
+
+Run `/workflow-design` and describe the workflow you want to build. The skill
+reads your project context and produces a machine-readable blueprint.
+
+```bash
+/workflow-design
+```
+
+For example, you might describe:
+
+> Design a workflow that routes purchase orders for manager approval, escalates
+> to a director after 48 hours, and auto-rejects after a further 24 hours.
+
+The skill emits a `WorkflowBlueprint` JSON file to
+`.workflow-skills/blueprints/<name>.json` containing:
+
+- **Steps** — each with a runtime context (`workflow` or `step`), purpose, side
+  effects, and failure mode
+- **Suspensions** — hooks for human approval, webhooks, and sleep timers
+- **Tests** — a test plan mapping each scenario to the `@workflow/vitest`
+  helpers it needs
+- **Policy arrays** — `invariants`, `compensationPlan`, and `operatorSignals`
+  that the workflow must uphold
+
+</Step>
+
+<Step>
+## Stress-Test the Blueprint
+
+Run `/workflow-stress` to pressure-test your blueprint against a 12-point
+checklist of common workflow pitfalls:
+
+```bash
+/workflow-stress
+```
+
+The stress skill checks for:
+
+1. Determinism boundary violations
+2. Step granularity issues
+3. Serialization / pass-by-value problems
+4. Hook token strategy correctness
+5. Webhook response mode selection
+6. `start()` placement errors
+7. Stream I/O placement
+8. Missing idempotency keys
+9. Retry semantic mismatches
+10. Compensation gaps
+11. Observability coverage
+12. Integration test coverage
+
+Any issues are patched directly into the blueprint file. The original is
+overwritten in place.
+
+</Step>
+
+<Step>
+## Verify with Generated Tests
+
+Run `/workflow-verify` to generate implementation-ready verification artifacts
+from the final blueprint:
+
+```bash
+/workflow-verify
+```
+
+The skill produces:
+
+- A **files-to-create** table listing workflow files, API routes, and test files
+- A **test matrix** mapping test names to `@workflow/vitest` helpers
+- A complete **integration test skeleton** using `start`, `waitForHook`,
+  `resumeHook`, `waitForSleep`, and `wakeUp`
+- **Runtime verification commands** you can paste into your terminal
+
+</Step>
+
+</Steps>
+
+## Inspect Generated Artifacts
+
+After running the full loop, your project contains two artifacts:
+
+### Project context
+
+```bash
+cat .workflow-skills/context.json
+```
+
+```json
+{
+  "contractVersion": "1",
+  "projectName": "my-app",
+  "productGoal": "Process purchase orders with approval routing",
+  "triggerSurfaces": ["api_route"],
+  "externalSystems": ["database", "notification-service"],
+  "businessInvariants": [
+    "A purchase order must receive exactly one final decision"
+  ],
+  "idempotencyRequirements": [
+    "All notification sends must be idempotent by PO number"
+  ],
+  "approvalRules": [
+    "Manager approval required for orders over $5,000",
+    "Escalate to director after 48h"
+  ],
+  "timeoutRules": ["Auto-reject after 72h total wait time"],
+  "compensationRules": [],
+  "observabilityRequirements": [
+    "Log approval.requested, approval.escalated, approval.decided"
+  ],
+  "antiPatterns": [],
+  "canonicalExamples": [],
+  "openQuestions": []
+}
+```
+
+### Workflow blueprint
+
+```bash
+cat .workflow-skills/blueprints/approval-expiry-escalation.json
+```
+
+```json
+{
+  "contractVersion": "1",
+  "name": "approval-expiry-escalation",
+  "goal": "Route PO approval through manager with timeout escalation",
+  "trigger": {
+    "type": "api_route",
+    "entrypoint": "app/api/purchase-orders/route.ts"
+  },
+  "steps": [
+    { "name": "validatePurchaseOrder", "runtime": "step" },
+    { "name": "notifyManager", "runtime": "step" },
+    { "name": "awaitManagerApproval", "runtime": "workflow" },
+    { "name": "notifyDirector", "runtime": "step" },
+    { "name": "awaitDirectorApproval", "runtime": "workflow" },
+    { "name": "recordDecision", "runtime": "step" },
+    { "name": "notifyRequester", "runtime": "step" }
+  ],
+  "suspensions": [
+    { "kind": "hook", "tokenStrategy": "deterministic" },
+    { "kind": "sleep", "duration": "48h" },
+    { "kind": "hook", "tokenStrategy": "deterministic" },
+    { "kind": "sleep", "duration": "24h" }
+  ],
+  "invariants": [
+    "A purchase order must receive exactly one final decision"
+  ],
+  "compensationPlan": [],
+  "operatorSignals": [
+    "Log approval.requested with PO number and assigned manager"
+  ]
+}
+```
+
+Both files are git-ignored. They persist locally so you can re-run any stage
+of the loop without starting over.
+
+## Hero Scenario: Approval Expiry Escalation
+
+The approval-expiry-escalation scenario is the recommended first workflow to
+design with the skill loop. It exercises the hardest patterns in a single flow:
+
+| Pattern | How It Appears |
+|---------|---------------|
+| Human-in-the-loop approval | Manager and director hooks |
+| Timeout handling | 48h and 24h sleep suspensions |
+| Escalation logic | `Promise.race` between hook and sleep |
+| Idempotency | Every side-effecting step has an idempotency key |
+| Deterministic tokens | Hook tokens derived from the PO number |
+| Observability | `operatorSignals` cover the full approval lifecycle |
+
+Use the prompt from the design step above to walk through the full loop with
+this scenario.
+
+## Next Steps
+
+- Read the [Workflows and Steps](/docs/foundations/workflows-and-steps) guide to
+  understand the runtime model
+- See the [Testing](/docs/testing) guide for writing workflow tests by hand
+- Check the [`@workflow/vitest` API reference](/docs/api-reference/workflow-vitest)
+  for the full list of test helpers

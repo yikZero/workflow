@@ -3,12 +3,26 @@ name: workflow-verify
 description: Turn a workflow blueprint into implementation-ready file lists, test matrices, integration test skeletons, and runtime verification commands. Use when the user is ready to implement and test a designed workflow. Triggers on "verify workflow", "workflow tests", "implement blueprint", or "workflow-verify".
 metadata:
   author: Vercel Inc.
-  version: '0.3'
+  version: '0.4'
 ---
 
 # workflow-verify
 
 Use this skill when the user wants implementation-ready verification from a workflow blueprint.
+
+## Skill Loop Position
+
+**Stage 4 of 4** in the workflow skill loop: teach → design → stress → **verify**
+
+| Stage | Skill | Purpose |
+|-------|-------|---------|
+| 1 | workflow-teach | Capture project context |
+| 2 | workflow-design | Emit a WorkflowBlueprint |
+| 3 | workflow-stress | Pressure-test the blueprint |
+| **4** | **workflow-verify** (you are here) | Generate test matrices and verification artifacts |
+
+**Prerequisite:** A blueprint from `workflow-design`, ideally stress-tested by `workflow-stress`.
+**Next:** Implement the workflow and run the generated tests.
 
 ## Inputs
 

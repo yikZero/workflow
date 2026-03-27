@@ -3,12 +3,26 @@ name: workflow-design
 description: Design a workflow before writing code. Reads project context and produces a machine-readable blueprint matching WorkflowBlueprint. Use when the user wants to plan step boundaries, suspensions, streams, and tests for a new workflow. Triggers on "design workflow", "plan workflow", "workflow blueprint", or "workflow-design".
 metadata:
   author: Vercel Inc.
-  version: '0.4'
+  version: '0.5'
 ---
 
 # workflow-design
 
 Use this skill when the user wants to design a workflow before writing code.
+
+## Skill Loop Position
+
+**Stage 2 of 4** in the workflow skill loop: teach → **design** → stress → verify
+
+| Stage | Skill | Purpose |
+|-------|-------|---------|
+| 1 | workflow-teach | Capture project context |
+| **2** | **workflow-design** (you are here) | Emit a WorkflowBlueprint |
+| 3 | workflow-stress | Pressure-test the blueprint |
+| 4 | workflow-verify | Generate test matrices and verification artifacts |
+
+**Prerequisite:** Run `workflow-teach` first to populate `.workflow-skills/context.json`.
+**Next:** Run `workflow-stress` to pressure-test the blueprint, then `workflow-verify` to generate test artifacts.
 
 ## Inputs
 
@@ -28,7 +42,7 @@ A 2-4 sentence plain-English description of what the workflow does, why it needs
 
 ### `## Blueprint`
 
-A fenced `json` block containing a single JSON object that matches the `WorkflowBlueprint` type from `lib/ai/workflow-blueprint.ts`. This must be valid, parseable JSON with no comments or trailing commas.
+A fenced `json` block containing a single JSON object that matches the `WorkflowBlueprint` type from `lib/ai/workflow-blueprint.ts`. This must be valid, parseable JSON with no comments or trailing commas. The blueprint must include `"contractVersion": "1"` so downstream skills and tooling can detect schema changes.
 
 Every blueprint JSON block must include these three policy arrays in addition to the base shape:
 

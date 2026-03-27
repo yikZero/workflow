@@ -9,6 +9,7 @@ export const checks = [
     file: 'skills/workflow-teach/SKILL.md',
     mustInclude: [
       '.workflow-skills/context.json',
+      'contractVersion',
       'projectName',
       'productGoal',
       'triggerSurfaces',
@@ -150,6 +151,148 @@ export const checks = [
     ruleId: 'skill.workflow-verify.sequencing',
     file: 'skills/workflow-verify/SKILL.md',
     mustInclude: ['original or a stress-patched version'],
+  },
+  {
+    ruleId: 'skill.workflow-teach.loop-position',
+    file: 'skills/workflow-teach/SKILL.md',
+    mustInclude: [
+      'Skill Loop Position',
+      'Stage 1 of 4',
+      'teach',
+      'design',
+      'stress',
+      'verify',
+    ],
+    mustAppearInOrder: ['Stage 1 of 4', 'workflow-design'],
+    suggestedFix:
+      'workflow-teach must declare its position as Stage 1 of 4 in the skill loop.',
+  },
+  {
+    ruleId: 'skill.workflow-design.loop-position',
+    file: 'skills/workflow-design/SKILL.md',
+    mustInclude: ['Skill Loop Position', 'Stage 2 of 4', 'contractVersion'],
+    suggestedFix:
+      'workflow-design must declare Stage 2 of 4 and require contractVersion in blueprints.',
+  },
+  {
+    ruleId: 'skill.workflow-stress.loop-position',
+    file: 'skills/workflow-stress/SKILL.md',
+    mustInclude: ['Skill Loop Position', 'Stage 3 of 4'],
+    suggestedFix:
+      'workflow-stress must declare its position as Stage 3 of 4 in the skill loop.',
+  },
+  {
+    ruleId: 'skill.workflow-verify.loop-position',
+    file: 'skills/workflow-verify/SKILL.md',
+    mustInclude: ['Skill Loop Position', 'Stage 4 of 4'],
+    suggestedFix:
+      'workflow-verify must declare its position as Stage 4 of 4 in the skill loop.',
+  },
+];
+
+export const heroGoldenChecks = [
+  {
+    ruleId: 'golden.hero.teach',
+    file: 'skills/workflow-teach/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      'approvalRules',
+      'timeoutRules',
+      'escalation',
+      'deterministic',
+      'hook',
+      'sleep',
+      'observabilityRequirements',
+      'businessInvariants',
+      'idempotencyRequirements',
+      'approval:po-${poNumber}',
+      'escalation:po-${poNumber}',
+      '48 hours',
+      '24 hours',
+    ],
+  },
+  {
+    ruleId: 'golden.hero.design',
+    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      'createHook',
+      'sleep',
+      'resumeHook',
+      'waitForHook',
+      'waitForSleep',
+      'wakeUp',
+      'antiPatternsAvoided',
+      'deterministic',
+      'invariants',
+      'compensationPlan',
+      'operatorSignals',
+      'idempotencyKey',
+      'approval:po-',
+      'escalation:po-',
+      'contractVersion',
+    ],
+  },
+  {
+    ruleId: 'golden.hero.design.sequence',
+    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      'await waitForHook(run',
+      'await resumeHook(',
+      'await waitForSleep(run)',
+      '.wakeUp(',
+    ],
+    mustAppearInOrder: [
+      'await waitForHook(run',
+      'await resumeHook(',
+      'await waitForSleep(run)',
+      '.wakeUp(',
+    ],
+    suggestedFix:
+      'Show hook wait/resume before sleep wait/wakeUp in the example flow.',
+  },
+  {
+    ruleId: 'golden.hero.design.blueprint-schema',
+    file: 'skills/workflow-design/goldens/approval-expiry-escalation.md',
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'name',
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
+        'steps',
+        'suspensions',
+        'tests',
+      ],
+    },
+    suggestedFix:
+      'The hero design golden must contain a valid JSON blueprint with all required WorkflowBlueprint fields.',
+  },
+  {
+    ruleId: 'golden.hero.stress',
+    file: 'skills/workflow-stress/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      'Idempotency keys',
+      'Integration test coverage',
+      'escalation',
+      'timeout',
+      'Blueprint Patch',
+      'waitForSleep',
+      'wakeUp',
+      'resumeHook',
+      'Retry semantics',
+      'Determinism boundary',
+    ],
+  },
+  {
+    ruleId: 'golden.hero.stress.schema',
+    file: 'skills/workflow-stress/goldens/approval-expiry-escalation.md',
+    jsonFence: {
+      language: 'json',
+      requiredKeys: ['invariants', 'compensationPlan', 'operatorSignals'],
+    },
+    suggestedFix:
+      'The hero stress golden must contain a structurally valid blueprint patch with policy arrays.',
   },
 ];
 
@@ -416,6 +559,20 @@ export const downstreamChecks = [
     suggestedFix:
       'workflow-verify must generate tests exercising sleep/wakeUp for expiry and resumeHook for approvals.',
   },
+  {
+    ruleId: 'downstream.design.contractVersion',
+    file: 'skills/workflow-design/SKILL.md',
+    mustInclude: ['contractVersion'],
+    suggestedFix:
+      'workflow-design must require contractVersion in emitted blueprints for backward compatibility.',
+  },
+  {
+    ruleId: 'downstream.teach.contractVersion',
+    file: 'skills/workflow-teach/SKILL.md',
+    mustInclude: ['contractVersion'],
+    suggestedFix:
+      'workflow-teach must include contractVersion in the context.json template.',
+  },
 ];
 
 export const allChecks = [
@@ -423,5 +580,6 @@ export const allChecks = [
   ...goldenChecks,
   ...stressGoldenChecks,
   ...teachGoldenChecks,
+  ...heroGoldenChecks,
   ...downstreamChecks,
 ];
