@@ -246,10 +246,7 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
-                  if (EntityConflictError.is(err)) {
-                    // 409: already running — fetch the run and proceed
-                    workflowRun = await world.runs.get(runId);
-                  } else if (RunExpiredError.is(err)) {
+                  if (RunExpiredError.is(err)) {
                     // 410: already finished — log and exit
                     runtimeLogger.info(
                       'Run already finished during setup, skipping',
