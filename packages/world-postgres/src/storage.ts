@@ -373,6 +373,67 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
           runId: effectiveRunId,
         });
         currentRun = runValue ?? null;
+
+        // Resilient start: run_started on non-existent run with eventData
+        // creates the run first, so the queue can bootstrap a run that
+        // failed to create during start().
+        if (
+          data.eventType === 'run_started' &&
+          !currentRun &&
+          'eventData' in data &&
+          data.eventData
+        ) {
+          const runInputData = (data as any).eventData as {
+            deploymentId?: string;
+            workflowName?: string;
+            input?: any;
+            executionContext?: Record<string, any>;
+          };
+          if (
+            runInputData.deploymentId &&
+            runInputData.workflowName &&
+            runInputData.input !== undefined
+          ) {
+            // Create the run entity
+            const [createdRun] = await drizzle
+              .insert(Schema.runs)
+              .values({
+                runId: effectiveRunId,
+                deploymentId: runInputData.deploymentId,
+                workflowName: runInputData.workflowName,
+                specVersion: effectiveSpecVersion,
+                input: runInputData.input as SerializedContent,
+                executionContext: runInputData.executionContext as
+                  | SerializedContent
+                  | undefined,
+                status: 'pending',
+              })
+              .onConflictDoNothing()
+              .returning();
+
+            if (createdRun) {
+              // Create run_created event
+              const runCreatedEventId = `wevt_${ulid()}`;
+              await drizzle.insert(events).values({
+                runId: effectiveRunId,
+                eventId: runCreatedEventId,
+                eventType: 'run_created',
+                eventData: {
+                  deploymentId: runInputData.deploymentId,
+                  workflowName: runInputData.workflowName,
+                  input: runInputData.input,
+                  executionContext: runInputData.executionContext,
+                },
+                specVersion: effectiveSpecVersion,
+              });
+
+              currentRun = {
+                status: 'pending',
+                specVersion: effectiveSpecVersion,
+              };
+            }
+          }
+        }
       }
 
       // ============================================================
