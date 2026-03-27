@@ -766,6 +766,7 @@ Are all non-deterministic operations isolated in \`"use step"\` functions?
   it('registers every stress golden rule in the validator manifest', () => {
     expect(stressGoldenChecks.map((check) => check.ruleId)).toEqual([
       'golden.stress.compensation-saga',
+      'golden.stress.compensation-saga.schema',
       'golden.stress.child-workflow-handoff',
       'golden.stress.multi-event-hook-loop',
       'golden.stress.rate-limit-retry',
@@ -1525,5 +1526,76 @@ Use resumeHook() for approval flows.
 
     expect(result.ok).toBe(false);
     expect(result.results[0].missing).toContain('wakeUp');
+  });
+
+  it('returns ok:false when workflow-verify ignores invariants/compensationPlan/operatorSignals', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-verify.contract-fields',
+        file: 'skills/workflow-verify/SKILL.md',
+        mustInclude: [
+          'invariants',
+          'compensationPlan',
+          'operatorSignals',
+          'failure-path',
+          'stream/log',
+        ],
+      },
+    ];
+
+    const content = `
+The verification step should create tests for hooks, webhooks, and sleeps.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-verify/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toEqual(
+      expect.arrayContaining([
+        'invariants',
+        'compensationPlan',
+        'operatorSignals',
+      ])
+    );
+  });
+
+  it('returns ok:false when compensation-saga golden omits required WorkflowBlueprint arrays', () => {
+    const checks = [
+      {
+        ruleId: 'golden.stress.compensation-saga.schema',
+        file: 'skills/workflow-stress/goldens/compensation-saga.md',
+        mustInclude: [
+          '"invariants": [',
+          '"compensationPlan": [',
+          '"operatorSignals": [',
+        ],
+      },
+    ];
+
+    const content = `
+# Golden Scenario: Compensation Saga
+
+\`\`\`json
+{
+  "name": "order-fulfillment",
+  "antiPatternsAvoided": []
+}
+\`\`\`
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-stress/goldens/compensation-saga.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toEqual(
+      expect.arrayContaining([
+        '"invariants": [',
+        '"compensationPlan": [',
+        '"operatorSignals": [',
+      ])
+    );
   });
 });

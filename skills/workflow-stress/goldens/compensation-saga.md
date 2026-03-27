@@ -46,7 +46,10 @@ A multi-step order fulfillment workflow that charges a payment, reserves invento
       "verifies": ["order completes successfully"]
     }
   ],
-  "antiPatternsAvoided": ["Node.js API in workflow context"]
+  "antiPatternsAvoided": ["Node.js API in workflow context"],
+  "invariants": [],
+  "compensationPlan": [],
+  "operatorSignals": []
 }
 ```
 

@@ -3,7 +3,7 @@ name: workflow-verify
 description: Turn a workflow blueprint into implementation-ready file lists, test matrices, integration test skeletons, and runtime verification commands. Use when the user is ready to implement and test a designed workflow. Triggers on "verify workflow", "workflow tests", "implement blueprint", or "workflow-verify".
 metadata:
   author: Vercel Inc.
-  version: '0.2'
+  version: '0.3'
 ---
 
 # workflow-verify
@@ -42,6 +42,12 @@ A table mapping each test from the blueprint to what it verifies and which helpe
 | Test Name | Helpers Used | Verifies |
 |-----------|-------------|----------|
 | ... | `start`, `waitForHook`, `resumeHook`, ... | ... |
+
+Also translate blueprint policy arrays into verification work:
+
+- `invariants` → add assertions that impossible terminal states and duplicate side effects cannot occur.
+- `compensationPlan` → add at least one failure-path test or one explicit manual/runtime verification step per compensation entry.
+- `operatorSignals` → add stream/log assertions or runtime verification commands showing how each required signal is observed.
 
 ### `## Integration Test Skeleton`
 
@@ -155,6 +161,9 @@ Include workflow-specific commands for any manual verification steps (e.g. trigg
 - `createHook()` supports deterministic tokens; `createWebhook()` does not.
 - Stream I/O happens in steps only.
 - `FatalError` and `RetryableError` recommendations must be intentional.
+- When the blueprint contains `invariants`, include assertions that those invariants still hold in both happy-path and failure-path coverage.
+- When the blueprint contains `compensationPlan`, include failure-path coverage or explicit runtime verification steps proving each compensation path is exercised or observable.
+- When the blueprint contains `operatorSignals`, include stream/log assertions or runtime verification commands for each required operator signal.
 
 ## Sample Usage
 

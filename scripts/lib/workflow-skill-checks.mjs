@@ -133,6 +133,19 @@ export const checks = [
     mustNotInclude: ["resumeWebhook('webhook-token', {", 'status: 200,'],
   },
   {
+    ruleId: 'skill.workflow-verify.contract-fields',
+    file: 'skills/workflow-verify/SKILL.md',
+    mustInclude: [
+      'invariants',
+      'compensationPlan',
+      'operatorSignals',
+      'failure-path',
+      'stream/log',
+    ],
+    suggestedFix:
+      'Make workflow-verify turn invariants into assertions, compensationPlan into failure-path coverage, and operatorSignals into runtime observability checks.',
+  },
+  {
     ruleId: 'skill.workflow-verify.sequencing',
     file: 'skills/workflow-verify/SKILL.md',
     mustInclude: ['original or a stress-patched version'],
@@ -236,6 +249,17 @@ export const stressGoldenChecks = [
       'Integration test coverage',
       'refundPayment',
     ],
+  },
+  {
+    ruleId: 'golden.stress.compensation-saga.schema',
+    file: 'skills/workflow-stress/goldens/compensation-saga.md',
+    mustInclude: [
+      '"invariants": [',
+      '"compensationPlan": [',
+      '"operatorSignals": [',
+    ],
+    suggestedFix:
+      'Keep defective stress goldens semantically wrong, but structurally valid against WorkflowBlueprint.',
   },
   {
     ruleId: 'golden.stress.child-workflow-handoff',
