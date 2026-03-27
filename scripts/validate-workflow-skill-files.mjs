@@ -1,7 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
 
 const checks = [
   {
+    ruleId: 'skill.workflow-teach',
     file: 'skills/workflow-teach/SKILL.md',
     mustInclude: [
       '.workflow-skills/context.json',
@@ -19,6 +21,7 @@ const checks = [
     ],
   },
   {
+    ruleId: 'skill.workflow-design',
     file: 'skills/workflow-design/SKILL.md',
     mustInclude: [
       'WorkflowBlueprint',
@@ -37,6 +40,7 @@ const checks = [
     ],
   },
   {
+    ruleId: 'skill.workflow-stress',
     file: 'skills/workflow-stress/SKILL.md',
     mustInclude: [
       'determinism boundary',
@@ -54,6 +58,7 @@ const checks = [
     ],
   },
   {
+    ruleId: 'skill.workflow-verify',
     file: 'skills/workflow-verify/SKILL.md',
     mustInclude: [
       'waitForHook()',
@@ -71,6 +76,7 @@ const checks = [
 
 const goldenChecks = [
   {
+    ruleId: 'golden.approval-hook-sleep',
     file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
     mustInclude: [
       'createHook',
@@ -84,16 +90,27 @@ const goldenChecks = [
     ],
   },
   {
+    ruleId: 'golden.webhook-ingress',
     file: 'skills/workflow-design/goldens/webhook-ingress.md',
     mustInclude: [
       'createWebhook',
       'resumeWebhook',
       'waitForHook',
+      'hook.token',
+      'new Request(',
+      'JSON.stringify(',
       'antiPatternsAvoided',
       'webhook',
     ],
+    mustNotInclude: [
+      'resumeWebhook(run, {',
+      "resumeWebhook('webhook-token', {",
+    ],
+    suggestedFix:
+      'Use waitForHook(run) to obtain hook.token, then call resumeWebhook(hook.token, new Request(...)).',
   },
   {
+    ruleId: 'golden.human-in-the-loop-streaming',
     file: 'skills/workflow-design/goldens/human-in-the-loop-streaming.md',
     mustInclude: [
       'createHook',
@@ -112,47 +129,23 @@ const goldenChecks = [
 ];
 
 const allChecks = [...checks, ...goldenChecks];
-const results = [];
-let failed = false;
 
+// Read all files into a map
+const filesByPath = {};
 for (const check of allChecks) {
-  if (!existsSync(check.file)) {
-    failed = true;
-    results.push({
-      file: check.file,
-      status: 'error',
-      error: 'file_not_found',
-    });
-    continue;
-  }
-
-  const text = readFileSync(check.file, 'utf8');
-  const missing = check.mustInclude.filter((value) => !text.includes(value));
-  const forbidden = (check.mustNotInclude ?? []).filter((value) =>
-    text.includes(value)
-  );
-
-  if (missing.length > 0 || forbidden.length > 0) {
-    failed = true;
-    results.push({
-      file: check.file,
-      status: 'fail',
-      ...(missing.length > 0 ? { missing } : {}),
-      ...(forbidden.length > 0 ? { forbidden } : {}),
-    });
-  } else {
-    results.push({ file: check.file, status: 'pass' });
+  if (existsSync(check.file)) {
+    filesByPath[check.file] = readFileSync(check.file, 'utf8');
   }
 }
 
-if (failed) {
-  const errors = results.filter((r) => r.status !== 'pass');
+const result = validateWorkflowSkillText(allChecks, filesByPath);
+
+if (!result.ok) {
+  const errors = result.results.filter((r) => r.status !== 'pass');
   console.error(
-    JSON.stringify({ ok: false, checked: allChecks.length, errors }, null, 2)
+    JSON.stringify({ ok: false, checked: result.checked, errors }, null, 2)
   );
   process.exit(1);
 }
 
-console.log(
-  JSON.stringify({ ok: true, checked: allChecks.length, results }, null, 2)
-);
+console.log(JSON.stringify(result, null, 2));

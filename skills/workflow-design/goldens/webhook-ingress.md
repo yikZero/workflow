@@ -57,30 +57,34 @@ The blueprint `tests` array must include a test entry using these helpers:
 | Helper | Purpose |
 |--------|---------|
 | `start` | Launch the webhook ingestion workflow |
-| `waitForHook` | Wait for the webhook to be registered |
-| `resumeWebhook` | Simulate the external webhook POST |
-| `getRun` | Retrieve the run to inspect final state |
+| `waitForHook` | Wait for the webhook to be registered, returns `hook` with `hook.token` |
+| `resumeWebhook` | Resume the webhook via `resumeWebhook(hook.token, new Request(...))` |
+| `run.returnValue` | Assert the final workflow return value |
 
 ### Integration Test Skeleton
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { start, resumeWebhook, getRun } from 'workflow/api';
+import { start, resumeWebhook } from 'workflow/api';
 import { waitForHook } from '@workflow/vitest';
 import { paymentWebhookWorkflow } from './payment-webhook';
 
 describe('paymentWebhookWorkflow', () => {
   it('processes a valid payment webhook', async () => {
     const run = await start(paymentWebhookWorkflow, ['order-789']);
+    const hook = await waitForHook(run);
 
-    await waitForHook(run);
-    await resumeWebhook(run, {
-      status: 200,
-      body: {
-        type: 'payment_intent.succeeded',
-        data: { orderId: 'order-789', amount: 4999 },
-      },
-    });
+    await resumeWebhook(
+      hook.token,
+      new Request('https://example.com/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'payment_intent.succeeded',
+          data: { orderId: 'order-789', amount: 4999 },
+        }),
+      })
+    );
 
     await expect(run.returnValue).resolves.toEqual({
       status: 'completed',
@@ -90,12 +94,16 @@ describe('paymentWebhookWorkflow', () => {
 
   it('rejects invalid webhook signature', async () => {
     const run = await start(paymentWebhookWorkflow, ['order-000']);
+    const hook = await waitForHook(run);
 
-    await waitForHook(run);
-    await resumeWebhook(run, {
-      status: 200,
-      body: { type: 'invalid', signature: 'bad' },
-    });
+    await resumeWebhook(
+      hook.token,
+      new Request('https://example.com/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'invalid', signature: 'bad' }),
+      })
+    );
 
     await expect(run.returnValue).resolves.toEqual({
       status: 'failed',
@@ -116,5 +124,5 @@ A blueprint produced by `workflow-design` for this scenario is correct if:
 3. Signature validation uses `FatalError` for invalid signatures.
 4. Payment processing uses `RetryableError` with explicit `maxRetries`.
 5. All steps with database writes have `idempotencyKey`.
-6. The test uses `resumeWebhook` (not `resumeHook`) to simulate the external POST.
+6. The test uses `resumeWebhook(hook.token, new Request(...))` (not `resumeHook`) to simulate the external POST.
 7. The `antiPatternsAvoided` array includes `createWebhook() with a custom token`.
