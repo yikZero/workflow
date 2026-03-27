@@ -759,6 +759,214 @@ Are all non-deterministic operations isolated in \`"use step"\` functions?
     expect(ruleIds).toContain('golden.stress.approval-timeout-streaming');
   });
 
+  // --- Anchored order rule tests ---
+
+  it('returns outOfOrder with orderDetails when anchored phrases are reversed', () => {
+    const checks = [
+      {
+        ruleId: 'golden.webhook-ingress.sequence',
+        file: 'skills/workflow-design/goldens/webhook-ingress.md',
+        mustInclude: [
+          'const hook = await waitForHook(run);',
+          'await resumeWebhook(',
+        ],
+        mustAppearInOrder: [
+          'const hook = await waitForHook(run);',
+          'await resumeWebhook(',
+        ],
+        suggestedFix: 'Wait for webhook registration before calling resumeWebhook.',
+      },
+    ];
+
+    const content = `
+await resumeWebhook(hook.token, new Request('https://example.com'));
+const hook = await waitForHook(run);
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/goldens/webhook-ingress.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].outOfOrder).toEqual([
+      'const hook = await waitForHook(run);',
+      'await resumeWebhook(',
+    ]);
+    expect(result.results[0].orderDetails).toBeDefined();
+    expect(result.results[0].orderDetails.firstInversion.before.value).toBe(
+      'const hook = await waitForHook(run);'
+    );
+    expect(result.results[0].orderDetails.firstInversion.after.value).toBe(
+      'await resumeWebhook('
+    );
+  });
+
+  it('passes when anchored webhook-ingress phrases are correctly ordered', () => {
+    const checks = [
+      {
+        ruleId: 'golden.webhook-ingress.sequence',
+        file: 'skills/workflow-design/goldens/webhook-ingress.md',
+        mustInclude: [
+          'const hook = await waitForHook(run);',
+          'await resumeWebhook(',
+        ],
+        mustAppearInOrder: [
+          'const hook = await waitForHook(run);',
+          'await resumeWebhook(',
+        ],
+      },
+    ];
+
+    const content = `
+const hook = await waitForHook(run);
+await resumeWebhook(hook.token, new Request('https://example.com'));
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/goldens/webhook-ingress.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns outOfOrder when approval-hook-sleep sequence is reversed', () => {
+    const checks = [
+      {
+        ruleId: 'golden.approval-hook-sleep.sequence',
+        file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
+        mustInclude: [
+          'await waitForHook(run',
+          'await resumeHook(',
+          'await waitForSleep(run)',
+          '.wakeUp(',
+        ],
+        mustAppearInOrder: [
+          'await waitForHook(run',
+          'await resumeHook(',
+          'await waitForSleep(run)',
+          '.wakeUp(',
+        ],
+      },
+    ];
+
+    const content = `
+.wakeUp({ correlationIds: [sleepId] });
+await waitForSleep(run);
+await resumeHook('approval:doc-123', { approved: true });
+await waitForHook(run, { token: 'approval:doc-123' });
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/goldens/approval-hook-sleep.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].outOfOrder).toEqual([
+      'await waitForHook(run',
+      'await resumeHook(',
+      'await waitForSleep(run)',
+      '.wakeUp(',
+    ]);
+  });
+
+  it('passes when approval-hook-sleep sequence is correctly ordered', () => {
+    const checks = [
+      {
+        ruleId: 'golden.approval-hook-sleep.sequence',
+        file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
+        mustInclude: [
+          'await waitForHook(run',
+          'await resumeHook(',
+          'await waitForSleep(run)',
+          '.wakeUp(',
+        ],
+        mustAppearInOrder: [
+          'await waitForHook(run',
+          'await resumeHook(',
+          'await waitForSleep(run)',
+          '.wakeUp(',
+        ],
+      },
+    ];
+
+    const content = `
+await waitForHook(run, { token: 'approval:doc-123' });
+await resumeHook('approval:doc-123', { approved: true });
+const sleepId = await waitForSleep(run);
+await getRun(run.runId).wakeUp({ correlationIds: [sleepId] });
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/goldens/approval-hook-sleep.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('returns outOfOrder when workflow-teach anchored phrases are reversed', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-teach.sequencing',
+        file: 'skills/workflow-teach/SKILL.md',
+        mustInclude: [
+          'recommend `workflow-design` followed immediately by',
+          '`workflow-stress` to pressure-test the blueprint',
+        ],
+        mustAppearInOrder: [
+          'recommend `workflow-design` followed immediately by',
+          '`workflow-stress` to pressure-test the blueprint',
+        ],
+      },
+    ];
+
+    const content = `
+\`workflow-stress\` to pressure-test the blueprint before implementation.
+For externally-driven workflows, recommend \`workflow-design\` followed immediately by using stress tests.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-teach/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].outOfOrder).toBeDefined();
+  });
+
+  it('returns outOfOrder when workflow-design anchored phrases are reversed', () => {
+    const checks = [
+      {
+        ruleId: 'skill.workflow-design.sequencing',
+        file: 'skills/workflow-design/SKILL.md',
+        mustInclude: [
+          'workflow-stress',
+          'workflow-verify',
+          'hooks, webhooks, sleep, streams, retries, or child workflows',
+        ],
+        mustAppearInOrder: [
+          'run `workflow-stress` before `workflow-verify`',
+          'hooks, webhooks, sleep, streams, retries, or child workflows',
+        ],
+      },
+    ];
+
+    const content = `
+After generating a blueprint, when the design includes hooks, webhooks, sleep, streams, retries, or child workflows, run \`workflow-stress\` before \`workflow-verify\`.
+`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'skills/workflow-design/SKILL.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].outOfOrder).toEqual([
+      'run `workflow-stress` before `workflow-verify`',
+      'hooks, webhooks, sleep, streams, retries, or child workflows',
+    ]);
+  });
+
   // --- outOfOrder skipped when mustInclude tokens missing ---
 
   it('does not check order when mustInclude tokens are missing', () => {
@@ -780,5 +988,95 @@ Are all non-deterministic operations isolated in \`"use step"\` functions?
     expect(result.ok).toBe(false);
     expect(result.results[0].missing).toContain('workflow-stress');
     expect(result.results[0].outOfOrder).toBeUndefined();
+  });
+
+  // --- Explicit ordered-pass / ordered-fail / missing-token tests ---
+
+  it('returns outOfOrder with firstInversion when mustAppearInOrder phrases are reversed', () => {
+    const checks = [
+      {
+        ruleId: 'order.reversed',
+        file: 'test.md',
+        mustInclude: ['workflow-stress', 'workflow-verify'],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+      },
+    ];
+
+    const content = `
+    Run workflow-verify after blueprint generation.
+    Run workflow-stress before release.
+    `;
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe('fail');
+    expect(result.results[0].outOfOrder).toEqual([
+      'workflow-stress',
+      'workflow-verify',
+    ]);
+    expect(result.results[0].orderDetails).toBeDefined();
+    expect(result.results[0].orderDetails.expected).toEqual([
+      'workflow-stress',
+      'workflow-verify',
+    ]);
+    // firstInversion.before = expected[i-1] that appeared LATER in text
+    // firstInversion.after  = expected[i]   that appeared EARLIER in text
+    expect(result.results[0].orderDetails.firstInversion.before.value).toBe(
+      'workflow-stress'
+    );
+    expect(result.results[0].orderDetails.firstInversion.after.value).toBe(
+      'workflow-verify'
+    );
+    // The "after" token appeared before the "before" token in the text (inverted)
+    expect(
+      result.results[0].orderDetails.firstInversion.after.index
+    ).toBeLessThan(result.results[0].orderDetails.firstInversion.before.index);
+  });
+
+  it('passes when mustAppearInOrder phrases are correctly ordered', () => {
+    const checks = [
+      {
+        ruleId: 'order.correct',
+        file: 'test.md',
+        mustInclude: ['workflow-stress', 'workflow-verify'],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+      },
+    ];
+
+    const content = `
+    Run workflow-stress before workflow-verify for complex flows.
+    `;
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': content,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results[0].status).toBe('pass');
+  });
+
+  it('does not emit outOfOrder when a required phrase is missing', () => {
+    const checks = [
+      {
+        ruleId: 'order.missing-token',
+        file: 'test.md',
+        mustInclude: ['workflow-stress', 'workflow-verify'],
+        mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+      },
+    ];
+
+    const content = `Run workflow-verify.`;
+
+    const result = validateWorkflowSkillText(checks, {
+      'test.md': content,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('workflow-stress');
+    expect(result.results[0].outOfOrder).toBeUndefined();
+    expect(result.results[0].orderDetails).toBeUndefined();
   });
 });

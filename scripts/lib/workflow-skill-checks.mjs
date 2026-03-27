@@ -30,9 +30,12 @@ export const checks = [
       'workflow-stress',
       'externally-driven workflows',
     ],
-    mustAppearInOrder: ['workflow-design', 'workflow-stress'],
+    mustAppearInOrder: [
+      'recommend `workflow-design` followed immediately by',
+      '`workflow-stress` to pressure-test the blueprint',
+    ],
     suggestedFix:
-      'Document externally-driven workflows as workflow-design followed immediately by workflow-stress.',
+      'For externally-driven workflows, recommend workflow-design before workflow-stress.',
   },
   {
     ruleId: 'skill.workflow-design',
@@ -61,9 +64,12 @@ export const checks = [
       'workflow-verify',
       'hooks, webhooks, sleep, streams, retries, or child workflows',
     ],
-    mustAppearInOrder: ['workflow-stress', 'workflow-verify'],
+    mustAppearInOrder: [
+      'run `workflow-stress` before `workflow-verify`',
+      'hooks, webhooks, sleep, streams, retries, or child workflows',
+    ],
     suggestedFix:
-      'Document advanced designs as workflow-stress before workflow-verify.',
+      'Mention workflow-stress before workflow-verify in the next-step guidance.',
   },
   {
     ruleId: 'skill.workflow-stress',
@@ -123,6 +129,24 @@ export const goldenChecks = [
     ],
   },
   {
+    ruleId: 'golden.approval-hook-sleep.sequence',
+    file: 'skills/workflow-design/goldens/approval-hook-sleep.md',
+    mustInclude: [
+      'await waitForHook(run',
+      'await resumeHook(',
+      'await waitForSleep(run)',
+      '.wakeUp(',
+    ],
+    mustAppearInOrder: [
+      'await waitForHook(run',
+      'await resumeHook(',
+      'await waitForSleep(run)',
+      '.wakeUp(',
+    ],
+    suggestedFix:
+      'Show hook wait/resume before sleep wait/wakeUp in the example flow.',
+  },
+  {
     ruleId: 'golden.webhook-ingress',
     file: 'skills/workflow-design/goldens/webhook-ingress.md',
     mustInclude: [
@@ -141,6 +165,20 @@ export const goldenChecks = [
     ],
     suggestedFix:
       'Use waitForHook(run) to obtain hook.token, then call resumeWebhook(hook.token, new Request(...)).',
+  },
+  {
+    ruleId: 'golden.webhook-ingress.sequence',
+    file: 'skills/workflow-design/goldens/webhook-ingress.md',
+    mustInclude: [
+      'const hook = await waitForHook(run);',
+      'await resumeWebhook(',
+    ],
+    mustAppearInOrder: [
+      'const hook = await waitForHook(run);',
+      'await resumeWebhook(',
+    ],
+    suggestedFix:
+      'Wait for webhook registration before calling resumeWebhook.',
   },
   {
     ruleId: 'golden.human-in-the-loop-streaming',

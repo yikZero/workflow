@@ -26,12 +26,30 @@ for (const check of allChecks) {
 
 const result = validateWorkflowSkillText(allChecks, filesByPath);
 
+const summary = result.results.reduce(
+  (acc, item) => {
+    acc[item.status] = (acc[item.status] ?? 0) + 1;
+    if (item.outOfOrder) acc.outOfOrder = (acc.outOfOrder ?? 0) + 1;
+    return acc;
+  },
+  { pass: 0, fail: 0, error: 0, outOfOrder: 0 }
+);
+
 if (!result.ok) {
   const errors = result.results.filter((r) => r.status !== 'pass');
   console.error(
-    JSON.stringify({ ok: false, checked: result.checked, errors }, null, 2)
+    JSON.stringify(
+      {
+        ok: false,
+        checked: result.checked,
+        summary,
+        errors,
+      },
+      null,
+      2
+    )
   );
   process.exit(1);
 }
 
-console.log(JSON.stringify({ ...result, manifest }, null, 2));
+console.log(JSON.stringify({ ...result, summary, manifest }, null, 2));
