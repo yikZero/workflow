@@ -4,7 +4,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   WorkflowRunCancelledError,
   WorkflowRunFailedError,
+  WorkflowWorldError,
 } from '@workflow/errors';
+import type { World } from '@workflow/world';
 import {
   afterAll,
   assert,
