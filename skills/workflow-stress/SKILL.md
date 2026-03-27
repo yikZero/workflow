@@ -3,7 +3,7 @@ name: workflow-stress
 description: Pressure-test an existing workflow blueprint for edge cases, determinism violations, and missing coverage. Produces severity-ranked fixes and a patched blueprint. Use after workflow-design. Triggers on "stress test workflow", "pressure test blueprint", "workflow edge cases", or "workflow-stress".
 metadata:
   author: Vercel Inc.
-  version: '0.1'
+  version: '0.3'
 ---
 
 # workflow-stress
@@ -23,8 +23,8 @@ Always read these before producing output:
 Run every item in this checklist against the blueprint. Each item that reveals an issue must appear in the output with its severity:
 
 ### 1. Determinism boundary
-- Does any `"use workflow"` function perform I/O, access `Date.now()`, `Math.random()`, or Node.js APIs?
-- Are all non-deterministic operations isolated in `"use step"` functions?
+- Does any `"use workflow"` function perform I/O, direct stream I/O, or use Node.js-only APIs?
+- If the workflow uses time or randomness, is it relying only on the Workflow DevKit's seeded workflow-context APIs rather than external nondeterministic sources?
 
 ### 2. step granularity
 - Are steps too granular (splitting a single logical operation into many tiny steps)?
@@ -49,8 +49,8 @@ Run every item in this checklist against the blueprint. Each item that reveals a
 - Is `start()` (child workflow invocation) called directly from workflow context? (It must be wrapped in a step.)
 
 ### 7. Stream I/O placement
-- Is `getWritable()` called from workflow context? (It must be in a step.)
-- Are stream reads happening in workflow context? (They must be in steps.)
+- Does any workflow directly call `getWriter()`, `write()`, `close()`, or read from a stream?
+- If `getWritable()` is called in workflow context, is the stream only being obtained and then passed into a step for actual I/O?
 
 ### 8. Idempotency keys
 - Does every step with external side effects have an idempotency strategy?
@@ -103,7 +103,7 @@ These constraints from `skills/workflow/SKILL.md` must be enforced during every 
 - Workflow functions orchestrate only — no side effects.
 - All I/O lives in `"use step"`.
 - `createHook()` supports deterministic tokens; `createWebhook()` does not.
-- Stream I/O happens in steps only.
+- `getWritable()` may be called in workflow or step context; direct stream I/O happens in steps only.
 - `start()` in workflow context must be wrapped in a step.
 - `FatalError` and `RetryableError` recommendations must be intentional with clear rationale.
 

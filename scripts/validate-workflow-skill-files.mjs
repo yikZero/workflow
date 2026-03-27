@@ -11,6 +11,11 @@ const checks = [
       'externalSystems',
       'antiPatterns',
       'canonicalExamples',
+      'getWritable()` may be called in either',
+    ],
+    mustNotInclude: [
+      '`getWritable()` and stream consumption must happen inside',
+      '`getWritable()` must be in a step',
     ],
   },
   {
@@ -25,6 +30,10 @@ const checks = [
       'RetryableError',
       'FatalError',
       'start()',
+      'getWritable()` may be called in workflow or step context',
+    ],
+    mustNotInclude: [
+      '`getWritable()` and any stream consumption must be inside `"use step"`',
     ],
   },
   {
@@ -35,6 +44,13 @@ const checks = [
       'serialization issues',
       'idempotency keys',
       'Blueprint Patch',
+      'getWritable()` is called in workflow context',
+      'seeded workflow-context APIs',
+    ],
+    mustNotInclude: [
+      'Is `getWritable()` called from workflow context? (It must be in a step.)',
+      'access `Date.now()`, `Math.random()`',
+      'Are all non-deterministic operations isolated in `"use step"` functions?',
     ],
   },
   {
@@ -46,7 +62,10 @@ const checks = [
       'waitForSleep()',
       'wakeUp',
       'run.returnValue',
+      'new Request(',
+      'JSON.stringify(',
     ],
+    mustNotInclude: ["resumeWebhook('webhook-token', {", 'status: 200,'],
   },
 ];
 
@@ -83,6 +102,11 @@ const goldenChecks = [
       'resumeHook',
       'waitForHook',
       'antiPatternsAvoided',
+      'getWritable()` may be called in workflow or step context',
+    ],
+    mustNotInclude: [
+      '`getWritable()` and any stream\n  consumption must be inside steps',
+      'Stream writes must be inside `"use step"` functions',
     ],
   },
 ];
@@ -104,10 +128,18 @@ for (const check of allChecks) {
 
   const text = readFileSync(check.file, 'utf8');
   const missing = check.mustInclude.filter((value) => !text.includes(value));
+  const forbidden = (check.mustNotInclude ?? []).filter((value) =>
+    text.includes(value)
+  );
 
-  if (missing.length > 0) {
+  if (missing.length > 0 || forbidden.length > 0) {
     failed = true;
-    results.push({ file: check.file, status: 'fail', missing });
+    results.push({
+      file: check.file,
+      status: 'fail',
+      ...(missing.length > 0 ? { missing } : {}),
+      ...(forbidden.length > 0 ? { forbidden } : {}),
+    });
   } else {
     results.push({ file: check.file, status: 'pass' });
   }

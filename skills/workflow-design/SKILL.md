@@ -3,7 +3,7 @@ name: workflow-design
 description: Design a workflow before writing code. Reads project context and produces a machine-readable blueprint matching WorkflowBlueprint. Use when the user wants to plan step boundaries, suspensions, streams, and tests for a new workflow. Triggers on "design workflow", "plan workflow", "workflow blueprint", or "workflow-design".
 metadata:
   author: Vercel Inc.
-  version: '0.1'
+  version: '0.2'
 ---
 
 # workflow-design
@@ -52,7 +52,7 @@ These rules are non-negotiable. Violating any of them means the blueprint is inc
 2. **All side effects live in `"use step"`.** Every I/O operation — SDK calls, database queries, filesystem access, HTTP requests, external API calls — must be inside a `"use step"` function.
 3. **`createHook()` may use deterministic tokens.** When a hook needs a stable, predictable token (e.g. `approval:${documentId}`), use `createHook()` with a deterministic token string.
 4. **`createWebhook()` may NOT use deterministic tokens.** Webhooks generate their own tokens. Do not pass custom tokens to `createWebhook()`.
-5. **Stream I/O happens in steps.** `getWritable()` and any stream consumption must be inside `"use step"` functions. The workflow orchestrator cannot hold streams open across replay boundaries.
+5. **Stream I/O happens in steps.** `getWritable()` may be called in workflow or step context, but any direct stream interaction must be inside `"use step"` functions. The workflow orchestrator cannot hold stream I/O across replay boundaries.
 6. **`start()` inside a workflow must be wrapped in a step.** Starting a child workflow is a side effect requiring full Node.js access. Wrap it in a `"use step"` function.
 7. **Return mutated values from steps.** Step functions use pass-by-value semantics. If you modify data inside a step, `return` the new value and reassign it in the calling workflow. Mutations to the input object are lost after replay.
 8. **Recommend `FatalError` or `RetryableError` intentionally.** Every error classification in the blueprint must have a clear rationale. `FatalError` means "do not retry, this is a permanent failure." `RetryableError` means "transient issue, try again." Never recommend one vaguely.
@@ -64,7 +64,7 @@ Every blueprint must explicitly note which of these anti-patterns it avoids (in 
 - **Node.js API in workflow context** — `fs`, `path`, `crypto`, `Buffer`, `process`, etc. cannot be used inside `"use workflow"` functions.
 - **Missing idempotency for side effects** — Steps that write to databases, send emails, or call external APIs must have an idempotency strategy (idempotency key, upsert, or check-before-write).
 - **Over-granular step boundaries** — Each step is persisted and replayed. Don't split a single logical operation into many tiny steps. Group related I/O unless you need independent retry or suspension between operations.
-- **Stream reads/writes in workflow context** — Streams cannot survive replay. Always use steps.
+- **Direct stream I/O in workflow context** — `getWritable()` may be called anywhere, but stream reads/writes cannot survive replay. Always perform I/O in steps.
 - **`createWebhook()` with a custom token** — Only `createHook()` supports deterministic tokens.
 - **`start()` called directly from workflow code** — Must be wrapped in a step.
 - **Mutating step inputs without returning** — Pass-by-value means mutations are lost.

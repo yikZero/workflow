@@ -3,7 +3,7 @@ name: workflow-teach
 description: One-time setup that captures project context for workflow design skills. Use when the user wants to teach the assistant how workflows should be designed for this project. Triggers on "teach workflow", "set up workflow context", "configure workflow skills", or "workflow-teach".
 metadata:
   author: Vercel Inc.
-  version: '0.1'
+  version: '0.2'
 ---
 
 # workflow-teach
@@ -62,7 +62,7 @@ Include the following anti-patterns in `antiPatterns` when they are relevant to 
 
 - **Node.js APIs in `"use workflow"`** — Workflow functions run in a sandboxed VM without full Node.js access. Any use of `fs`, `path`, `crypto`, `Buffer`, `process`, or other Node.js built-ins must live in a `"use step"` function.
 - **Side effects split across too many tiny steps** — Each step is persisted and replayed. Over-granular step boundaries add latency, increase event log size, and make debugging harder. Group related I/O into a single step unless you need independent retry or suspension between them.
-- **Stream reads or writes in workflow context** — `getWritable()` and stream consumption must happen inside `"use step"` functions. The workflow orchestrator cannot hold open streams across replay boundaries.
+- **Direct stream I/O in workflow context** — `getWritable()` may be called in either `"use workflow"` or `"use step"` functions to obtain a stream reference, but direct stream I/O (`getWriter()`, `write()`, `close()`, or reading from a stream) must happen inside `"use step"` functions. The workflow orchestrator cannot hold open stream I/O across replay boundaries.
 - **`createWebhook()` with a custom token** — `createWebhook()` does not accept custom tokens. Only `createHook()` supports deterministic token strategies. Using a custom token with `createWebhook()` will fail silently or produce unexpected behavior.
 - **`start()` called directly from workflow code** — Starting a child workflow from inside a workflow function must be wrapped in a `"use step"` function. Direct `start()` calls in workflow context will fail because `start()` is a side effect that requires full Node.js access.
 - **Mutating step inputs without returning the updated value** — Step functions use pass-by-value semantics. If you modify data inside a step, you must `return` the new value and reassign it in the calling workflow. Mutations to the input object are lost after replay.

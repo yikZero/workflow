@@ -106,11 +106,16 @@ describe('myWorkflow', () => {
     const run = await start(myWorkflow, [/* inputs */]);
 
     // Wait for webhook registration
-    await waitForHook(run, { token: 'webhook-token' });
-    await resumeWebhook('webhook-token', {
-      status: 200,
-      body: { /* webhook payload */ },
-    });
+    const hook = await waitForHook(run);
+
+    await resumeWebhook(
+      hook.token,
+      new Request('https://example.com/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ /* webhook payload */ }),
+      })
+    );
 
     await expect(run.returnValue).resolves.toEqual({
       /* expected return value */

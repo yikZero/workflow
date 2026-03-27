@@ -30,7 +30,7 @@
   "scripts": {
     "prepare": "husky",
     "build": "turbo build --filter='./packages/*'",
-    "test": "turbo test",
+    "test": "turbo test && pnpm test:workflow-skills",
     "clean": "turbo clean",
     "typecheck": "turbo typecheck",
     "test:e2e": "vitest run packages/core/e2e/e2e.test.ts packages/core/e2e/e2e-agent.test.ts",

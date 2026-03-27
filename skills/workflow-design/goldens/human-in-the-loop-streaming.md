@@ -20,7 +20,7 @@ suspension with real-time streaming output.
 | `steps[].runtime` | All I/O and streaming in `step`, orchestration in `workflow` |
 | `suspensions` | Must include `{ kind: "hook", tokenStrategy: "deterministic" }` |
 | `streams` | At least one entry with a `payload` describing progress updates |
-| `steps` using `getWritable` | Stream writes must be inside `"use step"` functions |
+| `steps` using `getWritable` | `getWritable()` may be called in workflow or step context; stream writes must be inside `"use step"` functions |
 
 ### Suspension Details
 
@@ -30,11 +30,11 @@ suspension with real-time streaming output.
 
 ### Stream Details
 
-- **Progress stream:** A step calls `getWritable()` to obtain a writable stream
-  and pushes incremental progress (e.g. generated paragraphs, percentage updates)
-  to the UI.
-- Stream I/O must happen inside `"use step"` functions. The workflow orchestrator
-  must never hold a stream reference.
+- **Progress stream:** `getWritable()` may be called in workflow or step context
+  to obtain a writable stream reference, but a step pushes incremental progress
+  (e.g. generated paragraphs, percentage updates) to the UI via direct stream I/O.
+- Direct stream I/O (`getWriter()`, `write()`, `close()`) must happen inside
+  `"use step"` functions. The workflow orchestrator must not perform stream I/O.
 
 ### Step Boundaries
 
@@ -48,8 +48,8 @@ suspension with real-time streaming output.
 
 The blueprint `antiPatternsAvoided` array must include:
 
-- `Stream reads/writes in workflow context` — `getWritable()` and any stream
-  consumption must be inside steps, not in the workflow orchestrator.
+- `Direct stream I/O in workflow context` — `getWritable()` may be called anywhere,
+  but direct stream reads/writes must be inside steps, not in the workflow orchestrator.
 - `Node.js APIs inside "use workflow"` — AI SDK calls, stream handling, and
   database writes must all live in steps.
 - `Mutating step inputs without returning` — the draft generated in one step
