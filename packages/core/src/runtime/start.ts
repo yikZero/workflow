@@ -165,11 +165,15 @@ export async function start<TArgs extends unknown[], TResult>(
 
       const executionContext = { traceCarrier, workflowCoreVersion };
 
-      // Call events.create (run_created) and queue in parallel.
-      // If events.create fails with 429/5xx, the run was still accepted
-      // via the queue and creation will be re-tried async by the runtime.
-      const [runCreatedResult, queueResult] = await Promise.allSettled([
-        world.events.create(
+      // Create run_created event first, then queue.
+      // Sequential to ensure the run exists before the queue message
+      // is delivered (local queue delivers fire-and-forget and may
+      // process the message before a parallel run_created completes).
+      // If run_created fails with 429/5xx, we still enqueue — the
+      // runtime will re-create the run via the resilient start path.
+      let runCreatedFailed = false;
+      try {
+        const result = await world.events.create(
           runId,
           {
             eventType: 'run_created',
@@ -182,48 +186,8 @@ export async function start<TArgs extends unknown[], TResult>(
             },
           },
           { v1Compat }
-        ),
-        world.queue(
-          getWorkflowQueueName(workflowName),
-          {
-            runId,
-            traceCarrier,
-            runInput: {
-              input: workflowArguments,
-              deploymentId,
-              workflowName,
-              specVersion,
-              executionContext,
-            },
-          } satisfies WorkflowInvokePayload,
-          {
-            deploymentId,
-          }
-        ),
-      ]);
+        );
 
-      // Queue failure is always fatal — the run was not enqueued
-      if (queueResult.status === 'rejected') {
-        throw queueResult.reason;
-      }
-
-      // Handle events.create result
-      if (runCreatedResult.status === 'rejected') {
-        const err = runCreatedResult.reason;
-        // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
-        // are retryable — the run was accepted via the queue and creation
-        // will be re-tried by the runtime when it calls run_started.
-        if (isRetryableStartError(err)) {
-          runtimeLogger.warn(
-            'Run creation event failed, but the run was accepted via the queue. ' +
-              'The run_created event will be re-tried async by the runtime.',
-            { workflowRunId: runId, error: err.message }
-          );
-        } else {
-          throw err;
-        }
-      } else {
-        const result = runCreatedResult.value;
         // Assert that the run was created
         if (!result.run) {
           throw new WorkflowRuntimeError(
@@ -237,7 +201,46 @@ export async function start<TArgs extends unknown[], TResult>(
             `Server returned different runId than requested: expected ${runId}, got ${result.run.runId}`
           );
         }
+      } catch (err) {
+        // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
+        // are retryable — enqueue anyway and the runtime will re-create
+        // the run via the resilient start path (run_started with runInput).
+        if (isRetryableStartError(err)) {
+          runtimeLogger.warn(
+            'Run creation event failed, but the run will be accepted via the queue. ' +
+              'The run_created event will be re-tried async by the runtime.',
+            { workflowRunId: runId, error: (err as Error).message }
+          );
+          runCreatedFailed = true;
+        } else {
+          throw err;
+        }
       }
+
+      await world.queue(
+        getWorkflowQueueName(workflowName),
+        {
+          runId,
+          traceCarrier,
+          // Only include runInput when run_created failed, so the runtime
+          // can re-create the run. In the happy path, omit it to avoid
+          // sending Uint8Array through JSON-based queue transports.
+          ...(runCreatedFailed
+            ? {
+                runInput: {
+                  input: workflowArguments,
+                  deploymentId,
+                  workflowName,
+                  specVersion,
+                  executionContext,
+                },
+              }
+            : {}),
+        } satisfies WorkflowInvokePayload,
+        {
+          deploymentId,
+        }
+      );
 
       waitUntil(
         Promise.all(ops).catch((err) => {

@@ -417,9 +417,9 @@ describe('start', () => {
     });
 
     it('should throw when queue fails even if events.create succeeds', async () => {
-      const mockEventsCreate = vi.fn().mockResolvedValue({
-        run: { runId: 'wrun_test', status: 'pending' },
-      });
+      const mockEventsCreate = vi.fn().mockImplementation((runId) => ({
+        run: { runId, status: 'pending' },
+      }));
       const mockQueue = vi
         .fn()
         .mockRejectedValue(new Error('Queue unavailable'));
