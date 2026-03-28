@@ -81,9 +81,13 @@ function extractSection(text, headingLine) {
   const start = lines.findIndex((line) => line.trim() === headingLine.trim());
   if (start === -1) return '';
 
+  // Determine heading level of the target (count leading '#' characters)
+  const targetLevel = headingLine.trim().match(/^(#{2,6})\s/)?.[1]?.length ?? 2;
+
   const body = [];
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (lines[i].startsWith('### `## ') || lines[i].startsWith('## ')) break;
+    const match = lines[i].match(/^(#{2,6})\s/);
+    if (match && match[1].length <= targetLevel) break;
     body.push(lines[i]);
   }
 

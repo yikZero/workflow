@@ -8,6 +8,10 @@ import {
   buildChecks,
   teachGoldenChecks,
   buildGoldenChecks,
+  approvalChecks,
+  webhookChecks,
+  approvalGoldenChecks,
+  webhookGoldenChecks,
 } from './lib/workflow-skill-checks.mjs';
 
 function runSingleCheck(check, content) {
@@ -533,6 +537,490 @@ describe('verification artifact schema enforcement', () => {
       '{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
     ].join('\n');
     const result = runSingleCheck(compensationCheck, content);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: extractSection must stop at sibling headings
+// ---------------------------------------------------------------------------
+
+describe('extractSection scoping', () => {
+  it('fails when a required token exists only after the target section ends', () => {
+    // "testMatrix" appears under "## Other Section", NOT under "## Verification Artifact"
+    const content = [
+      '## Verification Artifact',
+      '',
+      '```json',
+      '{"contractVersion":"1"}',
+      '```',
+      '',
+      '## Other Section',
+      '',
+      'testMatrix appears here but should not count',
+    ].join('\n');
+
+    const check = {
+      ruleId: 'test.section-scope',
+      file: 'test.md',
+      sectionHeading: '## Verification Artifact',
+      mustIncludeWithinSection: ['testMatrix'],
+    };
+
+    const result = validateWorkflowSkillText([check], { 'test.md': content });
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missingSectionTokens).toContain('testMatrix');
+  });
+
+  it('passes when the required token is inside the target section', () => {
+    const content = [
+      '## Verification Artifact',
+      '',
+      'testMatrix is right here',
+      '',
+      '## Other Section',
+      '',
+      'unrelated content',
+    ].join('\n');
+
+    const check = {
+      ruleId: 'test.section-scope',
+      file: 'test.md',
+      sectionHeading: '## Verification Artifact',
+      mustIncludeWithinSection: ['testMatrix'],
+    };
+
+    const result = validateWorkflowSkillText([check], { 'test.md': content });
+    expect(result.ok).toBe(true);
+  });
+
+  it('subsection headings do not terminate the parent section', () => {
+    const content = [
+      '## Verification Artifact',
+      '',
+      '### Verification Summary',
+      '',
+      'testMatrix lives in a subsection',
+      '',
+      '## Next Top-Level Section',
+    ].join('\n');
+
+    const check = {
+      ruleId: 'test.section-scope',
+      file: 'test.md',
+      sectionHeading: '## Verification Artifact',
+      mustIncludeWithinSection: ['testMatrix'],
+    };
+
+    const result = validateWorkflowSkillText([check], { 'test.md': content });
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-approval
+// ---------------------------------------------------------------------------
+
+describe('workflow-approval SKILL.md validation', () => {
+  it('fails when user-invocable frontmatter is missing', () => {
+    const check = approvalChecks.find(
+      (c) => c.ruleId === 'skill.workflow-approval'
+    );
+    const content = [
+      'argument-hint: describe the approval',
+      '.workflow.md',
+      'approval',
+      'createHook',
+      'sleep',
+      'escalation',
+      'deterministic',
+      'verification_plan_ready',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('missing_required_content');
+    expect(result.results[0].missing).toContain('user-invocable: true');
+  });
+
+  it('fails when Promise.race constraint is missing', () => {
+    const check = approvalChecks.find(
+      (c) => c.ruleId === 'skill.workflow-approval.required-constraints'
+    );
+    const content = [
+      'Deterministic hook tokens',
+      'Expiry via `sleep()`',
+      'Escalation behavior',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('missing_required_content');
+    expect(result.results[0].missing).toContain('Promise.race');
+  });
+
+  it('fails when context-capture questions are missing', () => {
+    const check = approvalChecks.find(
+      (c) => c.ruleId === 'skill.workflow-approval.context-capture'
+    );
+    const result = runSingleCheck(check, 'some unrelated content');
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('Approval actors');
+    expect(result.results[0].missing).toContain('Timeout/expiry rules');
+    expect(result.results[0].missing).toContain('Hook token strategy');
+  });
+
+  it('fails when test-coverage helpers are missing', () => {
+    const check = approvalChecks.find(
+      (c) => c.ruleId === 'skill.workflow-approval.test-coverage'
+    );
+    const result = runSingleCheck(check, 'waitForHook only');
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('resumeHook');
+    expect(result.results[0].missing).toContain('waitForSleep');
+    expect(result.results[0].missing).toContain('wakeUp');
+  });
+
+  it('passes when all required tokens are present', () => {
+    const check = approvalChecks.find(
+      (c) => c.ruleId === 'skill.workflow-approval'
+    );
+    const content = [
+      'user-invocable: true',
+      'argument-hint: describe the approval',
+      '.workflow.md',
+      'approval',
+      'createHook',
+      'sleep',
+      'escalation',
+      'deterministic',
+      'verification_plan_ready',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-webhook
+// ---------------------------------------------------------------------------
+
+describe('workflow-webhook SKILL.md validation', () => {
+  it('fails when static and manual response modes are missing', () => {
+    const check = webhookChecks.find(
+      (c) => c.ruleId === 'skill.workflow-webhook.required-constraints'
+    );
+    const content = [
+      'Duplicate-delivery handling',
+      'Stable idempotency keys',
+      'Webhook response mode',
+      'Compensation when downstream steps fail',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('missing_required_content');
+    expect(result.results[0].missing).toContain('static');
+    expect(result.results[0].missing).toContain('manual');
+  });
+
+  it('fails when user-invocable frontmatter is missing', () => {
+    const check = webhookChecks.find(
+      (c) => c.ruleId === 'skill.workflow-webhook'
+    );
+    const content = [
+      'argument-hint: describe the webhook',
+      '.workflow.md',
+      'webhook',
+      'duplicate',
+      'idempotency',
+      'verification_plan_ready',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('missing_required_content');
+    expect(result.results[0].missing).toContain('user-invocable: true');
+  });
+
+  it('fails when context-capture questions are missing', () => {
+    const check = webhookChecks.find(
+      (c) => c.ruleId === 'skill.workflow-webhook.context-capture'
+    );
+    const result = runSingleCheck(check, 'some unrelated content');
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('Webhook source');
+    expect(result.results[0].missing).toContain('Duplicate handling');
+    expect(result.results[0].missing).toContain('Idempotency strategy');
+    expect(result.results[0].missing).toContain('Response timeout');
+    expect(result.results[0].missing).toContain('Compensation requirements');
+  });
+
+  it('fails when test-coverage scenarios are missing', () => {
+    const check = webhookChecks.find(
+      (c) => c.ruleId === 'skill.workflow-webhook.test-coverage'
+    );
+    const result = runSingleCheck(check, 'Happy path only');
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('Duplicate webhook');
+    expect(result.results[0].missing).toContain('Compensation path');
+  });
+
+  it('passes when all required tokens are present', () => {
+    const check = webhookChecks.find(
+      (c) => c.ruleId === 'skill.workflow-webhook'
+    );
+    const content = [
+      'user-invocable: true',
+      'argument-hint: describe the webhook',
+      '.workflow.md',
+      'webhook',
+      'duplicate',
+      'idempotency',
+      'verification_plan_ready',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Approval golden checks
+// ---------------------------------------------------------------------------
+
+describe('approval golden validation', () => {
+  it('fails when verification artifact JSON keys are missing', () => {
+    const check = approvalGoldenChecks.find(
+      (c) => c.ruleId === 'golden.approval.approval-expiry-escalation'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'createHook',
+      'sleep',
+      'escalation',
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'approval-expiry-escalation',
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"approval-expiry-escalation","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toContain('files');
+    expect(result.results[0].missingJsonKeys).toContain('testMatrix');
+    expect(result.results[0].missingJsonKeys).toContain('runtimeCommands');
+    expect(result.results[0].missingJsonKeys).toContain('implementationNotes');
+  });
+
+  it('fails when verification_plan_ready summary is missing', () => {
+    const check = approvalGoldenChecks.find(
+      (c) => c.ruleId === 'golden.approval.approval-expiry-escalation'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'createHook',
+      'sleep',
+      'escalation',
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'approval-expiry-escalation',
+        files: [{ kind: 'workflow', path: 'workflows/approval.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['deterministic hook tokens'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      'No summary here',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('verification_plan_ready');
+  });
+
+  it('passes when all approval golden requirements are met', () => {
+    const check = approvalGoldenChecks.find(
+      (c) => c.ruleId === 'golden.approval.approval-expiry-escalation'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'createHook',
+      'sleep',
+      'escalation',
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'approval-expiry-escalation',
+        files: [{ kind: 'workflow', path: 'workflows/approval.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['deterministic hook tokens'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"approval-expiry-escalation","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhook golden checks
+// ---------------------------------------------------------------------------
+
+describe('webhook golden validation', () => {
+  it('fails when verification_plan_ready summary contract is missing', () => {
+    const check = webhookGoldenChecks.find(
+      (c) => c.ruleId === 'golden.webhook.duplicate-webhook-order'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'duplicate',
+      'idempotency',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'duplicate-webhook-order',
+        files: [{ kind: 'workflow', path: 'workflows/webhook.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['stable idempotency keys'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      'No structured summary here',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].missing).toContain('verification_plan_ready');
+  });
+
+  it('fails when verification artifact JSON keys are missing', () => {
+    const check = webhookGoldenChecks.find(
+      (c) => c.ruleId === 'golden.webhook.duplicate-webhook-order'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'duplicate',
+      'idempotency',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'duplicate-webhook-order',
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"duplicate-webhook-order","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].missingJsonKeys).toContain('files');
+    expect(result.results[0].missingJsonKeys).toContain('testMatrix');
+  });
+
+  it('passes when all webhook golden requirements are met', () => {
+    const check = webhookGoldenChecks.find(
+      (c) => c.ruleId === 'golden.webhook.duplicate-webhook-order'
+    );
+    const content = [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'duplicate',
+      'idempotency',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '',
+      '```json',
+      JSON.stringify({
+        contractVersion: '1',
+        blueprintName: 'duplicate-webhook-order',
+        files: [{ kind: 'workflow', path: 'workflows/webhook.ts' }],
+        testMatrix: [{ name: 'happy-path', helpers: [], expects: 'pass' }],
+        runtimeCommands: [{ name: 'test', command: 'pnpm test', expects: 'pass' }],
+        implementationNotes: ['stable idempotency keys'],
+      }),
+      '```',
+      '',
+      '### Verification Summary',
+      '',
+      '{"event":"verification_plan_ready","blueprintName":"duplicate-webhook-order","fileCount":1,"testCount":1,"runtimeCommandCount":1,"contractVersion":"1"}',
+    ].join('\n');
+    const result = runSingleCheck(check, content);
     expect(result.ok).toBe(true);
   });
 });

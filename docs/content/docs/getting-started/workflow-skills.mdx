@@ -67,10 +67,14 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see the three core skill directories — `workflow`
-(always-on reference), `workflow-teach` (stage 1), and `workflow-build`
-(stage 2) — plus the optional `workflow-init` helper for first-time
-project setup before `workflow` is installed as a dependency.
+After copying, you should see five skill directories:
+
+- **Core skills:** `workflow` (always-on reference), `workflow-teach` (stage 1),
+  and `workflow-build` (stage 2)
+- **Scenario skills:** `workflow-approval` (approval with expiry and escalation)
+  and `workflow-webhook` (webhook ingestion with duplicate handling)
+- **Optional helper:** `workflow-init` (first-time project setup before
+  `workflow` is installed as a dependency)
 
 </Step>
 
