@@ -121,6 +121,15 @@ The resilient start fallback path emits a Datadog distribution metric:
 `workflow_server.resilient_start.run_created_via_run_started`, tagged with
 `workflow_name`. Query with `sum:workflow_server.resilient_start.run_created_via_run_started{*}`.
 
+### Base64 encoding for queue transport
+
+`Uint8Array` values (the serialized workflow input) don't survive JSON serialization
+through the queue — they get corrupted to `{0: 72, 1: 101, ...}` objects. The `runInput`
+payload in the queue message now base64-encodes binary input in `start()` and the
+runtime decodes it back to `Uint8Array` before passing it to `world.events.create`.
+This was caught by the `spawnWorkflowFromStepWorkflow` e2e test where the child
+workflow's input was being corrupted.
+
 ### RunStartedEventSchema eventData stripping
 
 The run input is passed through to `run_started`'s `eventData` but stripped before

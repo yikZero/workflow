@@ -165,6 +165,13 @@ export async function start<TArgs extends unknown[], TResult>(
 
       const executionContext = { traceCarrier, workflowCoreVersion };
 
+      // Encode input for queue transport — Uint8Array doesn't survive JSON
+      // serialization, so we base64-encode it for the queue payload.
+      const encodedInput =
+        workflowArguments instanceof Uint8Array
+          ? btoa(String.fromCharCode(...workflowArguments))
+          : workflowArguments;
+
       // Call events.create (run_created) and queue in parallel.
       // If events.create fails with 429/5xx, the run was still accepted
       // via the queue and creation will be re-tried async by the runtime.
@@ -189,7 +196,7 @@ export async function start<TArgs extends unknown[], TResult>(
             runId,
             traceCarrier,
             runInput: {
-              input: workflowArguments,
+              input: encodedInput,
               deploymentId,
               workflowName,
               specVersion,

@@ -212,11 +212,18 @@ export function workflowEntrypoint(
                       eventType: 'run_started',
                       specVersion: SPEC_VERSION_CURRENT,
                       // Pass run input from queue so server can create
-                      // the run if run_created was missed
+                      // the run if run_created was missed.
+                      // Input is base64-encoded for queue transport since
+                      // Uint8Array doesn't survive JSON serialization.
                       ...(runInput
                         ? {
                             eventData: {
-                              input: runInput.input,
+                              input:
+                                typeof runInput.input === 'string'
+                                  ? Uint8Array.from(atob(runInput.input), (c) =>
+                                      c.charCodeAt(0)
+                                    )
+                                  : runInput.input,
                               deploymentId: runInput.deploymentId,
                               workflowName: runInput.workflowName,
                               executionContext: runInput.executionContext,
