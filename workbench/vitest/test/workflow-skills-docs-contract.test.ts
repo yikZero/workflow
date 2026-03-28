@@ -24,13 +24,13 @@ describe('workflow skills docs contract surfaces', () => {
   describe('canonical loop: workflow-teach then workflow-build', () => {
     it('getting-started doc describes a two-stage teach-then-build loop', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('two-stage');
       expect(docs).toContain('/workflow-teach');
       expect(docs).toContain('/workflow-build');
       expect(docs).toContain(
-        'The `workflow` skill is an always-on API reference',
+        'The `workflow` skill is an always-on API reference'
       );
     });
 
@@ -40,13 +40,13 @@ describe('workflow skills docs contract surfaces', () => {
       expect(readme).toContain('`workflow-teach`');
       expect(readme).toContain('`workflow-build`');
       expect(readme).toContain(
-        '`workflow` skill is an always-on API reference',
+        '`workflow` skill is an always-on API reference'
       );
     });
 
     it('getting-started stage table lists teach as Stage 1 and build as Stage 2', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       // Table row: | 1 | `/workflow-teach` | ...
       expect(docs).toMatch(/\|\s*1\s*\|.*workflow-teach/);
@@ -61,7 +61,7 @@ describe('workflow skills docs contract surfaces', () => {
   describe('core surface is explicitly named', () => {
     it('getting-started doc names the three core skill directories', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('`workflow`');
       expect(docs).toContain('`workflow-teach`');
@@ -78,7 +78,7 @@ describe('workflow skills docs contract surfaces', () => {
 
     it('getting-started doc describes workflow-init as optional helper', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toMatch(/optional.*workflow-init/is);
     });
@@ -96,7 +96,7 @@ describe('workflow skills docs contract surfaces', () => {
   describe('legacy stage vocabulary is absent', () => {
     it('getting-started doc contains no legacy stage names', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       for (const legacy of LEGACY_STAGES) {
         expect(docs).not.toContain(legacy);
@@ -131,7 +131,7 @@ describe('workflow skills docs contract surfaces', () => {
   describe('artifact ownership model', () => {
     it('docs describe .workflow.md as skill-managed', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('Skill-managed');
       expect(docs).toContain('.workflow.md');
@@ -141,7 +141,7 @@ describe('workflow skills docs contract surfaces', () => {
 
     it('docs describe .workflow-skills/*.json as host-managed', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('Host-managed');
       expect(docs).toContain('.workflow-skills/context.json');
@@ -149,7 +149,7 @@ describe('workflow skills docs contract surfaces', () => {
       expect(docs).toContain('.workflow-skills/verification/<name>.json');
       // Must explain host ownership — skill prompts don't reference JSON paths
       expect(docs).toContain(
-        'managed by the host runtime or persistence layer',
+        'managed by the host runtime or persistence layer'
       );
     });
 
@@ -177,25 +177,21 @@ describe('workflow skills docs contract surfaces', () => {
 
     it('docs explain that .workflow.md is written by the assistant flow', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toMatch(/\.workflow\.md.*written.*directly/is);
     });
 
     it('docs explain that .workflow-skills/*.json are host-managed', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
-      expect(docs).toContain(
-        'not by the skill prompts',
-      );
+      expect(docs).toContain('not by the skill prompts');
     });
 
     it('README explains that .workflow-skills/*.json are host-managed', () => {
       const readme = read('skills/README.md');
-      expect(readme).toMatch(
-        /not\s+by\s+the\s+skill\s+prompts/,
-      );
+      expect(readme).toMatch(/not\s+by\s+the\s+skill\s+prompts/);
     });
   });
 
@@ -205,25 +201,29 @@ describe('workflow skills docs contract surfaces', () => {
   describe('legacy artifact ownership regression', () => {
     it('getting-started doc no longer uses the legacy artifact ownership layout', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       // The legacy table used "Written By" as a column header
       expect(docs).not.toContain('| Artifact | Path | Written By |');
       // Legacy docs described JSON paths as individual sections owned by skills
       expect(docs).not.toContain('### `.workflow-skills/context.json`');
-      expect(docs).not.toContain('### `.workflow-skills/blueprints/<name>.json`');
-      expect(docs).not.toContain('### `.workflow-skills/verification/<name>.json`');
+      expect(docs).not.toContain(
+        '### `.workflow-skills/blueprints/<name>.json`'
+      );
+      expect(docs).not.toContain(
+        '### `.workflow-skills/verification/<name>.json`'
+      );
     });
 
     it('getting-started doc explicitly says host-managed JSON paths are not referenced by skill text', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain(
-        'The skill text never references these JSON paths directly',
+        'The skill text never references these JSON paths directly'
       );
       expect(docs).toContain(
-        'managed by the host runtime or persistence layer',
+        'managed by the host runtime or persistence layer'
       );
     });
   });
@@ -245,7 +245,7 @@ describe('workflow skills docs contract surfaces', () => {
   describe('verification schema completeness', () => {
     it('getting-started verification example includes a testMatrix field', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('"testMatrix"');
     });
@@ -264,7 +264,7 @@ describe('workflow skills docs contract surfaces', () => {
     it('files-array sentinel sentence appears in both skill and docs', () => {
       const skill = read('skills/workflow-build/SKILL.md');
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       const sentinel =
         'The `files` array must list only files that are actually produced.';
@@ -301,9 +301,77 @@ describe('workflow skills docs contract surfaces', () => {
   describe('installed skill count', () => {
     it('getting-started doc reports the correct installed skill count', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('ten skill directories');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Scenario surface: all six scenario skills in docs, install, and README
+  // -----------------------------------------------------------------------
+  describe('scenario surface is explicit', () => {
+    const SCENARIO_COMMANDS = [
+      '/workflow-approval',
+      '/workflow-webhook',
+      '/workflow-saga',
+      '/workflow-timeout',
+      '/workflow-idempotency',
+      '/workflow-observe',
+    ] as const;
+
+    it('getting-started doc lists all six scenario commands', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
+      );
+      for (const command of SCENARIO_COMMANDS) {
+        expect(docs).toContain(command);
+      }
+    });
+
+    it('getting-started install section reflects the expanded bundle surface', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
+      );
+      expect(docs).toContain(
+        'After copying, you should see ten skill directories:'
+      );
+      expect(docs).toContain('`workflow-saga`');
+      expect(docs).toContain('`workflow-timeout`');
+      expect(docs).toContain('`workflow-idempotency`');
+      expect(docs).toContain('`workflow-observe`');
+    });
+
+    it('README lists every scenario entrypoint and golden family', () => {
+      const readme = read('skills/README.md');
+      for (const skill of [
+        'workflow-approval',
+        'workflow-webhook',
+        'workflow-saga',
+        'workflow-timeout',
+        'workflow-idempotency',
+        'workflow-observe',
+      ] as const) {
+        expect(readme).toContain(`\`${skill}\``);
+      }
+      expect(readme).toContain('### `workflow-saga/goldens/`');
+      expect(readme).toContain('### `workflow-timeout/goldens/`');
+      expect(readme).toContain('### `workflow-idempotency/goldens/`');
+      expect(readme).toContain('### `workflow-observe/goldens/`');
+    });
+
+    it('sample build output numbers are internally consistent', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
+      );
+      // The "totalOutputs" in the manifest summary and the plan_computed event must match
+      const manifestMatch = docs.match(/"totalOutputs":\s*(\d+)/g);
+      expect(manifestMatch).not.toBeNull();
+      const values = manifestMatch!.map((m) => m.match(/\d+/)![0]);
+      // All totalOutputs references should be the same number
+      expect(new Set(values).size).toBe(1);
+      // The skills_discovered count should match "ten skill directories"
+      expect(docs).toContain('"count":10');
     });
   });
 
@@ -313,14 +381,14 @@ describe('workflow skills docs contract surfaces', () => {
   describe('validator inspection guidance', () => {
     it('getting-started doc includes Inspect Validation Output section', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('## Inspect Validation Output');
     });
 
     it('validator inspection shows stdout as machine-readable result', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('machine-readable result');
       expect(docs).toContain('workflow-skills-validate.json');
@@ -328,7 +396,7 @@ describe('workflow skills docs contract surfaces', () => {
 
     it('validator inspection shows stderr as JSONL logs', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('JSON logs on stderr');
       expect(docs).toContain('workflow-skills-validate.log');
@@ -351,7 +419,7 @@ describe('workflow skills docs contract surfaces', () => {
   describe('six-phase build flow', () => {
     it('getting-started doc describes six interactive phases', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('six interactive phases');
       expect(docs).not.toContain('five interactive phases');
@@ -359,7 +427,7 @@ describe('workflow skills docs contract surfaces', () => {
 
     it('getting-started doc includes Phase 6 verification summary', () => {
       const docs = read(
-        'docs/content/docs/getting-started/workflow-skills.mdx',
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain('Verification summary');
       expect(docs).toContain('verification_plan_ready');
@@ -390,9 +458,7 @@ describe('workflow skills docs contract surfaces', () => {
   // -----------------------------------------------------------------------
   describe('golden verification artifact schema', () => {
     it('compensation-saga golden includes testMatrix field', () => {
-      const golden = read(
-        'skills/workflow-build/goldens/compensation-saga.md',
-      );
+      const golden = read('skills/workflow-build/goldens/compensation-saga.md');
       expect(golden).toContain('"testMatrix"');
     });
   });
@@ -402,7 +468,9 @@ describe('workflow skills docs contract surfaces', () => {
   // -----------------------------------------------------------------------
   describe('scenario skill parity', () => {
     it('docs and README list every user-invocable scenario skill', () => {
-      const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
+      );
       const readme = read('skills/README.md');
       for (const skill of [
         'workflow-approval',
@@ -427,27 +495,29 @@ describe('workflow skills docs contract surfaces', () => {
         ['workflow-observe', 'operator-observability-streams.md'],
       ]) {
         expect(existsSync(resolve(ROOT, `skills/${skill}/SKILL.md`))).toBe(
-          true,
+          true
         );
         expect(
-          existsSync(resolve(ROOT, `skills/${skill}/goldens/${golden}`)),
+          existsSync(resolve(ROOT, `skills/${skill}/goldens/${golden}`))
         ).toBe(true);
       }
     });
 
     it('docs include sample prompts for scenario commands', () => {
-      const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
-      expect(docs).toContain(
-        '/workflow-saga reserve inventory, charge payment, compensate on shipping failure',
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
       );
       expect(docs).toContain(
-        '/workflow-timeout wait 24h for approval, then expire',
+        '/workflow-saga reserve inventory, charge payment, compensate on shipping failure'
       );
       expect(docs).toContain(
-        '/workflow-idempotency make duplicate webhook delivery safe',
+        '/workflow-timeout wait 24h for approval, then expire'
       );
       expect(docs).toContain(
-        '/workflow-observe stream operator progress and final status',
+        '/workflow-idempotency make duplicate webhook delivery safe'
+      );
+      expect(docs).toContain(
+        '/workflow-observe stream operator progress and final status'
       );
     });
   });

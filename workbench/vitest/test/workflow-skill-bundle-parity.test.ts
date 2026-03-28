@@ -12,8 +12,19 @@ function read(relativePath: string): string {
 interface BuildCheckOutput {
   ok: boolean;
   providers: string[];
-  skills: Array<{ name: string; version: string; goldens: number; checksum: string }>;
-  outputs: Array<{ provider: string; skill: string; dest: string; checksum: string; type?: string }>;
+  skills: Array<{
+    name: string;
+    version: string;
+    goldens: number;
+    checksum: string;
+  }>;
+  outputs: Array<{
+    provider: string;
+    skill: string;
+    dest: string;
+    checksum: string;
+    type?: string;
+  }>;
   totalOutputs: number;
 }
 
@@ -26,14 +37,21 @@ function getBuildPlan(): BuildCheckOutput {
   return JSON.parse(stdout);
 }
 
+const SCENARIO_SKILLS = [
+  'workflow-approval',
+  'workflow-webhook',
+  'workflow-saga',
+  'workflow-timeout',
+  'workflow-idempotency',
+  'workflow-observe',
+] as const;
+
 describe('workflow skill bundle parity', () => {
   it('docs and README mention workflow-init iff the source skill exists', () => {
-    const docs = read(
-      'docs/content/docs/getting-started/workflow-skills.mdx',
-    );
+    const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
     const readme = read('skills/README.md');
     const initExists = existsSync(
-      resolve(ROOT, 'skills/workflow-init/SKILL.md'),
+      resolve(ROOT, 'skills/workflow-init/SKILL.md')
     );
 
     console.log(
@@ -43,7 +61,7 @@ describe('workflow skill bundle parity', () => {
         skillFileExists: initExists,
         docsContains: docs.includes('`workflow-init`'),
         readmeContains: readme.includes('`workflow-init`'),
-      }),
+      })
     );
 
     expect(docs.includes('`workflow-init`')).toBe(initExists);
@@ -51,7 +69,11 @@ describe('workflow skill bundle parity', () => {
   });
 
   it('core skills all have SKILL.md files', () => {
-    const coreSkills = ['workflow', 'workflow-teach', 'workflow-build'] as const;
+    const coreSkills = [
+      'workflow',
+      'workflow-teach',
+      'workflow-build',
+    ] as const;
 
     for (const skill of coreSkills) {
       const skillPath = resolve(ROOT, `skills/${skill}/SKILL.md`);
@@ -62,7 +84,7 @@ describe('workflow skill bundle parity', () => {
           event: 'core_skill_check',
           skill,
           exists,
-        }),
+        })
       );
 
       expect(exists, `skills/${skill}/SKILL.md must exist`).toBe(true);
@@ -70,10 +92,8 @@ describe('workflow skill bundle parity', () => {
   });
 
   it('scenario skills have SKILL.md files when referenced in docs', () => {
-    const scenarioSkills = ['workflow-approval', 'workflow-webhook'] as const;
-    const docs = read(
-      'docs/content/docs/getting-started/workflow-skills.mdx',
-    );
+    const scenarioSkills = SCENARIO_SKILLS;
+    const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
 
     for (const skill of scenarioSkills) {
       const skillPath = resolve(ROOT, `skills/${skill}/SKILL.md`);
@@ -86,12 +106,15 @@ describe('workflow skill bundle parity', () => {
           skill,
           exists,
           mentionedInDocs: mentioned,
-        }),
+        })
       );
 
       // If mentioned in docs, must exist
       if (mentioned) {
-        expect(exists, `skills/${skill}/SKILL.md must exist when referenced in docs`).toBe(true);
+        expect(
+          exists,
+          `skills/${skill}/SKILL.md must exist when referenced in docs`
+        ).toBe(true);
       }
     }
   });
@@ -100,7 +123,7 @@ describe('workflow skill bundle parity', () => {
   // Provider bundle parity: build plan includes scenario skills for all providers
   // ---------------------------------------------------------------------------
   describe('provider bundle includes scenario skills', () => {
-    const SCENARIO_SKILLS = ['workflow-approval', 'workflow-webhook'] as const;
+    // Uses the shared SCENARIO_SKILLS constant defined at module scope
 
     it('build --check succeeds', () => {
       const plan = getBuildPlan();
@@ -111,7 +134,7 @@ describe('workflow skill bundle parity', () => {
           ok: plan.ok,
           providers: plan.providers,
           totalOutputs: plan.totalOutputs,
-        }),
+        })
       );
 
       expect(plan.ok).toBe(true);
@@ -139,12 +162,12 @@ describe('workflow skill bundle parity', () => {
               provider,
               scenario,
               included: providerSkills.includes(scenario),
-            }),
+            })
           );
 
           expect(
             providerSkills,
-            `provider "${provider}" must include skill "${scenario}"`,
+            `provider "${provider}" must include skill "${scenario}"`
           ).toContain(scenario);
         }
       }
@@ -165,12 +188,12 @@ describe('workflow skill bundle parity', () => {
               provider,
               scenario,
               included: providerGoldens.includes(scenario),
-            }),
+            })
           );
 
           expect(
             providerGoldens,
-            `provider "${provider}" must include goldens for "${scenario}"`,
+            `provider "${provider}" must include goldens for "${scenario}"`
           ).toContain(scenario);
         }
       }
@@ -182,7 +205,7 @@ describe('workflow skill bundle parity', () => {
 
       for (const scenario of SCENARIO_SKILLS) {
         const sourceExists = existsSync(
-          resolve(ROOT, `skills/${scenario}/SKILL.md`),
+          resolve(ROOT, `skills/${scenario}/SKILL.md`)
         );
 
         console.log(
@@ -191,7 +214,7 @@ describe('workflow skill bundle parity', () => {
             scenario,
             sourceExists,
             inPlan: planSkillNames.includes(scenario),
-          }),
+          })
         );
 
         expect(planSkillNames.includes(scenario)).toBe(sourceExists);
