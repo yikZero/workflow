@@ -1,8 +1,11 @@
 import { waitUntil } from '@vercel/functions';
 import {
+  EntityConflictError,
   FatalError,
   RetryableError,
-  WorkflowAPIError,
+  RunExpiredError,
+  ThrottleError,
+  TooEarlyError,
   WorkflowRuntimeError,
 } from '@workflow/errors';
 import { pluralize } from '@workflow/utils';
@@ -110,53 +113,51 @@ export async function executeStep(
       }
       step = startResult.step;
     } catch (err) {
-      if (WorkflowAPIError.is(err)) {
-        if (err.status === 429) {
-          const retryAfter = Math.max(
-            1,
-            typeof err.retryAfter === 'number' ? err.retryAfter : 1
-          );
-          runtimeLogger.info('Throttled on step_started, deferring', {
-            retryAfterSeconds: retryAfter,
-          });
-          return { type: 'throttled', timeoutSeconds: retryAfter };
-        }
-        if (err.status === 410) {
-          runtimeLogger.info(
-            `Workflow run "${workflowRunId}" has already completed, skipping step "${stepId}": ${err.message}`
-          );
-          return { type: 'gone' };
-        }
-        if (err.status === 409) {
-          runtimeLogger.debug('Step in terminal state, skipping', {
-            stepName,
-            stepId,
-            workflowRunId,
-            error: err.message,
-          });
-          span?.setAttributes({
-            ...Attribute.StepSkipped(true),
-            ...Attribute.StepSkipReason('completed'),
-          });
-          return { type: 'skipped' };
-        }
-        if (err.status === 425) {
-          const retryAfterStr = (err as any).meta?.retryAfter;
-          const retryAfter = retryAfterStr
-            ? new Date(retryAfterStr)
-            : new Date(Date.now() + 1000);
-          const timeoutSeconds = Math.max(
-            1,
-            Math.ceil((retryAfter.getTime() - Date.now()) / 1000)
-          );
-          runtimeLogger.debug('Step retryAfter timestamp not yet reached', {
-            stepName,
-            stepId,
-            retryAfter,
-            timeoutSeconds,
-          });
-          return { type: 'retry', timeoutSeconds };
-        }
+      if (ThrottleError.is(err)) {
+        const retryAfter = Math.max(
+          1,
+          typeof err.retryAfter === 'number' ? err.retryAfter : 1
+        );
+        runtimeLogger.info('Throttled on step_started, deferring', {
+          retryAfterSeconds: retryAfter,
+        });
+        return { type: 'throttled', timeoutSeconds: retryAfter };
+      }
+      if (RunExpiredError.is(err)) {
+        runtimeLogger.info(
+          `Workflow run "${workflowRunId}" has already completed, skipping step "${stepId}": ${err.message}`
+        );
+        return { type: 'gone' };
+      }
+      if (EntityConflictError.is(err)) {
+        runtimeLogger.debug('Step in terminal state, skipping', {
+          stepName,
+          stepId,
+          workflowRunId,
+          error: err.message,
+        });
+        span?.setAttributes({
+          ...Attribute.StepSkipped(true),
+          ...Attribute.StepSkipReason('completed'),
+        });
+        return { type: 'skipped' };
+      }
+      if (TooEarlyError.is(err)) {
+        const retryAfterStr = (err as any).meta?.retryAfter;
+        const retryAfter = retryAfterStr
+          ? new Date(retryAfterStr)
+          : new Date(Date.now() + 1000);
+        const timeoutSeconds = Math.max(
+          1,
+          Math.ceil((retryAfter.getTime() - Date.now()) / 1000)
+        );
+        runtimeLogger.debug('Step retryAfter timestamp not yet reached', {
+          stepName,
+          stepId,
+          retryAfter,
+          timeoutSeconds,
+        });
+        return { type: 'retry', timeoutSeconds };
       }
       throw err;
     }
@@ -198,7 +199,7 @@ export async function executeStep(
           },
         });
       } catch (err) {
-        if (WorkflowAPIError.is(err) && err.status === 409) {
+        if (EntityConflictError.is(err)) {
           runtimeLogger.info(
             'Tried failing step, but step has already finished.',
             {
@@ -340,7 +341,7 @@ export async function executeStep(
           },
         })
         .catch((err) => {
-          if (WorkflowAPIError.is(err) && err.status === 409) {
+          if (EntityConflictError.is(err)) {
             runtimeLogger.info(
               'Tried completing step, but step has already finished.',
               {
@@ -395,28 +396,13 @@ export async function executeStep(
         ...Attribute.ErrorRetryable(!isFatal),
       });
 
-      if (WorkflowAPIError.is(err)) {
-        if (err.status === 410) {
-          stepLogger.info('Workflow run already completed, skipping step', {
-            workflowRunId,
-            stepId,
-            message: err.message,
-          });
-          return { type: 'gone' };
-        }
-        if (err.status !== undefined && err.status >= 500) {
-          runtimeLogger.warn(
-            'Persistent server error (5xx) during step, deferring to queue retry',
-            {
-              status: err.status,
-              workflowRunId,
-              stepId,
-              error: err.message,
-              url: err.url,
-            }
-          );
-          throw err;
-        }
+      if (RunExpiredError.is(err)) {
+        stepLogger.info('Workflow run already completed, skipping step', {
+          workflowRunId,
+          stepId,
+          message: err.message,
+        });
+        return { type: 'gone' };
       }
 
       if (isFatal) {
@@ -435,7 +421,7 @@ export async function executeStep(
             },
           });
         } catch (stepFailErr) {
-          if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
+          if (EntityConflictError.is(stepFailErr)) {
             runtimeLogger.info(
               'Tried failing step, but step has already finished.',
               {
@@ -486,7 +472,7 @@ export async function executeStep(
             eventData: { error: errorMessage, stack: normalizedStack },
           });
         } catch (stepFailErr) {
-          if (WorkflowAPIError.is(stepFailErr) && stepFailErr.status === 409) {
+          if (EntityConflictError.is(stepFailErr)) {
             runtimeLogger.info(
               'Tried failing step, but step has already finished.',
               {
@@ -536,7 +522,7 @@ export async function executeStep(
           },
         });
       } catch (stepRetryErr) {
-        if (WorkflowAPIError.is(stepRetryErr) && stepRetryErr.status === 409) {
+        if (EntityConflictError.is(stepRetryErr)) {
           runtimeLogger.info(
             'Tried retrying step, but step has already finished.',
             {

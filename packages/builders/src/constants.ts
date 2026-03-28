@@ -8,6 +8,6 @@ export const WORKFLOW_QUEUE_TRIGGER = {
   topic: '__wkf_workflow_*',
   consumer: 'default',
   maxDeliveries: 64,
-  retryAfterSeconds: 5,
-  initialDelaySeconds: 0,
+  retryAfterSeconds: 5, // Delay between retries (default: 60)
+  initialDelaySeconds: 0, // Initial delay before first delivery (default: 0)
 };

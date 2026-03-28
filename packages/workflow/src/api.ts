@@ -9,6 +9,7 @@ export {
   start,
   type StopSleepOptions,
   type StopSleepResult,
+  type WorkflowReadableStream,
   type WorkflowReadableStreamOptions,
   type WorkflowRun,
 } from '@workflow/core/runtime';

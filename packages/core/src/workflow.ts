@@ -1,5 +1,9 @@
 import { runInContext } from 'node:vm';
-import { ERROR_SLUGS, WorkflowRuntimeError } from '@workflow/errors';
+import {
+  ERROR_SLUGS,
+  WorkflowNotRegisteredError,
+  WorkflowRuntimeError,
+} from '@workflow/errors';
 import { withResolvers } from '@workflow/utils';
 import { getPort } from '@workflow/utils/get-port';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
@@ -119,6 +123,13 @@ export async function runWorkflow(
     // by step/hook/sleep callbacks as events are processed.
     const promiseQueueHolder = { current: Promise.resolve() };
 
+    // Lazily-built correlation ID sets for O(1) lookup in onUnconsumedEvent.
+    // Initialized on first unconsumed event; always non-null after the null
+    // check inside onUnconsumedEvent that initializes all three together.
+    let stepCreatedIds: Set<string | undefined> | undefined;
+    let waitCreatedIds: Set<string | undefined> | undefined;
+    let hookCreatedIds: Set<string | undefined> | undefined;
+
     const eventsConsumer = new EventsConsumer(events, {
       onUnconsumedEvent: (event) => {
         // Step lifecycle events may appear in the event log without a matching
@@ -132,6 +143,26 @@ export async function runWorkflow(
         // We only skip events whose correlationId appears in a step_created
         // event in the log — this confirms the step was legitimately created
         // by a handler. Orphaned events with unknown correlationIds still error.
+        // Build correlation ID sets on first unconsumed event for O(1) lookup.
+        // These are lazily initialized because most replays consume all events.
+        if (!stepCreatedIds) {
+          stepCreatedIds = new Set(
+            events
+              .filter((e) => e.eventType === 'step_created')
+              .map((e) => e.correlationId)
+          );
+          waitCreatedIds = new Set(
+            events
+              .filter((e) => e.eventType === 'wait_created')
+              .map((e) => e.correlationId)
+          );
+          hookCreatedIds = new Set(
+            events
+              .filter((e) => e.eventType === 'hook_created')
+              .map((e) => e.correlationId)
+          );
+        }
+
         // Step lifecycle events: skip if the step was legitimately created
         if (
           event.eventType === 'step_created' ||
@@ -140,12 +171,10 @@ export async function runWorkflow(
           event.eventType === 'step_failed' ||
           event.eventType === 'step_retrying'
         ) {
-          const hasStepCreated = events.some(
-            (e) =>
-              e.eventType === 'step_created' &&
-              e.correlationId === event.correlationId
-          );
-          if (hasStepCreated || event.eventType === 'step_created') {
+          if (
+            stepCreatedIds.has(event.correlationId) ||
+            event.eventType === 'step_created'
+          ) {
             return true; // skip past this event
           }
         }
@@ -156,23 +185,26 @@ export async function runWorkflow(
           event.eventType === 'wait_created' ||
           event.eventType === 'wait_completed'
         ) {
-          const hasWaitCreated = events.some(
-            (e) =>
-              e.eventType === 'wait_created' &&
-              e.correlationId === event.correlationId
-          );
-          if (hasWaitCreated || event.eventType === 'wait_created') {
+          if (
+            waitCreatedIds!.has(event.correlationId) ||
+            event.eventType === 'wait_created'
+          ) {
             return true;
           }
         }
-        // Hook lifecycle events: same pattern as steps/waits
+        // Hook lifecycle events: validate against matching hook_created
         if (
           event.eventType === 'hook_created' ||
           event.eventType === 'hook_received' ||
           event.eventType === 'hook_conflict' ||
           event.eventType === 'hook_disposed'
         ) {
-          return true;
+          if (
+            hookCreatedIds!.has(event.correlationId) ||
+            event.eventType === 'hook_created'
+          ) {
+            return true;
+          }
         }
         workflowDiscontinuation.reject(
           new WorkflowRuntimeError(
@@ -757,11 +789,7 @@ export async function runWorkflow(
     );
 
     if (typeof workflowFn !== 'function') {
-      throw new ReferenceError(
-        `Workflow ${JSON.stringify(
-          workflowRun.workflowName
-        )} must be a function, but got "${typeof workflowFn}" instead`
-      );
+      throw new WorkflowNotRegisteredError(workflowRun.workflowName);
     }
 
     // Chain workflow argument hydration onto the promiseQueue so that the

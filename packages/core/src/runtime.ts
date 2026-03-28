@@ -1,4 +1,11 @@
-import { WorkflowAPIError, WorkflowRuntimeError } from '@workflow/errors';
+import {
+  EntityConflictError,
+  RUN_ERROR_CODES,
+  RunExpiredError,
+  WorkflowRuntimeError,
+} from '@workflow/errors';
+import { classifyRunError } from './classify-error.js';
+import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
@@ -52,6 +59,7 @@ export {
 export {
   getRun,
   Run,
+  type WorkflowReadableStream,
   type WorkflowReadableStreamOptions,
 } from './runtime/run.js';
 export {
@@ -109,6 +117,50 @@ export function workflowEntrypoint(
       } = WorkflowInvokePayloadSchema.parse(message_);
       const { requestId } = metadata;
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
+
+      // --- Max delivery check ---
+      // Enforce max delivery limit before any infrastructure calls.
+      // This prevents runaway workflows from consuming infinite queue deliveries.
+      if (metadata.attempt > MAX_QUEUE_DELIVERIES) {
+        runtimeLogger.error(
+          `Workflow handler exceeded max deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
+          { workflowRunId: runId, workflowName, attempt: metadata.attempt }
+        );
+        try {
+          const world = getWorld();
+          await world.events.create(
+            runId,
+            {
+              eventType: 'run_failed',
+              specVersion: SPEC_VERSION_CURRENT,
+              eventData: {
+                error: {
+                  message: `Workflow exceeded maximum queue deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
+                },
+                errorCode: RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED,
+              },
+            },
+            { requestId }
+          );
+        } catch (err) {
+          if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
+            // Run already finished, consume the message silently
+            return;
+          }
+          runtimeLogger.error(
+            `Failed to mark run as failed after ${metadata.attempt} delivery attempts. ` +
+              `A persistent error is preventing the run from being terminated. ` +
+              `The run will remain in its current state until manually resolved.`,
+            {
+              workflowRunId: runId,
+              error: err instanceof Error ? err.message : String(err),
+              attempt: metadata.attempt,
+            }
+          );
+        }
+        return;
+      }
+
       const spanLinks = await linkToCurrentContext();
 
       return await withTraceContext(traceContext, async () => {
@@ -269,8 +321,8 @@ export function workflowEntrypoint(
                       );
                     } catch (failErr) {
                       if (
-                        WorkflowAPIError.is(failErr) &&
-                        (failErr.status === 409 || failErr.status === 410)
+                        EntityConflictError.is(failErr) ||
+                        RunExpiredError.is(failErr)
                       ) {
                         return;
                       }
@@ -280,6 +332,14 @@ export function workflowEntrypoint(
                   }
                   throw err;
                 }
+
+                // Resolve the encryption key once before the loop since
+                // it doesn't change within a run.
+                const rawKey =
+                  await world.getEncryptionKeyForRun?.(workflowRun);
+                const encryptionKey = rawKey
+                  ? await importKey(rawKey)
+                  : undefined;
 
                 // Main replay loop
                 // biome-ignore lint/correctness/noConstantCondition: intentional loop
@@ -393,7 +453,14 @@ export function workflowEntrypoint(
                         );
                         events.push(result.event!);
                       } catch (err) {
-                        if (WorkflowAPIError.is(err) && err.status === 409) {
+                        if (EntityConflictError.is(err)) {
+                          runtimeLogger.info(
+                            'Wait already completed, skipping',
+                            {
+                              workflowRunId: runId,
+                              correlationId: waitEvent.correlationId,
+                            }
+                          );
                           continue;
                         }
                         throw err;
@@ -404,11 +471,6 @@ export function workflowEntrypoint(
                     cachedEvents = events;
 
                     // Replay workflow
-                    const rawKey =
-                      await world.getEncryptionKeyForRun?.(workflowRun);
-                    const encryptionKey = rawKey
-                      ? await importKey(rawKey)
-                      : undefined;
                     runtimeLogger.debug('Starting workflow replay', {
                       workflowRunId: runId,
                       loopIteration,
@@ -440,8 +502,8 @@ export function workflowEntrypoint(
                       );
                     } catch (err) {
                       if (
-                        WorkflowAPIError.is(err) &&
-                        (err.status === 409 || err.status === 410)
+                        EntityConflictError.is(err) ||
+                        RunExpiredError.is(err)
                       ) {
                         runtimeLogger.info(
                           'Tried completing workflow run, but run has already finished.',
@@ -639,8 +701,14 @@ export function workflowEntrypoint(
                         );
                       }
 
+                      // Classify the error: WorkflowRuntimeError indicates an
+                      // internal issue (corrupted event log, missing data);
+                      // everything else is a user code error.
+                      const errorCode = classifyRunError(err);
+
                       runtimeLogger.error('Error while running workflow', {
                         workflowRunId: runId,
+                        errorCode,
                         errorName,
                         errorStack,
                       });
@@ -656,14 +724,15 @@ export function workflowEntrypoint(
                                 message: errorMessage,
                                 stack: errorStack,
                               },
+                              errorCode,
                             },
                           },
                           { requestId }
                         );
                       } catch (failErr) {
                         if (
-                          WorkflowAPIError.is(failErr) &&
-                          (failErr.status === 409 || failErr.status === 410)
+                          EntityConflictError.is(failErr) ||
+                          RunExpiredError.is(failErr)
                         ) {
                           runtimeLogger.info(
                             'Tried failing workflow run, but run has already finished.',
@@ -679,6 +748,7 @@ export function workflowEntrypoint(
 
                       span?.setAttributes({
                         ...Attribute.WorkflowRunStatus('failed'),
+                        ...Attribute.WorkflowErrorCode(errorCode),
                         ...Attribute.WorkflowErrorName(errorName),
                         ...Attribute.WorkflowErrorMessage(errorMessage),
                         ...Attribute.ErrorType(errorName),

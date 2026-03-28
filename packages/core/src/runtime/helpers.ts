@@ -303,6 +303,9 @@ export async function getAllWorkflowRunEventsWithCursor(
     const world = getWorld();
     const loadStart = Date.now();
     while (hasMore) {
+      // TODO: we're currently loading all the data with resolveRef behaviour. We need to update this
+      // to lazyload the data from the world instead so that we can optimize and make the event log loading
+      // much faster and memory efficient
       const pageStart = Date.now();
       const response = await world.events.list({
         runId,
