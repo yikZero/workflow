@@ -9,7 +9,7 @@
 
 export const CORE_SKILLS = ['workflow', 'workflow-teach', 'workflow-build'];
 
-export const OPTIONAL_SKILLS = ['workflow-init'];
+export const OPTIONAL_SKILLS = ['workflow-init', 'workflow-audit'];
 
 export const SCENARIO_SKILLS = [
   'workflow-approval',
@@ -18,6 +18,11 @@ export const SCENARIO_SKILLS = [
   'workflow-timeout',
   'workflow-idempotency',
   'workflow-observe',
+];
+
+export const USER_INVOKABLE_SKILLS = [
+  ...SCENARIO_SKILLS,
+  'workflow-audit',
 ];
 
 /**

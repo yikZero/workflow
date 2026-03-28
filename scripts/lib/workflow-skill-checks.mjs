@@ -927,9 +927,69 @@ export const observeGoldenChecks = [
 ];
 
 // ---------------------------------------------------------------------------
+// Review skill checks: workflow-audit
+// ---------------------------------------------------------------------------
+
+export const auditChecks = [
+  {
+    ruleId: 'skill.workflow-audit',
+    file: 'skills/workflow-audit/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      'skills/workflow/SKILL.md',
+      '.workflow.md',
+      '## Audit Scorecard',
+      '## Executive Summary',
+      '## Detailed Findings by Severity',
+      '## Systemic Risks',
+      '## Positive Findings',
+      '## Audit Summary',
+      'workflow_audit_complete',
+      'P0 Blocking',
+      'P1 Major',
+      'P2 Minor',
+      'P3 Polish',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+      'verification_plan_ready',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-audit.checklist',
+    file: 'skills/workflow-audit/SKILL.md',
+    mustInclude: [
+      'Determinism boundary',
+      'Step granularity',
+      'Pass-by-value / serialization',
+      'Hook token strategy',
+      'Webhook response mode',
+      '`start()` placement',
+      'Stream I/O placement',
+      'Idempotency keys',
+      'Retry semantics',
+      'Rollback / compensation',
+      'Observability streams',
+      'Integration test coverage',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-audit.summary-contract',
+    file: 'skills/workflow-audit/SKILL.md',
+    mustInclude: [
+      '"event":"workflow_audit_complete"',
+      '"maxScore":48',
+      '"contractVersion":"1"',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Aggregated check lists
 // ---------------------------------------------------------------------------
 
-export const checks = [...teachChecks, ...buildChecks, ...approvalChecks, ...webhookChecks, ...sagaChecks, ...timeoutChecks, ...idempotencyChecks, ...observeChecks];
+export const checks = [...teachChecks, ...buildChecks, ...approvalChecks, ...webhookChecks, ...sagaChecks, ...timeoutChecks, ...idempotencyChecks, ...observeChecks, ...auditChecks];
 
 export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks, ...approvalGoldenChecks, ...webhookGoldenChecks, ...sagaGoldenChecks, ...timeoutGoldenChecks, ...idempotencyGoldenChecks, ...observeGoldenChecks];

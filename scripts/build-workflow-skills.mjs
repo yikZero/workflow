@@ -25,6 +25,7 @@ import {
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   SCENARIO_SKILLS,
+  USER_INVOKABLE_SKILLS,
   summarizeSkillSurface,
 } from './lib/workflow-skill-surface.mjs';
 
@@ -60,6 +61,7 @@ function log(event, data = {}) {
 const REQUIRED_FIELDS = ['name', 'description'];
 const REQUIRED_META = ['author', 'version'];
 const SCENARIO_SKILLS_SET = new Set(SCENARIO_SKILLS);
+const USER_INVOKABLE_SKILLS_SET = new Set(USER_INVOKABLE_SKILLS);
 
 function parseFrontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -105,16 +107,21 @@ function validateFrontmatter(fm, skillDir) {
     }
   }
 
-  // Scenario skills must have user-invocable and argument-hint
-  if (SCENARIO_SKILLS_SET.has(skillDir)) {
+  // User-invocable skills must have user-invocable and argument-hint
+  if (USER_INVOKABLE_SKILLS_SET.has(skillDir)) {
     if (fm['user-invocable'] !== 'true') {
-      errors.push(`${skillDir}: scenario skill must set "user-invocable: true"`);
+      errors.push(
+        `${skillDir}: user-invocable skill must set "user-invocable: true"`,
+      );
     }
     if (!fm['argument-hint']) {
-      errors.push(`${skillDir}: scenario skill must provide "argument-hint"`);
+      errors.push(
+        `${skillDir}: user-invocable skill must provide "argument-hint"`,
+      );
     }
-    log('scenario_validation', {
+    log('user_invocable_validation', {
       skill: skillDir,
+      category: SCENARIO_SKILLS_SET.has(skillDir) ? 'scenario' : 'review',
       'user-invocable': fm['user-invocable'] ?? null,
       'argument-hint': fm['argument-hint'] ?? null,
       valid: errors.length === 0,

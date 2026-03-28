@@ -3,6 +3,14 @@
 Installable skills that guide users through creating durable workflows.
 Inspired by [Impeccable](https://github.com/pbakaus/impeccable)'s teach-then-build model.
 
+## Quick start: Review existing workflows
+
+If you already have workflow code and want to inspect it before making changes:
+
+| Command | What it does |
+|---------|--------------|
+| `/workflow-audit` | Review an existing workflow or design for determinism, retries, compensation, and test gaps |
+
 ## Quick start: Scenario commands
 
 If you know what kind of workflow you need, start with a scenario command:
@@ -99,11 +107,18 @@ Scenario skills are user-invocable shortcuts that route into the teach → build
 pipeline with domain-specific guardrails. They reuse `.workflow.md` when present
 and fall back to a focused context capture when not.
 
+### Review commands
+
+| Skill              | Purpose                                         |
+|--------------------|-------------------------------------------------|
+| `workflow-audit`   | Review an existing workflow or design and recommend the best next skill |
+
 ### Optional helpers
 
 | Skill              | Purpose                                         |
 |--------------------|-------------------------------------------------|
 | `workflow-init`    | First-time project setup before `workflow` is installed as a dependency |
+| `workflow-audit`   | Review an existing workflow or design and recommend the best next skill |
 
 ## Persisted artifacts
 

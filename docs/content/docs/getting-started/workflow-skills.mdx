@@ -51,6 +51,21 @@ with the same `verification_plan_ready` contract as `/workflow-build`.
 /workflow-observe stream operator progress and final status
 ```
 
+## Review Existing Workflows
+
+When you already have workflow code and need to assess correctness before changing it, run:
+
+```
+/workflow-audit
+```
+
+For example:
+
+> Audit our purchase approval workflow for timeout holes, replay safety, and missing suspension tests.
+
+The audit skill reads `.workflow.md` when present, inspects the workflow code and tests,
+scores 12 durable-workflow checks, tags issues P0-P3, and recommends the single best next skill.
+
 ## The Manual Path: Teach, Then Build
 
 For workflows that don't fit a scenario command, use the two-stage loop:
@@ -89,7 +104,7 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see 10 skill directories:
+After copying, you should see 11 skill directories:
 
 - **Core skills:** `workflow` (always-on reference), `workflow-teach` (stage 1),
   and `workflow-build` (stage 2)
@@ -99,6 +114,7 @@ After copying, you should see 10 skill directories:
   `workflow-timeout` (expiry and wake-up correctness),
   `workflow-idempotency` (replay-safe side effects),
   and `workflow-observe` (operator streams and terminal signals)
+- **Review skill:** `workflow-audit` (score an existing workflow or design before touching code)
 - **Optional helper:** `workflow-init` (first-time project setup before
   `workflow` is installed as a dependency)
 
@@ -313,13 +329,13 @@ head -n 3 /tmp/workflow-skills-build.log | jq
 Expected output shape:
 
 ```json
-{ "providers": ["claude-code", "cursor"], "totalOutputs": 50 }
+{ "providers": ["claude-code", "cursor"], "totalOutputs": 52 }
 ```
 
 ```
 {"event":"start","ts":"2026-03-27T16:41:23.035Z","mode":"build"}
-{"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":10,"scenarioCount":6}
-{"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":50,"providerCount":2,"skillCount":10,"scenarioCount":6,"goldensPerProvider":15,"outputsPerProvider":25}
+{"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":11,"scenarioCount":6}
+{"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":52,"providerCount":2,"skillCount":11,"scenarioCount":6,"goldensPerProvider":15,"outputsPerProvider":26}
 ```
 
 **Verification commands**
@@ -336,15 +352,15 @@ Expected summary
 {
   "skillSurface": {
     "counts": {
-      "skills": 10,
+      "skills": 11,
       "scenarios": 6,
       "goldensPerProvider": 15,
       "providers": 2,
-      "outputsPerProvider": 25,
-      "totalOutputs": 50
+      "outputsPerProvider": 26,
+      "totalOutputs": 52
     }
   },
-  "totalOutputs": 50
+  "totalOutputs": 52
 }
 ```
 
