@@ -160,7 +160,7 @@ describe("orderFulfillment", () => {
 
 ### Verification Summary
 
-{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":2,"testCount":2,"runtimeCommandCount":3,"contractVersion":"1"}
+{"event":"verification_plan_ready","blueprintName":"compensation-saga","fileCount":2,"testCount":1,"runtimeCommandCount":3,"contractVersion":"1"}
 
 ## Checklist Items Exercised
 

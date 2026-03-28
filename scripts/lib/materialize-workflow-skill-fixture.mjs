@@ -17,14 +17,26 @@
  * Exits 1 on failure with machine-readable error to stderr.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  symlinkSync,
+  lstatSync,
+} from 'node:fs';
+import { dirname, join, resolve, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const VITEST_CONFIG = `import { defineConfig } from 'vitest/config';
+const VITEST_CONFIG = `import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'vitest/config';
 import { workflow } from '@workflow/vitest';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
+  root: __dirname,
   plugins: [workflow()],
   test: {
     include: ['**/*.integration.test.ts'],
@@ -156,6 +168,29 @@ writeFixtureFile('vitest.integration.config.ts', VITEST_CONFIG);
 // Route file (only when golden includes route output)
 if (parsed.route) {
   writeFixtureFile(parsed.route.path, parsed.route.code + '\n');
+}
+
+// Create node_modules symlinks so esbuild and vitest resolve workspace
+// packages from fixture dirs (pnpm strict mode doesn't hoist them).
+const fixtureNodeModules = join(fixtureDir, 'node_modules');
+mkdirSync(fixtureNodeModules, { recursive: true });
+
+const symlinks = [
+  ['workflow', join(repoRoot, 'packages', 'workflow')],
+  [join('@workflow', 'vitest'), join(repoRoot, 'packages', 'vitest')],
+];
+
+for (const [linkName, target] of symlinks) {
+  const linkPath = join(fixtureNodeModules, linkName);
+  if (!existsSync(linkPath)) {
+    mkdirSync(dirname(linkPath), { recursive: true });
+    symlinkSync(relative(dirname(linkPath), target), linkPath);
+    log('symlink_created', {
+      name,
+      link: `node_modules/${linkName}`,
+      target: target.replace(repoRoot + '/', ''),
+    });
+  }
 }
 
 log('materialize_complete', {

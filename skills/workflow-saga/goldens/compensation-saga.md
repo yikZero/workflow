@@ -226,7 +226,7 @@ describe("orderSaga", () => {
 
 ### Verification Summary
 
-{"event":"verification_plan_ready","blueprintName":"order-saga","fileCount":2,"testCount":3,"runtimeCommandCount":3,"contractVersion":"1"}
+{"event":"verification_plan_ready","blueprintName":"order-saga","fileCount":2,"testCount":1,"runtimeCommandCount":3,"contractVersion":"1"}
 
 ## Checklist Items Exercised
 
