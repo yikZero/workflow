@@ -2158,4 +2158,51 @@ describe('e2e', () => {
       });
     }
   );
+
+  // ============================================================
+  // Resilient start: run completes even when run_created fails
+  // ============================================================
+  // TODO: Switch this to a stream-based workflow (e.g. readableStreamWorkflow)
+  // to also verify that serialization, flushing, and binary data work correctly
+  // over the queue boundary. Currently using addTenWorkflow to avoid the
+  // skipIf(isLocalDeployment()) barrier that stream tests require.
+  test(
+    'resilient start: addTenWorkflow completes when run_created returns 500',
+    { timeout: 60_000 },
+    async () => {
+      // Get the real world and wrap it so the first events.create call
+      // (run_created) throws a 500 server error. The queue should still
+      // be dispatched with runInput, and the runtime should bootstrap
+      // the run via the run_started fallback path.
+      const realWorld = getWorld();
+      let createCallCount = 0;
+      const stubbedWorld: World = {
+        ...realWorld,
+        events: {
+          ...realWorld.events,
+          create: (async (...args: Parameters<World['events']['create']>) => {
+            createCallCount++;
+            if (createCallCount === 1) {
+              // Fail the very first call (run_created from start())
+              throw new WorkflowWorldError('Simulated storage outage', {
+                status: 500,
+              });
+            }
+            return realWorld.events.create(...args);
+          }) as World['events']['create'],
+        },
+      };
+
+      const run = await start(await e2e('addTenWorkflow'), [123], {
+        world: stubbedWorld,
+      });
+
+      // The run should still complete despite run_created failing
+      const returnValue = await run.returnValue;
+      expect(returnValue).toBe(133);
+
+      // Verify the first call was indeed intercepted
+      expect(createCallCount).toBeGreaterThanOrEqual(2);
+    }
+  );
 });
