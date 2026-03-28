@@ -87,8 +87,9 @@ describe('createSleep', () => {
     // Start the sleep - it will process events asynchronously
     const sleepPromise = sleep('1s');
 
-    // Wait for the error handler to be called
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Wait for the error handler to be called. Windows timer resolution
+    // can be up to 15.6ms, so use a generous timeout.
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(workflowError).toBeInstanceOf(WorkflowSuspension);
   });
