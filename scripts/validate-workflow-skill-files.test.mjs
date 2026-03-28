@@ -1026,6 +1026,84 @@ describe('webhook golden validation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Actionable failure messages and suggestedFix
+// ---------------------------------------------------------------------------
+
+describe('actionable failure messages', () => {
+  it('includes a human-readable message for missing_required_content', () => {
+    const result = runSingleCheck(
+      { ruleId: 'test', file: 'test.md', mustInclude: ['foo', 'bar'] },
+      'baz'
+    );
+    expect(result.results[0].message).toBe(
+      'Missing required content in test.md: foo, bar'
+    );
+  });
+
+  it('includes a human-readable message for forbidden_content_present', () => {
+    const result = runSingleCheck(
+      { ruleId: 'test', file: 'test.md', mustNotInclude: ['bad'] },
+      'something bad here'
+    );
+    expect(result.results[0].message).toBe(
+      'Forbidden content present in test.md: bad'
+    );
+  });
+
+  it('includes a human-readable message for content_out_of_order', () => {
+    const result = runSingleCheck(
+      {
+        ruleId: 'test',
+        file: 'test.md',
+        mustInclude: ['alpha', 'beta'],
+        mustAppearInOrder: ['alpha', 'beta'],
+      },
+      'beta comes before alpha here'
+    );
+    expect(result.results[0].message).toBe(
+      'Content appears out of order in test.md'
+    );
+  });
+
+  it('includes an actionable message and suggestedFix for structured validation failures', () => {
+    const check = {
+      ruleId: 'test.verification-artifact',
+      file: 'test.md',
+      sectionHeading: '## Verification Artifact',
+      mustIncludeWithinSection: ['testMatrix'],
+      suggestedFix: 'Add `testMatrix` inside `## Verification Artifact`.',
+    };
+    const content = [
+      '## Verification Artifact',
+      '',
+      '```json',
+      '{"contractVersion":"1"}',
+      '```',
+    ].join('\n');
+
+    const result = validateWorkflowSkillText([check], { 'test.md': content });
+    expect(result.ok).toBe(false);
+    expect(result.results[0].reason).toBe('structured_validation_failed');
+    expect(result.results[0].message).toContain('Structured validation failed');
+    expect(result.results[0].suggestedFix).toContain('Add `testMatrix`');
+  });
+
+  it('golden checks with verification artifacts have suggestedFix', () => {
+    const goldenRuleIds = [
+      'golden.build.compensation-saga',
+      'golden.approval.approval-expiry-escalation',
+      'golden.webhook.duplicate-webhook-order',
+    ];
+    const allChecksFlat = [...buildGoldenChecks, ...approvalGoldenChecks, ...webhookGoldenChecks];
+    for (const ruleId of goldenRuleIds) {
+      const check = allChecksFlat.find((c) => c.ruleId === ruleId);
+      expect(check.suggestedFix).toBeDefined();
+      expect(check.suggestedFix).toContain('Verification Artifact');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Regression: stale 4-stage pipeline references
 // ---------------------------------------------------------------------------
 

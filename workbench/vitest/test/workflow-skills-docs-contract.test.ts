@@ -296,6 +296,46 @@ describe('workflow skills docs contract surfaces', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Installed skill count
+  // -----------------------------------------------------------------------
+  describe('installed skill count', () => {
+    it('getting-started doc reports the correct installed skill count', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('six skill directories');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Validator inspection guidance
+  // -----------------------------------------------------------------------
+  describe('validator inspection guidance', () => {
+    it('getting-started doc includes Inspect Validation Output section', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('## Inspect Validation Output');
+    });
+
+    it('validator inspection shows stdout as machine-readable result', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('machine-readable result');
+      expect(docs).toContain('workflow-skills-validate.json');
+    });
+
+    it('validator inspection shows stderr as JSONL logs', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx',
+      );
+      expect(docs).toContain('JSON logs on stderr');
+      expect(docs).toContain('workflow-skills-validate.log');
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Docs show full verification runtime command set
   // -----------------------------------------------------------------------
   it('docs show the full verification runtime command set', () => {

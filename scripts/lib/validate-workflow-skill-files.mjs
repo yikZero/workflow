@@ -104,12 +104,15 @@ function validateSectionTokens(check, text) {
     return {};
   }
 
+  const sectionFound = text
+    .split('\n')
+    .some((line) => line.trim() === check.sectionHeading.trim());
   const section = extractSection(text, check.sectionHeading);
   const missingSectionTokens = check.mustIncludeWithinSection.filter(
     (token) => !section.includes(token)
   );
 
-  return { missingSectionTokens };
+  return { sectionFound, missingSectionTokens };
 }
 
 function findOutOfOrder(text, values = []) {
@@ -167,6 +170,38 @@ function classifyFailureReason(missing, forbidden, orderFailure, extra) {
   return 'validation_failed';
 }
 
+function buildFailureMessage(check, reason, missing, forbidden, extra) {
+  if (reason === 'missing_required_content') {
+    return `Missing required content in ${check.file}: ${missing.join(', ')}`;
+  }
+  if (reason === 'forbidden_content_present') {
+    return `Forbidden content present in ${check.file}: ${forbidden.join(', ')}`;
+  }
+  if (reason === 'content_out_of_order') {
+    return `Content appears out of order in ${check.file}`;
+  }
+  if (reason === 'structured_validation_failed') {
+    if (extra.sectionHeading && extra.sectionFound === false) {
+      return `Missing required section ${extra.sectionHeading} in ${check.file}`;
+    }
+    const parts = [];
+    if (extra.jsonFenceError) parts.push(`jsonFenceError=${extra.jsonFenceError}`);
+    if (extra.missingJsonKeys?.length) {
+      parts.push(`missingJsonKeys=${extra.missingJsonKeys.join(', ')}`);
+    }
+    if (extra.emptyJsonKeys?.length) {
+      parts.push(`emptyJsonKeys=${extra.emptyJsonKeys.join(', ')}`);
+    }
+    if (extra.missingSectionTokens?.length) {
+      parts.push(
+        `${extra.sectionHeading ?? 'section'} missing ${extra.missingSectionTokens.join(', ')}`
+      );
+    }
+    return `Structured validation failed in ${check.file}: ${parts.join('; ')}`;
+  }
+  return `Validation failed in ${check.file}`;
+}
+
 function buildFailureResult(
   check,
   missing,
@@ -176,12 +211,14 @@ function buildFailureResult(
   text = ''
 ) {
   const reason = classifyFailureReason(missing, forbidden, orderFailure, extra);
+  const message = buildFailureMessage(check, reason, missing, forbidden, extra);
   return {
     ruleId: check.ruleId ?? `text.${check.file}`,
     severity: check.severity ?? 'error',
     file: check.file,
     status: 'fail',
     reason,
+    message,
     ...(missing.length > 0 ? { missing } : {}),
     ...(forbidden.length > 0 ? { forbidden } : {}),
     ...(forbidden.length > 0

@@ -67,7 +67,7 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see five skill directories:
+After copying, you should see six skill directories:
 
 - **Core skills:** `workflow` (always-on reference), `workflow-teach` (stage 1),
   and `workflow-build` (stage 2)
@@ -294,6 +294,21 @@ Expected output shape:
 {"event":"start","ts":"2026-03-27T16:41:23.035Z","mode":"build"}
 {"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":12}
 {"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":24}
+```
+
+## Inspect Validation Output
+
+The validator emits structured JSON logs on stderr and a machine-readable result
+on stdout, even when validation fails.
+
+```bash
+node scripts/validate-workflow-skill-files.mjs > /tmp/workflow-skills-validate.json 2> /tmp/workflow-skills-validate.log || true
+
+echo 'validation summary'
+cat /tmp/workflow-skills-validate.json | jq '{ok, checked, summary}'
+
+echo 'last 3 validator events'
+tail -n 3 /tmp/workflow-skills-validate.log | jq
 ```
 
 ## Next Steps

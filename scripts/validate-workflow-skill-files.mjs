@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { validateWorkflowSkillText } from './lib/validate-workflow-skill-files.mjs';
 import { checks, allGoldenChecks } from './lib/workflow-skill-checks.mjs';
 
+const SUMMARY_ONLY = process.argv.includes('--summary');
 const allChecks = [...checks, ...allGoldenChecks];
 
 function log(event, data = {}) {
@@ -56,17 +57,34 @@ const output = {
   summary,
 };
 
-if (!result.ok) {
-  log('validation_failed', {
+function buildCompletionEvent(result, summary) {
+  return {
+    event: 'workflow_skill_validation_complete',
+    ok: result.ok,
     checked: result.checked,
-    summary,
-  });
-  console.error(JSON.stringify(output, null, 2));
-  process.exit(1);
+    pass: summary.pass,
+    fail: summary.fail,
+    error: summary.error,
+    outOfOrder: summary.outOfOrder,
+    reasonCounts: summary.reasons,
+  };
 }
 
-log('validation_passed', {
-  checked: result.checked,
-  summary,
+const completion = buildCompletionEvent(result, summary);
+
+log('workflow_skill_validation_complete', {
+  ok: completion.ok,
+  checked: completion.checked,
+  pass: completion.pass,
+  fail: completion.fail,
+  error: completion.error,
+  outOfOrder: completion.outOfOrder,
+  reasonCounts: completion.reasonCounts,
 });
-console.log(JSON.stringify(output, null, 2));
+
+process.stdout.write(
+  SUMMARY_ONLY
+    ? `${JSON.stringify(completion)}\n`
+    : `${JSON.stringify(output, null, 2)}\n`
+);
+process.exit(result.ok ? 0 : 1);

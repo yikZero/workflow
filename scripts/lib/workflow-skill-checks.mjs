@@ -245,6 +245,8 @@ export const buildGoldenChecks = [
       'runtimeCommands',
       'implementationNotes',
     ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
   },
   {
     ruleId: 'golden.build.child-workflow-handoff',
@@ -460,6 +462,8 @@ export const approvalGoldenChecks = [
       'runtimeCommands',
       'implementationNotes',
     ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
   },
 ];
 
@@ -505,6 +509,8 @@ export const webhookGoldenChecks = [
       'runtimeCommands',
       'implementationNotes',
     ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
   },
 ];
 
