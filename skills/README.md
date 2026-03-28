@@ -11,6 +11,10 @@ If you know what kind of workflow you need, start with a scenario command:
 |---------|---------------|
 | `/workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
 | `/workflow-webhook` | External webhook ingestion with duplicate handling and compensation |
+| `/workflow-saga` | Partial-success side effects and compensation |
+| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior |
+| `/workflow-idempotency` | Retries and replay can duplicate effects |
+| `/workflow-observe` | Operators need progress streams and terminal signals |
 
 Scenario commands reuse `.workflow.md` when present and fall back to a focused
 context capture when not. They apply domain-specific guardrails and terminate
@@ -86,6 +90,10 @@ Each `SKILL.md` must begin with YAML frontmatter containing:
 |--------------------|-------------------------------------------------|
 | `workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
 | `workflow-webhook`  | External webhook ingestion with duplicate handling and compensation |
+| `workflow-saga`     | Multi-step side effects with explicit compensation |
+| `workflow-timeout`  | Flows whose correctness depends on expiry and wake-up behavior |
+| `workflow-idempotency` | Side effects that remain safe under retries, replay, and duplicate events |
+| `workflow-observe`  | Operator-visible progress, stream namespaces, and terminal signals |
 
 Scenario skills are user-invocable shortcuts that route into the teach → build
 pipeline with domain-specific guardrails. They reuse `.workflow.md` when present
@@ -137,6 +145,30 @@ verification summary for approval workflows.
 End-to-end scenario demonstrations showing the full user-invocable path from
 prompt → context capture → design constraints → generated code/tests →
 verification summary for webhook ingestion workflows.
+
+### `workflow-saga/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for saga workflows with explicit compensation.
+
+### `workflow-timeout/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for timeout workflows with sleep/wake-up correctness.
+
+### `workflow-idempotency/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for idempotency workflows with replay safety and duplicate handling.
+
+### `workflow-observe/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for observability workflows with namespaced streams and terminal signals.
 
 ## Validation
 

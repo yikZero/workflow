@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -303,7 +303,7 @@ describe('workflow skills docs contract surfaces', () => {
       const docs = read(
         'docs/content/docs/getting-started/workflow-skills.mdx',
       );
-      expect(docs).toContain('six skill directories');
+      expect(docs).toContain('ten skill directories');
     });
   });
 
@@ -394,6 +394,61 @@ describe('workflow skills docs contract surfaces', () => {
         'skills/workflow-build/goldens/compensation-saga.md',
       );
       expect(golden).toContain('"testMatrix"');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Scenario skill parity: docs, README, source files, and goldens
+  // -----------------------------------------------------------------------
+  describe('scenario skill parity', () => {
+    it('docs and README list every user-invocable scenario skill', () => {
+      const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
+      const readme = read('skills/README.md');
+      for (const skill of [
+        'workflow-approval',
+        'workflow-webhook',
+        'workflow-saga',
+        'workflow-timeout',
+        'workflow-idempotency',
+        'workflow-observe',
+      ]) {
+        expect(docs).toContain(`\`/${skill}\``);
+        expect(readme).toContain(`\`${skill}\``);
+      }
+    });
+
+    it('every documented scenario skill has a source file and golden', () => {
+      for (const [skill, golden] of [
+        ['workflow-approval', 'approval-expiry-escalation.md'],
+        ['workflow-webhook', 'duplicate-webhook-order.md'],
+        ['workflow-saga', 'compensation-saga.md'],
+        ['workflow-timeout', 'approval-timeout-streaming.md'],
+        ['workflow-idempotency', 'duplicate-webhook-order.md'],
+        ['workflow-observe', 'operator-observability-streams.md'],
+      ]) {
+        expect(existsSync(resolve(ROOT, `skills/${skill}/SKILL.md`))).toBe(
+          true,
+        );
+        expect(
+          existsSync(resolve(ROOT, `skills/${skill}/goldens/${golden}`)),
+        ).toBe(true);
+      }
+    });
+
+    it('docs include sample prompts for scenario commands', () => {
+      const docs = read('docs/content/docs/getting-started/workflow-skills.mdx');
+      expect(docs).toContain(
+        '/workflow-saga reserve inventory, charge payment, compensate on shipping failure',
+      );
+      expect(docs).toContain(
+        '/workflow-timeout wait 24h for approval, then expire',
+      );
+      expect(docs).toContain(
+        '/workflow-idempotency make duplicate webhook delivery safe',
+      );
+      expect(docs).toContain(
+        '/workflow-observe stream operator progress and final status',
+      );
     });
   });
 });

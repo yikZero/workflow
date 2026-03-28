@@ -515,9 +515,421 @@ export const webhookGoldenChecks = [
 ];
 
 // ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-saga
+// ---------------------------------------------------------------------------
+
+export const sagaChecks = [
+  {
+    ruleId: 'skill.workflow-saga',
+    file: 'skills/workflow-saga/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'compensation',
+      'partial',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-saga.context-capture',
+    file: 'skills/workflow-saga/SKILL.md',
+    mustInclude: [
+      'Side-effecting steps',
+      'Compensation ordering',
+      'Compensation idempotency',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-saga.required-constraints',
+    file: 'skills/workflow-saga/SKILL.md',
+    mustInclude: [
+      'Compensation for every irreversible step',
+      'Compensation ordering',
+      'Compensation idempotency keys',
+      'Compensation must eventually succeed',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-saga.test-coverage',
+    file: 'skills/workflow-saga/SKILL.md',
+    mustInclude: [
+      'Happy path',
+      'Compensation path',
+      'Compensation idempotency',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-timeout
+// ---------------------------------------------------------------------------
+
+export const timeoutChecks = [
+  {
+    ruleId: 'skill.workflow-timeout',
+    file: 'skills/workflow-timeout/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'sleep',
+      'waitForSleep',
+      'wakeUp',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-timeout.context-capture',
+    file: 'skills/workflow-timeout/SKILL.md',
+    mustInclude: [
+      'Timeout triggers',
+      'Timeout outcomes',
+      'Sleep/wake-up pairing',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-timeout.required-constraints',
+    file: 'skills/workflow-timeout/SKILL.md',
+    mustInclude: [
+      'Every suspension must have a bounded lifetime',
+      'Sleep/wake-up correctness',
+      'Hook/sleep races',
+      'Promise.race',
+      'Timeout as a domain outcome',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-timeout.test-coverage',
+    file: 'skills/workflow-timeout/SKILL.md',
+    mustInclude: [
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario golden checks: workflow-saga
+// ---------------------------------------------------------------------------
+
+export const sagaGoldenChecks = [
+  {
+    ruleId: 'golden.saga.compensation-saga',
+    file: 'skills/workflow-saga/goldens/compensation-saga.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario golden checks: workflow-timeout
+// ---------------------------------------------------------------------------
+
+export const timeoutGoldenChecks = [
+  {
+    ruleId: 'golden.timeout.approval-timeout-streaming',
+    file: 'skills/workflow-timeout/goldens/approval-timeout-streaming.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'sleep',
+      'waitForSleep',
+      'wakeUp',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-idempotency
+// ---------------------------------------------------------------------------
+
+export const idempotencyChecks = [
+  {
+    ruleId: 'skill.workflow-idempotency',
+    file: 'skills/workflow-idempotency/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'duplicate',
+      'retry',
+      'idempotency',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-idempotency.context-capture',
+    file: 'skills/workflow-idempotency/SKILL.md',
+    mustInclude: [
+      'Duplicate ingress',
+      'Replay safety',
+      'Idempotency key strategy',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-idempotency.required-constraints',
+    file: 'skills/workflow-idempotency/SKILL.md',
+    mustInclude: [
+      'Duplicate delivery detection',
+      'Stable idempotency keys',
+      'Replay safety verification',
+      'Compensation with idempotency keys',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-idempotency.test-coverage',
+    file: 'skills/workflow-idempotency/SKILL.md',
+    mustInclude: [
+      'Happy path',
+      'Duplicate event',
+      'Replay safety',
+      'Compensation path',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-observe
+// ---------------------------------------------------------------------------
+
+export const observeChecks = [
+  {
+    ruleId: 'skill.workflow-observe',
+    file: 'skills/workflow-observe/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'stream',
+      'namespace',
+      'operator',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-observe.context-capture',
+    file: 'skills/workflow-observe/SKILL.md',
+    mustInclude: [
+      'Operator audience',
+      'Progress granularity',
+      'Stream namespaces',
+      'Terminal signals',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-observe.required-constraints',
+    file: 'skills/workflow-observe/SKILL.md',
+    mustInclude: [
+      'Stream namespace separation',
+      'Stream I/O placement',
+      'Structured stream events',
+      'Terminal signals',
+      'Operator-queryable state',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-observe.test-coverage',
+    file: 'skills/workflow-observe/SKILL.md',
+    mustInclude: [
+      'Happy path with stream verification',
+      'Failure path with terminal signal',
+      'Namespace isolation',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario golden checks: workflow-idempotency
+// ---------------------------------------------------------------------------
+
+export const idempotencyGoldenChecks = [
+  {
+    ruleId: 'golden.idempotency.duplicate-webhook-order',
+    file: 'skills/workflow-idempotency/goldens/duplicate-webhook-order.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'duplicate',
+      'idempotency',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario golden checks: workflow-observe
+// ---------------------------------------------------------------------------
+
+export const observeGoldenChecks = [
+  {
+    ruleId: 'golden.observe.operator-observability-streams',
+    file: 'skills/workflow-observe/goldens/operator-observability-streams.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'stream',
+      'namespace',
+      'operator',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+    suggestedFix:
+      'Inside `## Verification Artifact`, add a fenced `json` block containing `contractVersion`, `blueprintName`, `files`, `testMatrix`, `runtimeCommands`, and `implementationNotes`. Immediately after the fence, add `### Verification Summary` followed by a single-line `{"event":"verification_plan_ready",...}` JSON object.',
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Aggregated check lists
 // ---------------------------------------------------------------------------
 
-export const checks = [...teachChecks, ...buildChecks, ...approvalChecks, ...webhookChecks];
+export const checks = [...teachChecks, ...buildChecks, ...approvalChecks, ...webhookChecks, ...sagaChecks, ...timeoutChecks, ...idempotencyChecks, ...observeChecks];
 
-export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks, ...approvalGoldenChecks, ...webhookGoldenChecks];
+export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks, ...approvalGoldenChecks, ...webhookGoldenChecks, ...sagaGoldenChecks, ...timeoutGoldenChecks, ...idempotencyGoldenChecks, ...observeGoldenChecks];

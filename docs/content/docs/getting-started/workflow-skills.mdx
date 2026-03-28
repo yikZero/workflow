@@ -24,10 +24,32 @@ If you know what kind of workflow you need, start here:
 |---------|---------------|
 | `/workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
 | `/workflow-webhook` | External webhook ingestion with duplicate handling and compensation |
+| `/workflow-saga` | Partial-success side effects and compensation |
+| `/workflow-timeout` | Correctness depends on sleep/wake-up behavior |
+| `/workflow-idempotency` | Retries and replay can duplicate effects |
+| `/workflow-observe` | Operators need progress streams and terminal signals |
 
 Scenario commands reuse `.workflow.md` when present and fall back to a focused
 context capture when not. They apply domain-specific guardrails and terminate
 with the same `verification_plan_ready` contract as `/workflow-build`.
+
+### Example Prompts
+
+```
+/workflow-saga reserve inventory, charge payment, compensate on shipping failure
+```
+
+```
+/workflow-timeout wait 24h for approval, then expire
+```
+
+```
+/workflow-idempotency make duplicate webhook delivery safe
+```
+
+```
+/workflow-observe stream operator progress and final status
+```
 
 ## The Manual Path: Teach, Then Build
 
@@ -67,12 +89,16 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see six skill directories:
+After copying, you should see ten skill directories:
 
 - **Core skills:** `workflow` (always-on reference), `workflow-teach` (stage 1),
   and `workflow-build` (stage 2)
-- **Scenario skills:** `workflow-approval` (approval with expiry and escalation)
-  and `workflow-webhook` (webhook ingestion with duplicate handling)
+- **Scenario skills:** `workflow-approval` (approval with expiry and escalation),
+  `workflow-webhook` (webhook ingestion with duplicate handling),
+  `workflow-saga` (multi-step compensation),
+  `workflow-timeout` (expiry and wake-up correctness),
+  `workflow-idempotency` (replay-safe side effects),
+  and `workflow-observe` (operator streams and terminal signals)
 - **Optional helper:** `workflow-init` (first-time project setup before
   `workflow` is installed as a dependency)
 
