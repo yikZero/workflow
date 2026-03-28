@@ -22,11 +22,10 @@ import {
   writeFileSync,
   mkdirSync,
   existsSync,
-  symlinkSync,
-  lstatSync,
 } from 'node:fs';
-import { dirname, join, resolve, relative } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { ensureFixtureSymlink } from './ensure-workflow-fixture-symlink.mjs';
 
 const VITEST_CONFIG = `import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -172,31 +171,28 @@ if (parsed.route) {
 
 // Create node_modules symlinks so esbuild and vitest resolve workspace
 // packages from fixture dirs (pnpm strict mode doesn't hoist them).
-const fixtureNodeModules = join(fixtureDir, 'node_modules');
-mkdirSync(fixtureNodeModules, { recursive: true });
-
 const symlinks = [
   ['workflow', join(repoRoot, 'packages', 'workflow')],
   [join('@workflow', 'vitest'), join(repoRoot, 'packages', 'vitest')],
 ];
 
-for (const [linkName, target] of symlinks) {
-  const linkPath = join(fixtureNodeModules, linkName);
-  if (!existsSync(linkPath)) {
-    mkdirSync(dirname(linkPath), { recursive: true });
-    symlinkSync(relative(dirname(linkPath), target), linkPath);
-    log('symlink_created', {
-      name,
-      link: `node_modules/${linkName}`,
-      target: target.replace(repoRoot + '/', ''),
-    });
-  }
-}
+const links = symlinks.map(([linkName, targetAbs]) =>
+  ensureFixtureSymlink({
+    name,
+    fixtureDir,
+    repoRoot,
+    linkName,
+    targetAbs,
+    log,
+    fail,
+  })
+);
 
 log('materialize_complete', {
   name,
   fixtureDir: fixtureDir.replace(repoRoot + '/', ''),
   files: writtenFiles,
+  links,
   hasRoute: !!parsed.route,
 });
 
@@ -207,6 +203,7 @@ process.stdout.write(
       name,
       fixtureDir: fixtureDir.replace(repoRoot + '/', ''),
       files: writtenFiles,
+      links,
       verificationArtifact: parsed.verificationArtifact,
     },
     null,
