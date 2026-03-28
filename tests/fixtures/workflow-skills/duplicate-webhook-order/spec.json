@@ -1,0 +1,9 @@
+{
+  "name": "duplicate-webhook-order",
+  "goldenPath": "skills/workflow-webhook/goldens/duplicate-webhook-order.md",
+  "requires": {
+    "workflow": ["createWebhook", "compensation"],
+    "test": ["waitForHook", "resumeWebhook", "new Request("],
+    "verificationHelpers": ["resumeWebhook"]
+  }
+}

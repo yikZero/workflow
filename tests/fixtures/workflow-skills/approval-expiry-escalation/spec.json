@@ -1,0 +1,14 @@
+{
+  "name": "approval-expiry-escalation",
+  "goldenPath": "skills/workflow-approval/goldens/approval-expiry-escalation.md",
+  "requires": {
+    "workflow": ["createHook", "sleep", "Promise.race"],
+    "test": ["waitForHook", "resumeHook", "waitForSleep", "wakeUp"],
+    "verificationHelpers": [
+      "waitForHook",
+      "resumeHook",
+      "waitForSleep",
+      "wakeUp"
+    ]
+  }
+}
