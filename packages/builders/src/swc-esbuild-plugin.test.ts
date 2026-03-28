@@ -46,13 +46,12 @@ describe('createSwcPlugin externalizeNonSteps', () => {
   });
 
   it.each([
-    { inputExt: '.ts', outputExt: '.js' },
-    { inputExt: '.tsx', outputExt: '.js' },
-    { inputExt: '.mts', outputExt: '.mjs' },
-    { inputExt: '.cts', outputExt: '.cjs' },
-  ])('rewrites externalized $inputExt imports to $outputExt', async ({
+    { inputExt: '.ts' },
+    { inputExt: '.tsx' },
+    { inputExt: '.mts' },
+    { inputExt: '.cts' },
+  ])('preserves original $inputExt extension in externalized imports', async ({
     inputExt,
-    outputExt,
   }) => {
     const outdir = join(testRoot, 'out');
     const srcDir = join(testRoot, 'src');
@@ -80,8 +79,8 @@ describe('createSwcPlugin externalizeNonSteps', () => {
 
     expect(result.errors).toHaveLength(0);
     const output = result.outputFiles[0].text;
-    expect(output).toContain(`/dep${outputExt}`);
-    expect(output).not.toContain(`/dep${inputExt}`);
+    // Framework bundlers (Next.js, SvelteKit) resolve the original TS extension
+    expect(output).toContain(`/dep${inputExt}`);
   });
 });
 
