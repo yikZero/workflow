@@ -131,12 +131,11 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               resolvedPath
             ).replace(/\\/g, '/');
 
-            // Rewrite TypeScript extensions to their JS equivalents so the
-            // externalized import is loadable by Node's native ESM loader.
-            externalPath = externalPath
-              .replace(/\.tsx?$/, '.js')
-              .replace(/\.mts$/, '.mjs')
-              .replace(/\.cts$/, '.cjs');
+            // Keep the original TypeScript extension for file path externals.
+            // When externalizeNonSteps is used with bundleFinalOutput: false,
+            // the framework bundler (Next.js, SvelteKit, etc.) resolves these
+            // imports and expects the original .ts/.tsx extension. Rewriting
+            // to .js causes "Module not found" errors in Turbopack/webpack.
           } else {
             externalPath = args.path;
           }
