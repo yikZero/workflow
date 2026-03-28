@@ -4,8 +4,6 @@ import {
   RunExpiredError,
   WorkflowRuntimeError,
 } from '@workflow/errors';
-import { classifyRunError } from './classify-error.js';
-import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
@@ -13,9 +11,11 @@ import {
   WorkflowInvokePayloadSchema,
   type WorkflowRun,
 } from '@workflow/world';
+import { classifyRunError } from './classify-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
+import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
 import {
   getAllWorkflowRunEvents,
   getAllWorkflowRunEventsWithCursor,
@@ -114,6 +114,7 @@ export function workflowEntrypoint(
         traceCarrier: traceContext,
         requestedAt,
         stepId: incomingStepId,
+        runInput,
       } = WorkflowInvokePayloadSchema.parse(message_);
       const { requestId } = metadata;
       const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
@@ -261,27 +262,51 @@ export function workflowEntrypoint(
                   // (the workflow will handle the missing step)
                 }
 
-                // Fetch run state once before the loop. The run_started
-                // transition and status check only matter on the first
-                // iteration; subsequent iterations reuse the cached state.
-                let workflowRun = await world.runs.get(runId);
                 let workflowStartedAt = -1;
+                let workflowRun: WorkflowRun | undefined;
+                // Pre-loaded events from run_started 200 response (first caller optimization)
+                let preloadedEvents: Event[] | undefined;
+
+                // --- Infrastructure: prepare the run state ---
+                // Always call run_started, passing run input from the queue so
+                // the server can create the run if it doesn't exist yet
+                // (resilient start: run_created may have failed during start()).
+                // Network/server errors propagate to the queue handler for retry.
+                // WorkflowRuntimeError (data integrity issues) are fatal and
+                // produce run_failed since retrying won't fix them.
                 try {
-                  if (workflowRun.status === 'pending') {
-                    const result = await world.events.create(
-                      runId,
-                      {
-                        eventType: 'run_started',
-                        specVersion: SPEC_VERSION_CURRENT,
-                      },
-                      { requestId }
+                  const result = await world.events.create(
+                    runId,
+                    {
+                      eventType: 'run_started',
+                      specVersion: SPEC_VERSION_CURRENT,
+                      // Pass run input from queue so server can create
+                      // the run if run_created was missed
+                      ...(runInput
+                        ? {
+                            eventData: {
+                              input: runInput.input,
+                              deploymentId: runInput.deploymentId,
+                              workflowName: runInput.workflowName,
+                              executionContext: runInput.executionContext,
+                            },
+                          }
+                        : {}),
+                    },
+                    { requestId }
+                  );
+                  // 200: now running — use the returned Run entity
+                  if (!result.run) {
+                    throw new WorkflowRuntimeError(
+                      `Event creation for 'run_started' did not return the run entity for run "${runId}"`
                     );
-                    if (!result.run) {
-                      throw new WorkflowRuntimeError(
-                        `Event creation for 'run_started' did not return the run entity for run "${runId}"`
-                      );
-                    }
-                    workflowRun = result.run;
+                  }
+                  workflowRun = result.run;
+
+                  // If the response includes events, use them to skip the
+                  // first events.list call (only on 200, first caller)
+                  if (result.events && result.events.length > 0) {
+                    preloadedEvents = result.events;
                   }
 
                   if (!workflowRun.startedAt) {
@@ -290,16 +315,15 @@ export function workflowEntrypoint(
                     );
                   }
                   workflowStartedAt = +workflowRun.startedAt;
-
-                  if (workflowRun.status !== 'running') {
+                } catch (err) {
+                  if (RunExpiredError.is(err)) {
+                    // 410: already finished — log and exit
                     runtimeLogger.info(
                       'Workflow already completed or failed, skipping',
-                      { workflowRunId: runId, status: workflowRun.status }
+                      { workflowRunId: runId, status: workflowRun?.status }
                     );
                     return;
-                  }
-                } catch (err) {
-                  if (err instanceof WorkflowRuntimeError) {
+                  } else if (err instanceof WorkflowRuntimeError) {
                     runtimeLogger.error(
                       'Fatal runtime error during workflow setup',
                       { workflowRunId: runId, error: err.message }
@@ -329,8 +353,17 @@ export function workflowEntrypoint(
                       throw failErr;
                     }
                     return;
+                  } else {
+                    throw err;
                   }
-                  throw err;
+                }
+
+                // All error paths above return early, so workflowRun is
+                // guaranteed to be set at this point.
+                if (!workflowRun) {
+                  throw new WorkflowRuntimeError(
+                    `Workflow run "${runId}" was not initialized after run_started`
+                  );
                 }
 
                 // Resolve the encryption key once before the loop since
@@ -392,11 +425,20 @@ export function workflowEntrypoint(
                     // final page), so we can reliably use it for incremental loading.
                     let events: Event[];
                     if (cachedEvents === null) {
-                      // First iteration: full load
-                      const loaded =
-                        await getAllWorkflowRunEventsWithCursor(runId);
-                      events = loaded.events;
-                      eventsCursor = loaded.cursor;
+                      if (preloadedEvents) {
+                        // Use pre-loaded events from run_started 200 response
+                        // to skip the initial events.list call (reduces TTFB).
+                        // No cursor available — next iteration will do a full
+                        // reload via the fallback path to obtain a cursor.
+                        events = preloadedEvents;
+                        preloadedEvents = undefined;
+                      } else {
+                        // First iteration: full load
+                        const loaded =
+                          await getAllWorkflowRunEventsWithCursor(runId);
+                        events = loaded.events;
+                        eventsCursor = loaded.cursor;
+                      }
                     } else if (eventsCursor) {
                       // Subsequent iteration: fetch only new events since last cursor
                       const loaded = await getNewWorkflowRunEvents(
@@ -407,13 +449,11 @@ export function workflowEntrypoint(
                       eventsCursor = loaded.cursor ?? eventsCursor;
                       events = cachedEvents;
                     } else {
-                      // No cursor available despite having cached events. This should not
-                      // happen — all World implementations return a cursor when there are
-                      // events. If we hit this, the World has a bug. Fall back to a full
-                      // reload to avoid stale data.
-                      runtimeLogger.error(
-                        'Event cursor missing after initial load — falling back to full reload. ' +
-                          'This indicates a bug in the World implementation.',
+                      // No cursor available — either we used preloaded events on the
+                      // first iteration (expected), or a World implementation bug.
+                      // Fall back to a full reload to obtain a cursor.
+                      runtimeLogger.debug(
+                        'Event cursor missing — falling back to full reload.',
                         { workflowRunId: runId }
                       );
                       const loaded =

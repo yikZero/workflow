@@ -4,7 +4,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   WorkflowRunCancelledError,
   WorkflowRunFailedError,
+  WorkflowWorldError,
 } from '@workflow/errors';
+import type { World } from '@workflow/world';
 import {
   afterAll,
   assert,
@@ -2112,6 +2114,71 @@ describe('e2e', () => {
 
       const { json: runData } = await cliInspectJson(`runs ${run.runId}`);
       expect(runData.status).toBe('completed');
+    }
+  );
+
+  // ============================================================
+  // Resilient start: run completes even when run_created fails
+  // ============================================================
+  test.skipIf(isLocalDeployment())(
+    'resilient start: readableStreamWorkflow completes when run_created returns 500',
+    { timeout: 120_000 },
+    async () => {
+      // Get the real world and wrap it so the first events.create call
+      // (run_created) throws a 500 server error. The queue should still
+      // be dispatched with runInput, and the runtime should bootstrap
+      // the run via the run_started fallback path.
+      const realWorld = getWorld();
+      let createCallCount = 0;
+      const stubbedWorld: World = {
+        ...realWorld,
+        events: {
+          ...realWorld.events,
+          create: (async (...args: Parameters<World['events']['create']>) => {
+            createCallCount++;
+            if (createCallCount === 1) {
+              // Fail the very first call (run_created from start())
+              throw new WorkflowWorldError('Simulated storage outage', {
+                status: 500,
+              });
+            }
+            return realWorld.events.create(...args);
+          }) as World['events']['create'],
+        },
+      };
+
+      const run = await start(await e2e('readableStreamWorkflow'), [], {
+        world: stubbedWorld,
+      });
+
+      // The run should still complete despite run_created failing
+      const returnValue = await run.returnValue;
+      expect(returnValue).toBeInstanceOf(ReadableStream);
+
+      // Verify the stream produces the expected content
+      const expected = '0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n';
+      const decoder = new TextDecoder();
+      let contents = '';
+      const reader = returnValue.getReader();
+      const readDeadline = Date.now() + 60_000;
+      try {
+        while (Date.now() < readDeadline) {
+          const { done, value } = await Promise.race([
+            reader.read(),
+            sleep(30_000).then(() => ({ done: true, value: undefined })),
+          ]);
+          if (value) {
+            contents += decoder.decode(value, { stream: true });
+          }
+          if (done || contents.length >= expected.length) break;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      expect(contents).toBe(expected);
+
+      // Verify the first call was indeed intercepted
+      expect(createCallCount).toBeGreaterThanOrEqual(2);
     }
   );
 });
