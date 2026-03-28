@@ -459,7 +459,9 @@ async function createWorkflowRunEventInner(
     });
 
     return {
-      event: stripEventAndLegacyRefs(wireResult.event, resolveData),
+      event: wireResult.event
+        ? stripEventAndLegacyRefs(wireResult.event, resolveData)
+        : undefined,
       run: wireResult.run,
       step: wireResult.step ? deserializeStep(wireResult.step) : undefined,
       hook: wireResult.hook,
@@ -484,7 +486,9 @@ async function createWorkflowRunEventInner(
   // undefined (lazy ref mode), so deserializeError normalizes it into the
   // StructuredError shape expected by WorkflowRun consumers.
   return {
-    event: stripEventAndLegacyRefs(wireResult.event, resolveData),
+    event: wireResult.event
+      ? stripEventAndLegacyRefs(wireResult.event, resolveData)
+      : undefined,
     run: wireResult.run
       ? deserializeError<WorkflowRun>(wireResult.run)
       : undefined,
