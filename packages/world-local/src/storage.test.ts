@@ -2848,7 +2848,7 @@ describe('Storage', () => {
     });
 
     it('should accept a runId within the threshold', async () => {
-      // 4 minutes ago — within the 5-minute default
+      // 4 minutes ago — within the 24-hour past threshold
       const runId = makeRunId(Date.now() - 4 * 60 * 1000);
       const result = await storage.events.create(runId, runCreatedEvent);
 

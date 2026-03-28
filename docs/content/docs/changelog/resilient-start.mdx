@@ -32,11 +32,12 @@ dispatch so that runs can still be accepted when storage is degraded.
 - We no longer call `world.runs.get` or check the run status before starting.
 - We **always** call `world.events.create` with `run_started`, now also passing the
   run input that was sent through the queue. The response will be:
-  - **200 (now running)**: use the returned `Run` entity as the run. The response also
-    includes an `events` array of all events up to that point (typically `run_created`
-    and `run_started`), with data resolved. These are used to skip the very first
-    `world.events.list` call, reducing TTFB for the first invocation.
-  - **409 (already running)**: fetch the run via `world.runs.get` and proceed.
+  - **200 with event (now running)**: use the returned `Run` entity as the run. The
+    response also includes an `events` array of all events up to that point (typically
+    `run_created` and `run_started`), with data resolved. These are used to skip the
+    very first `world.events.list` call, reducing TTFB for the first invocation.
+  - **200 without event (already running)**: the run entity is returned directly
+    without creating a duplicate event. The runtime proceeds normally.
   - **410 (already finished)**: log and exit as usual.
 
 ### World / workflow-server changes
@@ -46,11 +47,15 @@ dispatch so that runs can still be accepted when storage is degraded.
   1. Creates a `run_created` event first (so the event log is consistent).
   2. Strips the input from the `run_started` event data (it lives on `run_created`).
   3. Then creates the `run_started` event normally.
-  4. Emits a log and Datadog metric to track when this fallback path is hit.
+  4. Emits a log and a Datadog metric (`workflow_server.resilient_start.run_created_via_run_started`)
+     to track when this fallback path is hit.
+- When `run_started` encounters an **already-running** run, all worlds return `{ run }`
+  with `event: undefined` instead of throwing. No duplicate event is created.
 - When posting `run_started` and getting **200**, the response includes an `events`
   property with all events up to that point (data always resolved).
-- The ULID timestamp validation threshold for `run_created` was relaxed from
-  **5 minutes** to **24 hours** so the queue can correctly re-try creation later.
+- ULID timestamp validation now uses **asymmetric thresholds**: 24 hours in the past
+  (to support queue retry delays) and 5 minutes in the future (to prevent abuse while
+  tolerating clock skew).
 
 ## Decisions
 
@@ -67,19 +72,18 @@ dispatch so that runs can still be accepted when storage is degraded.
    On the already-running path, we fall back to the normal `events.list` call. This is
    correct because only on 200 can we be certain we know the full event history.
 
-4. **24-hour ULID threshold**: VQS supports delayed messages up to 24 hours. We match
-   this so a run_created retry can succeed even at the maximum queue delay. The
-   threshold still prevents abuse from manipulated timestamps.
+4. **Asymmetric ULID thresholds**: VQS supports delayed messages up to 24 hours. We
+   allow 24h in the past so a run_created retry can succeed at maximum queue delay, but
+   keep the future threshold at 5 minutes to prevent abuse from manipulated timestamps.
 
 ## Implementation notes
 
 ### Error type mapping for terminal runs
 
 Previously, calling `run_started` on a terminal run threw `InvalidOperationStateError`
-(HTTP 409). This was changed to `EntityGoneError` (HTTP 410) so the runtime correctly
-distinguishes "already running" (409 → fetch and proceed) from "already finished"
-(410 → exit immediately). This required updating integration tests in
-`events-materialization.integration.ts`.
+(HTTP 409) on workflow-server, or `EntityConflictError` on world-local/world-postgres.
+This was changed to `EntityGoneError` (HTTP 410) / `RunExpiredError` so the runtime
+correctly distinguishes "already running" from "already finished" (exit immediately).
 
 ### run_started on already-running runs
 
@@ -100,24 +104,32 @@ resilient start behavior:
 - Stripping eventData from stored `run_started` events
 - Returning the `events` array on successful start
 
+### Asymmetric ULID timestamp validation
+
+Both `@workflow/world` (`validateUlidTimestamp`) and `workflow-server`
+(`Ulid.isTimestampWithinThreshold`) now accept separate past and future thresholds:
+
+- **Past**: 24 hours (`DEFAULT_TIMESTAMP_THRESHOLD_PAST_MS`)
+- **Future**: 5 minutes (`DEFAULT_TIMESTAMP_THRESHOLD_FUTURE_MS`)
+
+The old `DEFAULT_TIMESTAMP_THRESHOLD_MS` constant is deprecated but aliased to the
+past threshold for backwards compatibility.
+
+### Datadog metric
+
+The resilient start fallback path emits a Datadog distribution metric:
+`workflow_server.resilient_start.run_created_via_run_started`, tagged with
+`workflow_name`. Query with `sum:workflow_server.resilient_start.run_created_via_run_started{*}`.
+
 ### RunStartedEventSchema eventData stripping
 
 The run input is passed through to `run_started`'s `eventData` but stripped before
-the event is persisted — the data belongs on the `run_created` event only. The server
-sets `effectiveEventData = undefined` for `run_started` events.
-
-### ULID threshold test updates
-
-Both `workflow-server/test/helpers/ulid.test.ts` and
-`test/api/events.integration.ts` had tests expecting 10-minute-old ULIDs to be
-rejected. These were updated to use 25-hour offsets to match the new 24-hour threshold.
+the event is persisted — the data belongs on the `run_created` event only. All worlds
+strip eventData from stored `run_started` events.
 
 ## Follow-up work
 
 - [ ] Add e2e tests covering the degraded-storage start path against a live deployment.
-- [ ] Monitor the "run_started created run" Datadog metric in production to understand
-  how often the fallback path is hit.
+- [ ] Monitor the Datadog metric in production to understand how often the fallback is hit.
 - [ ] Consider whether the `events` optimization in the 200 response should also apply
   to re-enqueue cycles (currently only first invocation).
-- [ ] Edit run ID validation so that we still allow up to 24 hours in the past, but only up to 5 minutes in the future
-- [ ] Add a Datadog metric for the "run_started → already running (409)" path to track concurrent start frequency, so we can add alerting on it later
