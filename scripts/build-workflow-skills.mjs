@@ -23,6 +23,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import {
+  SCENARIO_SKILLS,
+  summarizeSkillSurface,
+} from './lib/workflow-skill-surface.mjs';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -55,14 +59,7 @@ function log(event, data = {}) {
 
 const REQUIRED_FIELDS = ['name', 'description'];
 const REQUIRED_META = ['author', 'version'];
-const SCENARIO_SKILLS = new Set([
-  'workflow-approval',
-  'workflow-webhook',
-  'workflow-saga',
-  'workflow-timeout',
-  'workflow-idempotency',
-  'workflow-observe',
-]);
+const SCENARIO_SKILLS_SET = new Set(SCENARIO_SKILLS);
 
 function parseFrontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -109,7 +106,7 @@ function validateFrontmatter(fm, skillDir) {
   }
 
   // Scenario skills must have user-invocable and argument-hint
-  if (SCENARIO_SKILLS.has(skillDir)) {
+  if (SCENARIO_SKILLS_SET.has(skillDir)) {
     if (fm['user-invocable'] !== 'true') {
       errors.push(`${skillDir}: scenario skill must set "user-invocable: true"`);
     }
@@ -241,9 +238,12 @@ function main() {
 
   // 1. Discover
   const skills = discoverSkills();
+  const surface = summarizeSkillSurface(skills, PROVIDERS);
   log('skills_discovered', {
-    count: skills.length,
-    names: skills.map((s) => s.dir),
+    count: surface.counts.skills,
+    names: surface.discovered,
+    scenarioCount: surface.counts.scenarios,
+    scenarioNames: surface.scenario,
   });
 
   if (skills.length === 0) {
@@ -287,9 +287,27 @@ function main() {
 
   // 4. Build plan
   const outputs = buildPlan(skills);
+
+  if (outputs.length !== surface.counts.totalOutputs) {
+    log('error', {
+      message: 'Build plan total does not match computed skill surface',
+      expectedTotalOutputs: surface.counts.totalOutputs,
+      actualTotalOutputs: outputs.length,
+      expectedOutputsPerProvider: surface.counts.outputsPerProvider,
+      expectedGoldensPerProvider: surface.counts.goldensPerProvider,
+      expectedInstallDirectories: surface.counts.installDirectories,
+    });
+    process.exit(1);
+  }
+
   log('plan_computed', {
     totalOutputs: outputs.length,
     providers: Object.keys(PROVIDERS),
+    providerCount: surface.counts.providers,
+    skillCount: surface.counts.skills,
+    scenarioCount: surface.counts.scenarios,
+    goldensPerProvider: surface.counts.goldensPerProvider,
+    outputsPerProvider: surface.counts.outputsPerProvider,
   });
 
   // 5. Check mode: emit plan and exit
@@ -297,6 +315,7 @@ function main() {
     const result = {
       ok: true,
       mode: 'check',
+      skillSurface: surface,
       skills: skills.map((s) => ({
         name: s.dir,
         version: s.frontmatter.metadata.version,
@@ -314,14 +333,22 @@ function main() {
       totalOutputs: outputs.length,
     };
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    log('check_complete', { ok: true, totalOutputs: outputs.length });
+    log('check_complete', {
+      ok: true,
+      totalOutputs: outputs.length,
+      scenarioCount: surface.counts.scenarios,
+    });
     process.exit(0);
   }
 
   // 6. Build mode: write files
   const manifest = writeDist(skills, outputs);
+  manifest.skillSurface = surface;
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-  log('build_complete', { totalOutputs: outputs.length });
+  log('build_complete', {
+    totalOutputs: outputs.length,
+    scenarioCount: surface.counts.scenarios,
+  });
 }
 
 main();

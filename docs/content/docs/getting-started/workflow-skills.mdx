@@ -89,7 +89,7 @@ cp -r node_modules/workflow/dist/workflow-skills/claude-code/.claude/skills/* .c
 cp -r node_modules/workflow/dist/workflow-skills/cursor/.cursor/skills/* .cursor/skills/
 ```
 
-After copying, you should see ten skill directories:
+After copying, you should see 10 skill directories:
 
 - **Core skills:** `workflow` (always-on reference), `workflow-teach` (stage 1),
   and `workflow-build` (stage 2)
@@ -318,8 +318,34 @@ Expected output shape:
 
 ```
 {"event":"start","ts":"2026-03-27T16:41:23.035Z","mode":"build"}
-{"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":10}
-{"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":50}
+{"event":"skills_discovered","ts":"2026-03-27T16:41:23.120Z","count":10,"scenarioCount":6}
+{"event":"plan_computed","ts":"2026-03-27T16:41:23.240Z","totalOutputs":50,"providerCount":2,"skillCount":10,"scenarioCount":6,"goldensPerProvider":15,"outputsPerProvider":25}
+```
+
+**Verification commands**
+
+```bash
+node scripts/build-workflow-skills.mjs --check | jq '{skillSurface, totalOutputs}'
+pnpm vitest run workbench/vitest/test/workflow-skill-bundle-parity.test.ts
+pnpm vitest run workbench/vitest/test/workflow-skills-docs-contract.test.ts
+```
+
+Expected summary
+
+```json
+{
+  "skillSurface": {
+    "counts": {
+      "skills": 10,
+      "scenarios": 6,
+      "goldensPerProvider": 15,
+      "providers": 2,
+      "outputsPerProvider": 25,
+      "totalOutputs": 50
+    }
+  },
+  "totalOutputs": 50
+}
 ```
 
 ## Inspect Validation Output

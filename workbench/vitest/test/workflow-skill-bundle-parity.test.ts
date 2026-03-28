@@ -9,9 +9,28 @@ function read(relativePath: string): string {
   return readFileSync(resolve(ROOT, relativePath), 'utf-8');
 }
 
+interface SkillSurface {
+  core: string[];
+  scenario: string[];
+  optional: string[];
+  discovered: string[];
+  counts: {
+    core: number;
+    scenarios: number;
+    optional: number;
+    skills: number;
+    installDirectories: number;
+    goldensPerProvider: number;
+    providers: number;
+    outputsPerProvider: number;
+    totalOutputs: number;
+  };
+}
+
 interface BuildCheckOutput {
   ok: boolean;
   providers: string[];
+  skillSurface: SkillSurface;
   skills: Array<{
     name: string;
     version: string;
@@ -37,14 +56,14 @@ function getBuildPlan(): BuildCheckOutput {
   return JSON.parse(stdout);
 }
 
-const SCENARIO_SKILLS = [
-  'workflow-approval',
-  'workflow-webhook',
-  'workflow-saga',
-  'workflow-timeout',
-  'workflow-idempotency',
-  'workflow-observe',
-] as const;
+let cachedPlan: BuildCheckOutput | undefined;
+function getCachedBuildPlan(): BuildCheckOutput {
+  cachedPlan ??= getBuildPlan();
+  return cachedPlan;
+}
+
+const SCENARIO_SKILLS = getCachedBuildPlan().skillSurface
+  .scenario as readonly string[];
 
 describe('workflow skill bundle parity', () => {
   it('docs and README mention workflow-init iff the source skill exists', () => {
@@ -126,7 +145,7 @@ describe('workflow skill bundle parity', () => {
     // Uses the shared SCENARIO_SKILLS constant defined at module scope
 
     it('build --check succeeds', () => {
-      const plan = getBuildPlan();
+      const plan = getCachedBuildPlan();
 
       console.log(
         JSON.stringify({
@@ -140,15 +159,37 @@ describe('workflow skill bundle parity', () => {
       expect(plan.ok).toBe(true);
     });
 
+    it('build check exposes a self-describing skill surface', () => {
+      const plan = getCachedBuildPlan();
+
+      console.log(
+        JSON.stringify({
+          event: 'skill_surface_summary',
+          core: plan.skillSurface.core,
+          scenario: plan.skillSurface.scenario,
+          optional: plan.skillSurface.optional,
+          counts: plan.skillSurface.counts,
+        })
+      );
+
+      expect(plan.skillSurface.core).toEqual([
+        'workflow',
+        'workflow-teach',
+        'workflow-build',
+      ]);
+      expect(plan.skillSurface.scenario).toContain('workflow-observe');
+      expect(plan.skillSurface.counts.totalOutputs).toBe(plan.totalOutputs);
+    });
+
     it('build plan lists all currently supported providers', () => {
-      const plan = getBuildPlan();
+      const plan = getCachedBuildPlan();
       expect(plan.providers).toContain('claude-code');
       expect(plan.providers).toContain('cursor');
       expect(plan.providers.length).toBeGreaterThanOrEqual(2);
     });
 
     it('every provider bundle includes every scenario skill', () => {
-      const plan = getBuildPlan();
+      const plan = getCachedBuildPlan();
 
       for (const provider of plan.providers) {
         const providerSkills = plan.outputs
@@ -174,7 +215,7 @@ describe('workflow skill bundle parity', () => {
     });
 
     it('every provider bundle includes scenario goldens', () => {
-      const plan = getBuildPlan();
+      const plan = getCachedBuildPlan();
 
       for (const provider of plan.providers) {
         const providerGoldens = plan.outputs
@@ -200,7 +241,7 @@ describe('workflow skill bundle parity', () => {
     });
 
     it('scenario skills in build plan match source skills directory', () => {
-      const plan = getBuildPlan();
+      const plan = getCachedBuildPlan();
       const planSkillNames = plan.skills.map((s) => s.name);
 
       for (const scenario of SCENARIO_SKILLS) {

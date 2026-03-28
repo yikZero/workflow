@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +7,59 @@ const ROOT = resolve(import.meta.dirname, '..', '..', '..');
 
 function read(relativePath: string): string {
   return readFileSync(resolve(ROOT, relativePath), 'utf-8');
+}
+
+interface SkillSurface {
+  core: string[];
+  scenario: string[];
+  optional: string[];
+  discovered: string[];
+  counts: {
+    core: number;
+    scenarios: number;
+    optional: number;
+    skills: number;
+    installDirectories: number;
+    goldensPerProvider: number;
+    providers: number;
+    outputsPerProvider: number;
+    totalOutputs: number;
+  };
+}
+
+interface BuildCheckOutput {
+  ok: boolean;
+  providers: string[];
+  skillSurface: SkillSurface;
+  skills: Array<{
+    name: string;
+    version: string;
+    goldens: number;
+    checksum: string;
+  }>;
+  outputs: Array<{
+    provider: string;
+    skill: string;
+    dest: string;
+    checksum: string;
+    type?: string;
+  }>;
+  totalOutputs: number;
+}
+
+function getBuildPlan(): BuildCheckOutput {
+  const stdout = execSync('node scripts/build-workflow-skills.mjs --check', {
+    cwd: ROOT,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  return JSON.parse(stdout);
+}
+
+let cachedPlan: BuildCheckOutput | undefined;
+function getCachedBuildPlan(): BuildCheckOutput {
+  cachedPlan ??= getBuildPlan();
+  return cachedPlan;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +357,10 @@ describe('workflow skills docs contract surfaces', () => {
       const docs = read(
         'docs/content/docs/getting-started/workflow-skills.mdx'
       );
-      expect(docs).toContain('ten skill directories');
+      const plan = getCachedBuildPlan();
+      expect(docs).toContain(
+        `After copying, you should see ${plan.skillSurface.counts.installDirectories} skill directories:`
+      );
     });
   });
 
@@ -311,47 +368,55 @@ describe('workflow skills docs contract surfaces', () => {
   // Scenario surface: all six scenario skills in docs, install, and README
   // -----------------------------------------------------------------------
   describe('scenario surface is explicit', () => {
-    const SCENARIO_COMMANDS = [
-      '/workflow-approval',
-      '/workflow-webhook',
-      '/workflow-saga',
-      '/workflow-timeout',
-      '/workflow-idempotency',
-      '/workflow-observe',
-    ] as const;
-
-    it('getting-started doc lists all six scenario commands', () => {
+    it('getting-started doc lists every current scenario command from the build plan', () => {
       const docs = read(
         'docs/content/docs/getting-started/workflow-skills.mdx'
       );
-      for (const command of SCENARIO_COMMANDS) {
-        expect(docs).toContain(command);
+      const plan = getCachedBuildPlan();
+
+      console.log(
+        JSON.stringify({
+          event: 'docs_expected_surface',
+          scenarios: plan.skillSurface.scenario,
+          installDirectories: plan.skillSurface.counts.installDirectories,
+          totalOutputs: plan.totalOutputs,
+        })
+      );
+
+      for (const skill of plan.skillSurface.scenario) {
+        expect(docs).toContain(`/${skill}`);
       }
     });
 
-    it('getting-started install section reflects the expanded bundle surface', () => {
+    it('install section reports the current install-directory count', () => {
       const docs = read(
         'docs/content/docs/getting-started/workflow-skills.mdx'
       );
+      const plan = getCachedBuildPlan();
       expect(docs).toContain(
-        'After copying, you should see ten skill directories:'
+        `After copying, you should see ${plan.skillSurface.counts.installDirectories} skill directories:`
       );
-      expect(docs).toContain('`workflow-saga`');
-      expect(docs).toContain('`workflow-timeout`');
-      expect(docs).toContain('`workflow-idempotency`');
-      expect(docs).toContain('`workflow-observe`');
+    });
+
+    it('build-output example matches the live build plan', () => {
+      const docs = read(
+        'docs/content/docs/getting-started/workflow-skills.mdx'
+      );
+      const plan = getCachedBuildPlan();
+      expect(docs).toMatch(
+        new RegExp(`"totalOutputs"\\s*:\\s*${plan.totalOutputs}`)
+      );
+      expect(docs).toMatch(
+        new RegExp(
+          `"count"\\s*:\\s*${plan.skillSurface.counts.installDirectories}`
+        )
+      );
     });
 
     it('README lists every scenario entrypoint and golden family', () => {
       const readme = read('skills/README.md');
-      for (const skill of [
-        'workflow-approval',
-        'workflow-webhook',
-        'workflow-saga',
-        'workflow-timeout',
-        'workflow-idempotency',
-        'workflow-observe',
-      ] as const) {
+      const plan = getCachedBuildPlan();
+      for (const skill of plan.skillSurface.scenario) {
         expect(readme).toContain(`\`${skill}\``);
       }
       expect(readme).toContain('### `workflow-saga/goldens/`');
@@ -364,14 +429,17 @@ describe('workflow skills docs contract surfaces', () => {
       const docs = read(
         'docs/content/docs/getting-started/workflow-skills.mdx'
       );
+      const plan = getCachedBuildPlan();
       // The "totalOutputs" in the manifest summary and the plan_computed event must match
       const manifestMatch = docs.match(/"totalOutputs":\s*(\d+)/g);
       expect(manifestMatch).not.toBeNull();
       const values = manifestMatch!.map((m) => m.match(/\d+/)![0]);
       // All totalOutputs references should be the same number
       expect(new Set(values).size).toBe(1);
-      // The skills_discovered count should match "ten skill directories"
-      expect(docs).toContain('"count":10');
+      // The skills_discovered count should match the live build plan
+      expect(docs).toContain(
+        `"count":${plan.skillSurface.counts.installDirectories}`
+      );
     });
   });
 
