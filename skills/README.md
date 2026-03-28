@@ -3,7 +3,22 @@
 Installable skills that guide users through creating durable workflows.
 Inspired by [Impeccable](https://github.com/pbakaus/impeccable)'s teach-then-build model.
 
-## Two-skill workflow
+## Quick start: Scenario commands
+
+If you know what kind of workflow you need, start with a scenario command:
+
+| Command | What it builds |
+|---------|---------------|
+| `/workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
+| `/workflow-webhook` | External webhook ingestion with duplicate handling and compensation |
+
+Scenario commands reuse `.workflow.md` when present and fall back to a focused
+context capture when not. They apply domain-specific guardrails and terminate
+with the same `verification_plan_ready` contract as `/workflow-build`.
+
+For workflows that don't fit a scenario command, use the manual two-stage loop below.
+
+## Two-skill workflow (manual path)
 
 | Stage | Skill | Purpose |
 |-------|-------|---------|
@@ -65,6 +80,17 @@ Each `SKILL.md` must begin with YAML frontmatter containing:
 | `workflow-teach`   | Stage 1 — capture project context into `.workflow.md` |
 | `workflow-build`   | Stage 2 — build workflow code guided by context  |
 
+### Scenario entrypoints (problem-first)
+
+| Skill              | Purpose                                         |
+|--------------------|-------------------------------------------------|
+| `workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
+| `workflow-webhook`  | External webhook ingestion with duplicate handling and compensation |
+
+Scenario skills are user-invocable shortcuts that route into the teach → build
+pipeline with domain-specific guardrails. They reuse `.workflow.md` when present
+and fall back to a focused context capture when not.
+
 ### Optional helpers
 
 | Skill              | Purpose                                         |
@@ -99,6 +125,18 @@ approval escalation, duplicate webhooks, observability streams, partial compensa
 Trap-catching demonstrations showing what the build skill flags and the correct
 TypeScript code it produces: compensation sagas, child workflow handoffs,
 rate-limit retry classification, approval timeout streaming, multi-event hook loops.
+
+### `workflow-approval/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for approval workflows.
+
+### `workflow-webhook/goldens/`
+
+End-to-end scenario demonstrations showing the full user-invocable path from
+prompt → context capture → design constraints → generated code/tests →
+verification summary for webhook ingestion workflows.
 
 ## Validation
 

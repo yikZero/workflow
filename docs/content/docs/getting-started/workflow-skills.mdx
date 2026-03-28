@@ -12,8 +12,26 @@ related:
 ---
 
 Workflow skills are AI-assisted commands that guide you through creating durable
-workflows. The two-stage loop captures your project context once, then uses it
-to build correct workflows interactively.
+workflows. Start from a specific problem with a scenario command, or use the
+two-stage loop to capture your project context once and build correct workflows
+interactively.
+
+## Scenario Commands: Start from What You're Building
+
+If you know what kind of workflow you need, start here:
+
+| Command | What it builds |
+|---------|---------------|
+| `/workflow-approval` | Approval with expiry, escalation, and deterministic hooks |
+| `/workflow-webhook` | External webhook ingestion with duplicate handling and compensation |
+
+Scenario commands reuse `.workflow.md` when present and fall back to a focused
+context capture when not. They apply domain-specific guardrails and terminate
+with the same `verification_plan_ready` contract as `/workflow-build`.
+
+## The Manual Path: Teach, Then Build
+
+For workflows that don't fit a scenario command, use the two-stage loop:
 
 <Callout>
   Workflow skills require an AI coding assistant that supports user-invocable
@@ -21,7 +39,7 @@ to build correct workflows interactively.
   [Cursor](https://cursor.com).
 </Callout>
 
-## Two-Stage Loop: Teach, Then Build
+### Two-Stage Loop: Teach, Then Build
 
 | Stage | Command | Purpose | Output |
 |-------|---------|---------|--------|

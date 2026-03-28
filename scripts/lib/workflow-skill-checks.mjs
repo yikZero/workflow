@@ -301,9 +301,217 @@ export const buildGoldenChecks = [
 ];
 
 // ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-approval
+// ---------------------------------------------------------------------------
+
+export const approvalChecks = [
+  {
+    ruleId: 'skill.workflow-approval',
+    file: 'skills/workflow-approval/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'approval',
+      'createHook',
+      'sleep',
+      'escalation',
+      'deterministic',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-approval.context-capture',
+    file: 'skills/workflow-approval/SKILL.md',
+    mustInclude: [
+      'Approval actors',
+      'Timeout/expiry rules',
+      'Hook token strategy',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-approval.required-constraints',
+    file: 'skills/workflow-approval/SKILL.md',
+    mustInclude: [
+      'Deterministic hook tokens',
+      'Expiry via `sleep()`',
+      'Escalation behavior',
+      'Promise.race',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-approval.test-coverage',
+    file: 'skills/workflow-approval/SKILL.md',
+    mustInclude: [
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario skill checks: workflow-webhook
+// ---------------------------------------------------------------------------
+
+export const webhookChecks = [
+  {
+    ruleId: 'skill.workflow-webhook',
+    file: 'skills/workflow-webhook/SKILL.md',
+    mustInclude: [
+      'user-invocable: true',
+      'argument-hint:',
+      '.workflow.md',
+      'webhook',
+      'duplicate',
+      'idempotency',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-webhook.context-capture',
+    file: 'skills/workflow-webhook/SKILL.md',
+    mustInclude: [
+      'Webhook source',
+      'Duplicate handling',
+      'Idempotency strategy',
+      'Response timeout',
+      'Compensation requirements',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-webhook.required-constraints',
+    file: 'skills/workflow-webhook/SKILL.md',
+    mustInclude: [
+      'Duplicate-delivery handling',
+      'Stable idempotency keys',
+      'Webhook response mode',
+      'static',
+      'manual',
+      'Compensation when downstream steps fail',
+    ],
+  },
+  {
+    ruleId: 'skill.workflow-webhook.test-coverage',
+    file: 'skills/workflow-webhook/SKILL.md',
+    mustInclude: [
+      'Happy path',
+      'Duplicate webhook',
+      'Compensation path',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Scenario golden checks
+// ---------------------------------------------------------------------------
+
+export const approvalGoldenChecks = [
+  {
+    ruleId: 'golden.approval.approval-expiry-escalation',
+    file: 'skills/workflow-approval/goldens/approval-expiry-escalation.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'createHook',
+      'sleep',
+      'escalation',
+      'waitForHook',
+      'resumeHook',
+      'waitForSleep',
+      'wakeUp',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+  },
+];
+
+export const webhookGoldenChecks = [
+  {
+    ruleId: 'golden.webhook.duplicate-webhook-order',
+    file: 'skills/workflow-webhook/goldens/duplicate-webhook-order.md',
+    mustInclude: [
+      '## Context Capture',
+      '## What the Scenario Skill Should Catch',
+      '### Phase 2',
+      '### Phase 3',
+      '## Expected Code Output',
+      '## Expected Test Output',
+      '"use step"',
+      'duplicate',
+      'idempotency',
+      'compensation',
+      'refund',
+      '## Verification Artifact',
+      '### Verification Summary',
+      'verification_plan_ready',
+    ],
+    mustNotInclude: [
+      '.workflow-skills/',
+      'WorkflowBlueprint',
+    ],
+    jsonFence: {
+      language: 'json',
+      requiredKeys: [
+        'contractVersion',
+        'blueprintName',
+        'files',
+        'testMatrix',
+        'runtimeCommands',
+        'implementationNotes',
+      ],
+      nonEmptyKeys: ['files', 'testMatrix', 'runtimeCommands'],
+    },
+    sectionHeading: '## Verification Artifact',
+    mustIncludeWithinSection: [
+      'testMatrix',
+      'runtimeCommands',
+      'implementationNotes',
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Aggregated check lists
 // ---------------------------------------------------------------------------
 
-export const checks = [...teachChecks, ...buildChecks];
+export const checks = [...teachChecks, ...buildChecks, ...approvalChecks, ...webhookChecks];
 
-export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks];
+export const allGoldenChecks = [...teachGoldenChecks, ...buildGoldenChecks, ...approvalGoldenChecks, ...webhookGoldenChecks];

@@ -605,7 +605,7 @@ describe('live validation against actual skill files', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('total check count is 17', () => {
-    expect(allChecksFlat.length).toBe(17);
+  it('total check count is 27', () => {
+    expect(allChecksFlat.length).toBe(27);
   });
 });
