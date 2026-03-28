@@ -103,6 +103,7 @@ For workflows with encrypted step data, decrypt before hydrating.
 
 Retrieve the encryption key used for a specific workflow run.
 
+{/* @expect-error:2305 */}
 ```typescript lineNumbers
 import { getEncryptionKeyForRun } from "workflow/observability"; // [!code highlight]
 
@@ -121,6 +122,7 @@ const key = await getEncryptionKeyForRun(runId); // [!code highlight]
 
 Hydrate step or run data using a decryption key. Use this instead of `hydrateResourceIO()` when data is encrypted.
 
+{/* @expect-error:2305,2724 */}
 ```typescript lineNumbers
 import { getEncryptionKeyForRun, hydrateResourceIOWithKey } from "workflow/observability"; // [!code highlight]
 
@@ -176,6 +178,7 @@ export async function GET(req: Request) {
 
 For teams with encryption enabled, step data must be decrypted before hydration:
 
+{/* @expect-error:2305,2724 */}
 ```typescript lineNumbers
 import { getWorld } from "workflow/runtime";
 import { // [!code highlight]
