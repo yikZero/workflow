@@ -243,9 +243,20 @@ export class Run<TResult> {
    * @returns The workflow return value.
    */
   private async pollReturnValue(): Promise<TResult> {
+    // Track not-found retries separately: when run_created fails and the
+    // resilient start path hasn't created the run yet, runs.get throws
+    // WorkflowRunNotFoundError. We retry up to 3 times with back-off
+    // (1s, 3s, 6s = 10s total) to give the queue time to deliver.
+    let notFoundRetries = 0;
+    const NOT_FOUND_MAX_RETRIES = 3;
+    const NOT_FOUND_DELAYS = [1_000, 3_000, 6_000];
+
     while (true) {
       try {
         const run = await this.world.runs.get(this.runId);
+
+        // Run exists — reset not-found counter
+        notFoundRetries = 0;
 
         if (run.status === 'completed') {
           const encryptionKey = await this.getEncryptionKey();
@@ -268,6 +279,15 @@ export class Run<TResult> {
       } catch (error) {
         if (WorkflowRunNotCompletedError.is(error)) {
           await new Promise((resolve) => setTimeout(resolve, 1_000));
+          continue;
+        }
+        if (
+          WorkflowRunNotFoundError.is(error) &&
+          notFoundRetries < NOT_FOUND_MAX_RETRIES
+        ) {
+          const delay = NOT_FOUND_DELAYS[notFoundRetries]!;
+          notFoundRetries++;
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
         throw error;

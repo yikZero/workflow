@@ -2197,12 +2197,17 @@ describe('e2e', () => {
         world: stubbedWorld,
       });
 
-      // The run should still complete despite run_created failing
+      // Verify the stub intercepted the run_created call (only call
+      // through the stubbed world — the server-side runtime uses its
+      // own world instance for run_started and subsequent events).
+      expect(createCallCount).toBe(1);
+
+      // The run should still complete despite run_created failing.
+      // The runtime's resilient start path creates the run from
+      // run_started, so returnValue polling may initially get
+      // WorkflowRunNotFoundError before the queue delivers.
       const returnValue = await run.returnValue;
       expect(returnValue).toBe(133);
-
-      // Verify the first call was indeed intercepted
-      expect(createCallCount).toBeGreaterThanOrEqual(2);
     }
   );
 });

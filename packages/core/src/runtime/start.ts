@@ -1,5 +1,6 @@
 import { waitUntil } from '@vercel/functions';
 import {
+  EntityConflictError,
   ThrottleError,
   WorkflowRuntimeError,
   WorkflowWorldError,
@@ -217,10 +218,15 @@ export async function start<TArgs extends unknown[], TResult>(
       // Handle events.create result
       if (runCreatedResult.status === 'rejected') {
         const err = runCreatedResult.reason;
-        // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
-        // are retryable — the run was accepted via the queue and creation
-        // will be re-tried by the runtime when it calls run_started.
-        if (isRetryableStartError(err)) {
+        if (EntityConflictError.is(err)) {
+          // 409: The run already exists. This can happen in extreme cases where
+          // the run creation call gets a cold start or other slowdown, and the queue
+          // + run_started call completes faster. We expect this to be <=1% of cases.
+          // In this case, we can safely return.
+        } else if (isRetryableStartError(err)) {
+          // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
+          // are retryable — the run was accepted via the queue and creation
+          // will be re-tried by the runtime when it calls run_started.
           runtimeLogger.warn(
             'Run creation event failed, but the run was accepted via the queue. ' +
               'The run_created event will be re-tried async by the runtime.',
