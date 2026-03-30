@@ -61,8 +61,7 @@ function httpLog(
  *
  * Example: 'https://workflow-server-git-branch-name.vercel.sh'
  */
-const WORKFLOW_SERVER_URL_OVERRIDE =
-  'https://workflow-server-git-peter-allow-start-new-run-directly.vercel.sh';
+const WORKFLOW_SERVER_URL_OVERRIDE = '';
 
 export interface APIConfig {
   token?: string;
