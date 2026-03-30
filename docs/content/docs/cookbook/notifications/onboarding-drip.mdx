@@ -1,0 +1,139 @@
+---
+title: Onboarding Drip
+description: Time-delayed sequence with durable waits between steps.
+type: guide
+summary: Send a welcome email on signup, a tips email after 2 days, and a check-in after a week.
+---
+
+Send a welcome email on signup, a tips email after 2 days, and a check-in after a week.
+
+## Pattern
+
+The workflow sends emails at scheduled intervals using `sleep()` between each step. Because `sleep()` is durable, the workflow survives cold starts and restarts — even across days or weeks of waiting.
+
+### Simplified
+
+```typescript lineNumbers
+import { sleep } from "workflow";
+
+declare function sendEmail(email: string, template: string): Promise<void>; // @setup
+
+export async function onboardingDrip(email: string) {
+  "use workflow";
+
+  await sendEmail(email, "welcome");
+
+  await sleep("1d");
+  await sendEmail(email, "getting-started-tips");
+
+  await sleep("2d");
+  await sendEmail(email, "feature-highlights");
+
+  await sleep("4d");
+  await sendEmail(email, "follow-up");
+
+  return { email, status: "completed", totalDays: 7 };
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+import { getWritable, sleep } from "workflow";
+
+export type DripEvent =
+  | { type: "email_sending"; day: number; label: string }
+  | { type: "email_sent"; day: number; label: string }
+  | { type: "sleeping"; duration: string; fromDay: number; toDay: number }
+  | { type: "done" };
+
+const SEND_DELAY_MS = 600;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function runOnboardingDrip(email: string) {
+  "use workflow";
+
+  // Day 0: Welcome email
+  await sendWelcomeEmail(email);
+
+  // Day 1: Getting started tips
+  await sleep("1d");
+  await sendGettingStartedEmail(email);
+
+  // Day 3: Feature highlights
+  await sleep("2d");
+  await sendFeatureHighlightsEmail(email);
+
+  // Day 7: Follow-up
+  await sleep("4d");
+  await sendFollowUpEmail(email);
+
+  return { email, status: "completed", totalDays: 7 };
+}
+
+async function sendWelcomeEmail(email: string) {
+  "use step";
+  const writer = getWritable<DripEvent>().getWriter();
+  try {
+    await writer.write({ type: "email_sending", day: 0, label: "Welcome Email" });
+    await delay(SEND_DELAY_MS);
+    await writer.write({ type: "email_sent", day: 0, label: "Welcome Email" });
+    await writer.write({ type: "sleeping", duration: "1d", fromDay: 0, toDay: 1 });
+    return { sent: true, day: 0 };
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function sendGettingStartedEmail(email: string) {
+  "use step";
+  const writer = getWritable<DripEvent>().getWriter();
+  try {
+    await writer.write({ type: "email_sending", day: 1, label: "Getting Started Tips" });
+    await delay(SEND_DELAY_MS);
+    await writer.write({ type: "email_sent", day: 1, label: "Getting Started Tips" });
+    await writer.write({ type: "sleeping", duration: "2d", fromDay: 1, toDay: 3 });
+    return { sent: true, day: 1 };
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function sendFeatureHighlightsEmail(email: string) {
+  "use step";
+  const writer = getWritable<DripEvent>().getWriter();
+  try {
+    await writer.write({ type: "email_sending", day: 3, label: "Feature Highlights" });
+    await delay(SEND_DELAY_MS);
+    await writer.write({ type: "email_sent", day: 3, label: "Feature Highlights" });
+    await writer.write({ type: "sleeping", duration: "4d", fromDay: 3, toDay: 7 });
+    return { sent: true, day: 3 };
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function sendFollowUpEmail(email: string) {
+  "use step";
+  const writer = getWritable<DripEvent>().getWriter();
+  try {
+    await writer.write({ type: "email_sending", day: 7, label: "Follow-up & Feedback" });
+    await delay(SEND_DELAY_MS);
+    await writer.write({ type: "email_sent", day: 7, label: "Follow-up & Feedback" });
+    await writer.write({ type: "done" });
+    return { sent: true, day: 7 };
+  } finally {
+    writer.releaseLock();
+  }
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/foundations/workflows-and-steps) — marks the orchestrator function
+- [`"use step"`](/docs/foundations/workflows-and-steps) — marks functions that run with full Node.js access
+- [`sleep()`](/docs/api-reference/workflow/sleep) — durable wait between drip emails (days/weeks)
+- [`getWritable()`](/docs/api-reference/step/get-writable) — streams events to the caller

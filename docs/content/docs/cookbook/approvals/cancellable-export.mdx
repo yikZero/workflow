@@ -1,0 +1,127 @@
+---
+title: Cancellable Export
+description: Long-running job that the user can cancel while steps are in flight.
+type: guide
+summary: User starts a 100k-row data export and hits Cancel mid-flight without waiting for completion.
+---
+
+Use this pattern when a long-running job should be cancellable by the user at any point. Each step in the loop acts as a cancellation checkpoint -- when `run.cancel()` is called, the workflow stops between steps.
+
+## Pattern
+
+The workflow iterates through sections of work, with each iteration awaiting a step. Between steps, the runtime checks for cancellation. If `run.cancel()` was called, the workflow terminates gracefully without executing further steps. No special cancellation logic is needed in the workflow code itself.
+
+### Simplified
+
+```typescript lineNumbers
+declare function generateSection(index: number, title: string): Promise<{ title: string; status: string }>; // @setup
+
+const SECTIONS = [
+  "Introduction", "Market Analysis", "Technical Architecture",
+  "Implementation Plan", "Risk Assessment", "Financial Projections",
+  "Timeline", "Team Structure", "Competitive Landscape", "Conclusion",
+];
+
+export async function generateReport(accountId: string) {
+  "use workflow";
+
+  // Each await is a cancellation checkpoint —
+  // run.cancel() takes effect between steps.
+  const sections = [];
+
+  for (let i = 0; i < SECTIONS.length; i++) {
+    const result = await generateSection(i, SECTIONS[i]);
+    sections.push(result);
+  }
+
+  return { accountId, sections, status: "completed" };
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+import { getWritable } from "workflow";
+
+export type SectionEvent =
+  | { type: "section_start"; index: number; title: string }
+  | { type: "section_done"; index: number; title: string }
+  | { type: "complete"; total: number }
+  | { type: "cancelled"; completedCount: number; total: number };
+
+const SECTION_DELAY_MS = 500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const SECTION_TITLES = [
+  "Introduction",
+  "Market Analysis",
+  "Technical Architecture",
+  "Implementation Plan",
+  "Risk Assessment",
+  "Financial Projections",
+  "Timeline",
+  "Team Structure",
+  "Competitive Landscape",
+  "Conclusion",
+];
+
+export async function generateReport(
+  accountId: string,
+  systemPrompt: string
+) {
+  "use workflow";
+
+  // Each await is a cancellation checkpoint —
+  // run.cancel() takes effect between steps.
+  const sections: { title: string; status: string }[] = [];
+
+  for (let i = 0; i < SECTION_TITLES.length; i++) {
+    const title = SECTION_TITLES[i];
+    const result = await generateSection(i, title, sections[i - 1]?.title);
+    sections.push(result);
+  }
+
+  await emitDone(sections.length);
+
+  return { accountId, sections, status: "completed" };
+}
+
+async function emitDone(total: number) {
+  "use step";
+  const writer = getWritable<SectionEvent>().getWriter();
+  try {
+    await writer.write({ type: "complete", total });
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+emitDone.maxRetries = 0;
+
+async function generateSection(
+  index: number,
+  title: string,
+  previousTitle?: string
+) {
+  "use step";
+
+  const writer = getWritable<SectionEvent>().getWriter();
+  try {
+    await writer.write({ type: "section_start", index, title });
+    await delay(SECTION_DELAY_MS);
+    await writer.write({ type: "section_done", index, title });
+    return { title, previous: previousTitle, status: "generated" };
+  } finally {
+    writer.releaseLock();
+  }
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
+- [`"use step"`](/docs/api-reference/workflow/use-step) — each step is a cancellation checkpoint
+- [`getWritable()`](/docs/api-reference/workflow/get-writable) — streams section progress to the client

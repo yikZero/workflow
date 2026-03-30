@@ -1,0 +1,163 @@
+---
+title: Transactional Outbox
+description: Write business data and an outbox event in one transaction, then publish reliably.
+type: guide
+summary: Persist an order and relay it to a message broker in one transaction for at-least-once delivery.
+---
+
+Use the transactional outbox pattern when you need to write business data and publish an event atomically. The workflow persists the order and an outbox record together, then a relay step polls the outbox and publishes to the broker.
+
+## Pattern
+
+The workflow splits the operation into four durable steps: persist the order with an outbox entry, poll and relay the outbox entry, publish to the broker, and mark the outbox entry as sent. Because each step is persisted in the event log, the relay will resume after any crash, guaranteeing at-least-once delivery.
+
+### Simplified
+
+```typescript lineNumbers
+declare function persistOrder(orderId: string, payload: string): Promise<{ outboxId: string }>; // @setup
+declare function pollRelay(outboxId: string): Promise<{ brokerId: string }>; // @setup
+declare function publishEvent(outboxId: string, brokerId: string): Promise<void>; // @setup
+declare function markSent(orderId: string, outboxId: string, brokerId: string): Promise<{ status: string }>; // @setup
+
+export async function transactionalOutbox(orderId: string, payload: string) {
+  "use workflow";
+
+  // Step 1: Persist order + outbox entry in one transaction
+  const { outboxId } = await persistOrder(orderId, payload);
+
+  // Step 2: Relay polls outbox for unsent entries
+  const { brokerId } = await pollRelay(outboxId);
+
+  // Step 3: Publish to message broker
+  await publishEvent(outboxId, brokerId);
+
+  // Step 4: Mark outbox entry as sent
+  return markSent(orderId, outboxId, brokerId);
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+// getWritable is used here to stream demo UI events.
+// A production workflow wouldn't need these unless it has its own streaming UI.
+import { getWritable } from "workflow";
+
+export type OutboxEvent =
+  | { type: "persisting"; orderId: string }
+  | { type: "persisted"; orderId: string; outboxId: string }
+  | { type: "relaying"; outboxId: string }
+  | { type: "published"; outboxId: string; brokerId: string }
+  | { type: "marking_sent"; outboxId: string }
+  | { type: "confirmed"; outboxId: string }
+  | { type: "done"; orderId: string; outboxId: string; brokerId: string };
+
+type OutboxResult = {
+  orderId: string;
+  outboxId: string;
+  brokerId: string;
+  status: "confirmed";
+};
+
+// Demo: simulate real-world processing latency so the UI can show progress.
+const PERSIST_DELAY_MS = 600;
+const RELAY_DELAY_MS = 800;
+const PUBLISH_DELAY_MS = 700;
+const MARK_SENT_DELAY_MS = 400;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function transactionalOutbox(
+  orderId: string,
+  payload: string
+): Promise<OutboxResult> {
+  "use workflow";
+
+  const { outboxId } = await persistOrder(orderId, payload);
+  const { brokerId } = await pollRelay(outboxId);
+  await publishEvent(outboxId, brokerId);
+  return markSent(orderId, outboxId, brokerId);
+}
+
+async function persistOrder(
+  orderId: string,
+  payload: string
+): Promise<{ outboxId: string }> {
+  "use step";
+  const writer = getWritable<OutboxEvent>().getWriter();
+
+  try {
+    await writer.write({ type: "persisting", orderId });
+    await delay(PERSIST_DELAY_MS);
+
+    const outboxId = `obx_${orderId}_${payload.length}`;
+    await writer.write({ type: "persisted", orderId, outboxId });
+
+    return { outboxId };
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function pollRelay(
+  outboxId: string
+): Promise<{ brokerId: string }> {
+  "use step";
+  const writer = getWritable<OutboxEvent>().getWriter();
+
+  try {
+    await writer.write({ type: "relaying", outboxId });
+    await delay(RELAY_DELAY_MS);
+
+    const brokerId = `brk_${outboxId}_${Date.now()}`;
+    await writer.write({ type: "published", outboxId, brokerId });
+
+    return { brokerId };
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function publishEvent(
+  outboxId: string,
+  brokerId: string
+): Promise<void> {
+  "use step";
+  const writer = getWritable<OutboxEvent>().getWriter();
+
+  try {
+    await writer.write({ type: "marking_sent", outboxId });
+    await delay(PUBLISH_DELAY_MS);
+
+    await writer.write({ type: "confirmed", outboxId });
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function markSent(
+  orderId: string,
+  outboxId: string,
+  brokerId: string
+): Promise<OutboxResult> {
+  "use step";
+  const writer = getWritable<OutboxEvent>().getWriter();
+
+  try {
+    await delay(MARK_SENT_DELAY_MS);
+    await writer.write({ type: "done", orderId, outboxId, brokerId });
+
+    return { orderId, outboxId, brokerId, status: "confirmed" };
+  } finally {
+    writer.releaseLock();
+  }
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
+- [`"use step"`](/docs/api-reference/workflow/use-step) — declares step functions with automatic retry
+- [`getWritable()`](/docs/api-reference/workflow/get-writable) — streams outbox progress to the client

@@ -1,0 +1,137 @@
+---
+title: Webhook Basics
+description: Ingest HTTP webhooks, validate, and drive workflow steps from external systems.
+type: guide
+summary: Accept Stripe or GitHub webhooks, validate signatures, and kick off internal workflow steps.
+---
+
+Accept Stripe or GitHub webhooks, validate signatures, and kick off internal workflow steps. Use this pattern whenever an external system pushes events to your application via HTTP callbacks.
+
+## Pattern
+
+Create a webhook with manual response control, then iterate over incoming requests in a `for await` loop. Each request is processed in its own step, letting you validate, respond, and record the event durably.
+
+### Simplified
+
+```typescript lineNumbers
+import { createWebhook, type RequestWithResponse } from "workflow";
+
+declare function processPaymentEvent(request: RequestWithResponse): Promise<{ type: string }>; // @setup
+
+export async function paymentWebhook(orderId: string) {
+  "use workflow";
+
+  const webhook = createWebhook({ respondWith: "manual" });
+
+  const ledger: { type: string }[] = [];
+
+  for await (const request of webhook) {
+    const entry = await processPaymentEvent(request);
+    ledger.push(entry);
+    if (entry.type === "refund.created" || entry.type === "order.completed") break;
+  }
+
+  return { orderId, ledger, status: "settled" };
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+import { createWebhook, getWritable, type RequestWithResponse } from "workflow";
+
+export type WebhookEvent =
+  | { type: "webhook_ready"; token: string }
+  | { type: "event_received"; eventType: string; amount?: number }
+  | { type: "response_sent"; eventType: string; action: string }
+  | { type: "done"; status: "settled"; ledgerSize: number };
+
+const MAX_EVENTS = 50;
+
+export async function paymentWebhook(orderId: string) {
+  "use workflow";
+
+  const webhook = createWebhook({
+    respondWith: "manual",
+  });
+
+  await emit<WebhookEvent>({ type: "webhook_ready", token: webhook.token });
+
+  const ledger: { type: string; amount?: number; processedAt: string }[] = [];
+
+  for await (const request of webhook) {
+    const entry = await processPaymentEvent(request);
+    ledger.push(entry);
+    if (entry.type === "refund.created" || entry.type === "order.completed") break;
+    if (ledger.length >= MAX_EVENTS) break;
+  }
+
+  await emit<WebhookEvent>({ type: "done", status: "settled", ledgerSize: ledger.length });
+
+  return { orderId, webhookUrl: webhook.url, ledger, status: "settled" as const };
+}
+
+/**
+ * Step: Emit a single event to the UI stream.
+ * Re-acquires the writer inside the step so it survives durable suspension.
+ */
+async function emit<T>(event: T): Promise<void> {
+  "use step";
+  const writer = getWritable<T>().getWriter();
+  try {
+    await writer.write(event);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function processPaymentEvent(
+  request: RequestWithResponse
+) {
+  "use step";
+
+  const writer = getWritable<WebhookEvent>().getWriter();
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const type = body?.type ?? "unknown";
+    const amount = typeof body?.amount === "number" ? body.amount : undefined;
+
+    await writer.write({ type: "event_received", eventType: type, amount });
+
+    let action = "ignored";
+
+    if (type === "payment.created") {
+      action = "received";
+      await request.respondWith(Response.json({ ack: true, action }));
+    } else if (type === "payment.requires_action") {
+      action = "awaiting customer";
+      await request.respondWith(Response.json({ ack: true, action }));
+    } else if (type === "payment.succeeded") {
+      action = "captured";
+      await request.respondWith(Response.json({ ack: true, action }));
+    } else if (type === "payment.failed") {
+      action = "flagged for review";
+      await request.respondWith(Response.json({ ack: true, action }));
+    } else if (type === "refund.created") {
+      action = "refunded";
+      await request.respondWith(Response.json({ ack: true, action }));
+    } else {
+      await request.respondWith(Response.json({ ack: true, action }));
+    }
+
+    await writer.write({ type: "response_sent", eventType: type, action });
+
+    return { type, amount, processedAt: new Date().toISOString() };
+  } finally {
+    writer.releaseLock();
+  }
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/foundations/workflows-and-steps) — marks the orchestrator function
+- [`"use step"`](/docs/foundations/workflows-and-steps) — marks functions with full Node.js access
+- [`createWebhook()`](/docs/api-reference/workflow/create-webhook) — creates an HTTP endpoint the workflow can await
+- [`getWritable()`](/docs/api-reference/workflow/get-writable) — streams events to the client

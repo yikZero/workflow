@@ -1,0 +1,221 @@
+---
+title: Aggregator
+description: Merge many parallel outcomes into one combined result.
+type: guide
+summary: Collect inventory from multiple warehouses with a timeout so stragglers don't block checkout.
+---
+
+Collect inventory from multiple warehouses with a timeout so stragglers don't block checkout. Use this pattern when you need to gather signals from multiple sources and combine them, but cannot wait forever for all of them.
+
+## Pattern
+
+Create one hook per expected source, then race `Promise.all` (all sources responded) against `sleep` (deadline). Whether all signals arrive or the timeout fires first, aggregate whatever data you have into a single result.
+
+### Simplified
+
+```typescript lineNumbers
+import { defineHook, sleep } from "workflow";
+
+export const aggregatorSignal = defineHook<{ source: string; value: number }>();
+
+declare function processBatch(batchId: string, received: Map<string, { source: string; value: number }>): Promise<{ totalValue: number }>; // @setup
+
+const SOURCES = ["warehouse-a", "warehouse-b", "warehouse-c"] as const;
+
+export async function aggregator(batchId: string, timeoutMs: number = 8000) {
+  "use workflow";
+
+  const hooks = SOURCES.map((source) =>
+    aggregatorSignal.create({ token: `${source}:${batchId}` }).then((payload) => ({ source, payload }))
+  );
+
+  const outcome = await Promise.race([
+    Promise.all(hooks).then((results) => ({ type: "ready" as const, results })),
+    sleep(`${timeoutMs}ms`).then(() => ({ type: "timeout" as const, results: [] as { source: string; payload: { source: string; value: number } }[] })),
+  ]);
+
+  const received = new Map(outcome.results.map(({ source, payload }) => [source, payload]));
+  const summary = await processBatch(batchId, received);
+
+  return { batchId, status: outcome.type === "ready" ? "aggregated" : "partial", summary };
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+import { defineHook, getWritable, sleep } from "workflow";
+
+// ---------------------------------------------------------------------------
+// Typed events streamed to the UI via getWritable()
+// ---------------------------------------------------------------------------
+export type AggregatorEvent =
+  | { type: "collecting"; batchId: string; tokens: Record<string, string>; expectedCount: number; timeoutMs: number }
+  | { type: "signal_received"; batchId: string; source: string; value: number; receivedCount: number; expectedCount: number }
+  | { type: "all_collected"; batchId: string }
+  | { type: "timeout"; batchId: string; missing: string[]; received: string[] }
+  | { type: "processing"; batchId: string }
+  | { type: "done"; batchId: string; status: "aggregated" | "partial"; summary: AggregatorSummary };
+
+export type AggregatorSummary = {
+  totalSignals: number;
+  receivedSignals: number;
+  totalValue: number;
+  sources: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Hook definition — each source sends { source, value }
+// ---------------------------------------------------------------------------
+export type SignalPayload = { source: string; value: number };
+
+export const aggregatorSignal = defineHook<SignalPayload>();
+
+const SOURCES = ["warehouse-a", "warehouse-b", "warehouse-c"] as const;
+export type SourceId = (typeof SOURCES)[number];
+
+// ---------------------------------------------------------------------------
+// Workflow: collect N signals with a timeout, then aggregate
+// ---------------------------------------------------------------------------
+export async function aggregator(
+  batchId: string,
+  timeoutMs: number = 8000
+): Promise<{ batchId: string; status: "aggregated" | "partial"; summary: AggregatorSummary }> {
+  "use workflow";
+
+  // Create one hook per source with deterministic tokens
+  const tokens: Record<string, string> = {};
+  const hooks = SOURCES.map((source) => {
+    const token = `${source}:${batchId}`;
+    tokens[source] = token;
+    return { source, hook: aggregatorSignal.create({ token }), token };
+  });
+
+  await emit<AggregatorEvent>({
+    type: "collecting",
+    batchId,
+    tokens,
+    expectedCount: SOURCES.length,
+    timeoutMs,
+  });
+
+  // Track received signals
+  const received = new Map<string, SignalPayload>();
+
+  const signalPromises = hooks.map(({ source, hook }) =>
+    hook.then((payload) => {
+      received.set(source, payload);
+      return { source, payload };
+    })
+  );
+
+  // Race: collect all signals OR timeout
+  const outcome = await Promise.race([
+    Promise.all(signalPromises).then((results) => ({
+      type: "ready" as const,
+      results,
+    })),
+    sleep(`${timeoutMs}ms`).then(() => ({
+      type: "timeout" as const,
+      results: [] as { source: string; payload: SignalPayload }[],
+    })),
+  ]);
+
+  // Snapshot received signals at the timeout boundary so late arrivals
+  // cannot mutate the summary or trigger additional events.
+  const receivedSnapshot = new Map(received);
+
+  // Emit signal_received events for signals that arrived
+  for (const { source, payload } of outcome.results) {
+    await emit<AggregatorEvent>({
+      type: "signal_received",
+      batchId,
+      source,
+      value: payload.value,
+      receivedCount: receivedSnapshot.size,
+      expectedCount: SOURCES.length,
+    });
+  }
+
+  if (outcome.type === "timeout") {
+    const receivedSources = [...receivedSnapshot.keys()];
+    const missing = SOURCES.filter((s) => !receivedSnapshot.has(s));
+
+    // Emit signal_received for signals that arrived before timeout but
+    // were not part of the Promise.all resolution (partial arrivals).
+    for (const [source, payload] of receivedSnapshot) {
+      if (!outcome.results.some((r) => r.source === source)) {
+        await emit<AggregatorEvent>({
+          type: "signal_received",
+          batchId,
+          source,
+          value: payload.value,
+          receivedCount: receivedSnapshot.size,
+          expectedCount: SOURCES.length,
+        });
+      }
+    }
+
+    await emit<AggregatorEvent>({ type: "timeout", batchId, missing, received: receivedSources });
+    const summary = await processBatch(batchId, receivedSnapshot);
+    await emit<AggregatorEvent>({ type: "done", batchId, status: "partial", summary });
+    return { batchId, status: "partial" as const, summary };
+  }
+
+  await emit<AggregatorEvent>({ type: "all_collected", batchId });
+  const summary = await processBatch(batchId, receivedSnapshot);
+  await emit<AggregatorEvent>({ type: "done", batchId, status: "aggregated", summary });
+  return { batchId, status: "aggregated" as const, summary };
+}
+
+// ---------------------------------------------------------------------------
+// Step: emit a single event to the UI stream
+// ---------------------------------------------------------------------------
+async function emit<T>(event: T): Promise<void> {
+  "use step";
+  const writer = getWritable<T>().getWriter();
+  try {
+    await writer.write(event);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step: process collected signals into an aggregated result
+// ---------------------------------------------------------------------------
+async function processBatch(
+  batchId: string,
+  received: ReadonlyMap<string, SignalPayload>
+): Promise<AggregatorSummary> {
+  "use step";
+
+  const writer = getWritable<AggregatorEvent>().getWriter();
+  try {
+    await writer.write({ type: "processing", batchId });
+  } finally {
+    writer.releaseLock();
+  }
+
+  // Simulate processing delay
+  await new Promise((resolve) => setTimeout(resolve, 600));
+
+  const sources = [...received.keys()];
+  const totalValue = [...received.values()].reduce((sum, p) => sum + p.value, 0);
+
+  return {
+    totalSignals: SOURCES.length,
+    receivedSignals: received.size,
+    totalValue,
+    sources,
+  };
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/foundations/workflows-and-steps) — marks the orchestrator function
+- [`"use step"`](/docs/foundations/workflows-and-steps) — marks functions with full Node.js access
+- [`defineHook()`](/docs/api-reference/workflow/define-hook) — creates a named hook that suspends until signaled
+- [`sleep()`](/docs/api-reference/workflow/sleep) — durable timer that survives restarts
+- [`getWritable()`](/docs/api-reference/workflow/get-writable) — streams events to the client

@@ -1,0 +1,107 @@
+---
+title: Claim Check
+description: Pass a small reference through the workflow; store or fetch the heavy payload elsewhere.
+type: guide
+summary: Accept a lightweight token instead of passing a 50 MB file through every workflow step.
+---
+
+Accept a lightweight token instead of passing a 50 MB file through every workflow step. Use this pattern when payloads are too large to serialize into the event log efficiently.
+
+## Pattern
+
+The workflow receives a small identifier (the "claim check") instead of the full payload. A hook suspends execution until the external system signals that the blob is ready, then a step fetches and processes it using the token.
+
+### Simplified
+
+```typescript lineNumbers
+import { defineHook } from "workflow";
+
+export const blobReady = defineHook<{ blobToken: string }>();
+
+declare function processBlob(blobToken: string): Promise<void>; // @setup
+
+export async function claimCheckImport(importId: string) {
+  "use workflow";
+
+  const hookToken = `upload:${importId}`;
+
+  // Suspend until the external system signals the blob is uploaded
+  const { blobToken } = await blobReady.create({ token: hookToken });
+
+  // Process the blob by reference — never pass the full payload
+  await processBlob(blobToken);
+
+  return { importId, blobToken, status: "indexed" };
+}
+```
+
+### Full Implementation
+
+```typescript lineNumbers
+import { defineHook, getWritable } from "workflow";
+
+// Typed events streamed to the UI via getWritable()
+export type ClaimCheckEvent =
+  | { type: "start"; importId: string; hookToken: string }
+  | { type: "waiting"; importId: string; hookToken: string }
+  | { type: "upload_received"; importId: string; blobToken: string }
+  | { type: "processing"; importId: string; blobToken: string }
+  | { type: "completed"; importId: string; blobToken: string }
+  | { type: "done"; importId: string; status: "indexed" };
+
+export const blobReady = defineHook<{ blobToken: string }>();
+
+export async function claimCheckImport(importId: string) {
+  "use workflow";
+
+  const hookToken = `upload:${importId}`;
+
+  await emit<ClaimCheckEvent>({ type: "start", importId, hookToken });
+  await emit<ClaimCheckEvent>({ type: "waiting", importId, hookToken });
+
+  // Claim-check: only a token enters the workflow (not a 50MB payload).
+  const { blobToken } = await blobReady.create({ token: hookToken });
+
+  await emit<ClaimCheckEvent>({ type: "upload_received", importId, blobToken });
+
+  await emit<ClaimCheckEvent>({ type: "processing", importId, blobToken });
+  await processBlob(blobToken);
+
+  await emit<ClaimCheckEvent>({ type: "completed", importId, blobToken });
+  await emit<ClaimCheckEvent>({ type: "done", importId, status: "indexed" });
+
+  return { importId, blobToken, status: "indexed" as const };
+}
+
+/**
+ * Step: Emit a single event to the UI stream.
+ * Re-acquires the writer inside the step so it survives durable suspension.
+ */
+async function emit<T>(event: T): Promise<void> {
+  "use step";
+  const writer = getWritable<T>().getWriter();
+  try {
+    await writer.write(event);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+async function processBlob(blobToken: string) {
+  "use step";
+  // Simulate fetching + indexing a large blob by its token
+  await delay(700);
+  console.info("[claim-check] process_blob", { blobToken });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+```
+
+## Key APIs
+
+- [`"use workflow"`](/docs/foundations/workflows-and-steps) — marks the orchestrator function
+- [`"use step"`](/docs/foundations/workflows-and-steps) — marks functions with full Node.js access
+- [`defineHook()`](/docs/api-reference/workflow/define-hook) — creates a named hook that suspends until signaled
+- [`getWritable()`](/docs/api-reference/workflow/get-writable) — streams events to the client
