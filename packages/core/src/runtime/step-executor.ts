@@ -82,13 +82,36 @@ export async function executeStep(
     });
 
     const stepFn = getStepFunction(stepName);
-    if (!stepFn) {
-      throw new Error(`Step "${stepName}" not found`);
-    }
-    if (typeof stepFn !== 'function') {
-      throw new Error(
-        `Step "${stepName}" is not a function (got ${typeof stepFn})`
-      );
+    if (!stepFn || typeof stepFn !== 'function') {
+      // Step function not registered — fail the step immediately (not the run).
+      // This matches the V1 step handler pattern: create step_failed event so
+      // the workflow can handle it gracefully via try/catch in user code.
+      const errorMessage = `Step "${stepName}" is not registered in the current deployment. This usually indicates a build or bundling issue that caused the step to not be included in the deployment.`;
+      runtimeLogger.error('Step function not registered, failing step', {
+        workflowRunId,
+        stepName,
+        stepId,
+      });
+      try {
+        await world.events.create(workflowRunId, {
+          eventType: 'step_failed',
+          specVersion: SPEC_VERSION_CURRENT,
+          correlationId: stepId,
+          eventData: {
+            error: errorMessage,
+          },
+        });
+      } catch (stepFailErr) {
+        if (EntityConflictError.is(stepFailErr)) {
+          return { type: 'skipped' };
+        }
+        throw stepFailErr;
+      }
+      span?.setAttributes({
+        ...Attribute.StepStatus('failed'),
+        ...Attribute.StepFatalError(true),
+      });
+      return { type: 'failed' };
     }
 
     const maxRetries = stepFn.maxRetries ?? DEFAULT_STEP_MAX_RETRIES;
