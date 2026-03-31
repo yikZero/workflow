@@ -83,26 +83,26 @@ const QUICK_PICKS: QuickPick[] = [
   {
     label: 'Retry flaky APIs',
     query: 'retry',
-    category: 'resilience',
-    description: 'Backoff, 429s, circuit breakers',
+    category: 'common-patterns',
+    description: 'Rate limiting, backoff, retries',
   },
   {
-    label: 'Wait for approval',
-    query: 'approval',
-    category: 'approvals',
-    description: 'Single-step or chained sign-off',
+    label: 'Build a durable agent',
+    query: 'agent',
+    category: 'agent-patterns',
+    description: 'Tools, streaming, human-in-the-loop',
   },
   {
     label: 'Handle webhooks',
     query: 'webhook',
-    category: 'webhooks',
-    description: 'Callbacks, polling, claim checks',
+    category: 'common-patterns',
+    description: 'Callbacks, hooks, external events',
   },
   {
-    label: 'Route dynamically',
-    query: 'route',
-    category: 'routing',
-    description: 'Routers, slips, detours, filters',
+    label: 'Integrate with Vercel',
+    query: 'sdk',
+    category: 'integrations',
+    description: 'AI SDK, Chat SDK, Sandbox',
   },
 ];
 

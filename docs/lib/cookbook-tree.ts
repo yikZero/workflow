@@ -20,548 +20,275 @@ export type Recipe = {
 };
 
 export type RecipeCategory =
-  | 'payments'
-  | 'approvals'
-  | 'resilience'
-  | 'notifications'
-  | 'webhooks'
-  | 'data-processing'
-  | 'routing'
-  | 'observability';
+  | 'common-patterns'
+  | 'agent-patterns'
+  | 'integrations'
+  | 'advanced';
 
 export const categoryOrder: RecipeCategory[] = [
-  'payments',
-  'approvals',
-  'resilience',
-  'notifications',
-  'webhooks',
-  'data-processing',
-  'routing',
-  'observability',
+  'common-patterns',
+  'agent-patterns',
+  'integrations',
+  'advanced',
 ];
 
 export const categoryLabels: Record<RecipeCategory, string> = {
-  payments: 'Payments & Orders',
-  approvals: 'Approvals',
-  resilience: 'Resilience',
-  notifications: 'Notifications',
-  webhooks: 'Webhooks & Callbacks',
-  'data-processing': 'Data Processing',
-  routing: 'Routing',
-  observability: 'Observability',
+  'common-patterns': 'Common Patterns',
+  'agent-patterns': 'Agent Patterns',
+  integrations: 'Integrations',
+  advanced: 'Advanced',
 };
 
 /** Map from slug → category folder for URL construction */
 export const slugToCategory: Record<string, string> = {
-  saga: 'payments',
-  choreography: 'payments',
-  'process-manager': 'payments',
-  'guaranteed-delivery': 'payments',
-  'transactional-outbox': 'payments',
-  'idempotent-receiver': 'payments',
+  // Common Patterns
+  saga: 'common-patterns',
+  batching: 'common-patterns',
+  'rate-limiting': 'common-patterns',
+  'fan-out': 'common-patterns',
+  scheduling: 'common-patterns',
+  idempotency: 'common-patterns',
+  webhooks: 'common-patterns',
+  'content-router': 'common-patterns',
+  'child-workflows': 'common-patterns',
 
-  'approval-gate': 'approvals',
-  'cancellable-export': 'approvals',
-  'approval-chain': 'approvals',
-  'scheduler-agent-supervisor': 'approvals',
+  // Agent Patterns
+  'durable-agent': 'agent-patterns',
+  'tool-streaming': 'agent-patterns',
+  'human-in-the-loop': 'agent-patterns',
+  'tool-orchestration': 'agent-patterns',
+  'stop-workflow': 'agent-patterns',
 
-  'retry-backoff': 'resilience',
-  'retryable-rate-limit': 'resilience',
-  throttle: 'resilience',
-  'circuit-breaker': 'resilience',
-  bulkhead: 'resilience',
-  'hedge-request': 'resilience',
-  'dead-letter-queue': 'resilience',
+  // Integrations
+  'ai-sdk': 'integrations',
+  sandbox: 'integrations',
+  'chat-sdk': 'integrations',
 
-  'fan-out': 'notifications',
-  'publish-subscribe': 'notifications',
-  'recipient-list': 'notifications',
-  'onboarding-drip': 'notifications',
-  'wakeable-reminder': 'notifications',
-  'scheduled-digest': 'notifications',
-
-  'async-request-reply': 'webhooks',
-  'request-reply': 'webhooks',
-  'webhook-basics': 'webhooks',
-  'claim-check': 'webhooks',
-  'event-gateway': 'webhooks',
-  'status-poller': 'webhooks',
-
-  pipeline: 'data-processing',
-  'batch-processor': 'data-processing',
-  'map-reduce': 'data-processing',
-  'scatter-gather': 'data-processing',
-  aggregator: 'data-processing',
-  splitter: 'data-processing',
-  resequencer: 'data-processing',
-  'competing-consumers': 'data-processing',
-  'priority-queue': 'data-processing',
-
-  'content-based-router': 'routing',
-  detour: 'routing',
-  'routing-slip': 'routing',
-  'message-translator': 'routing',
-  normalizer: 'routing',
-  'content-enricher': 'routing',
-  'message-filter': 'routing',
-
-  'wire-tap': 'observability',
-  'message-history': 'observability',
-  'correlation-identifier': 'observability',
-  'event-sourcing': 'observability',
-  'namespaced-streams': 'observability',
+  // Advanced
+  'serializable-steps': 'advanced',
+  'durable-objects': 'advanced',
+  'isomorphic-packages': 'advanced',
+  'secure-credentials': 'advanced',
+  'custom-serialization': 'advanced',
+  'publishing-libraries': 'advanced',
 };
 
 /** All recipe metadata, keyed by slug */
 export const recipes: Record<string, Recipe> = {
+  // Common Patterns
   saga: {
     slug: 'saga',
-    title: 'Saga',
+    title: 'Transactions & Rollbacks (Saga)',
     description:
-      'Long-lived transaction across services using forward steps and compensations.',
+      'Coordinate multi-step transactions with automatic rollback when a step fails.',
     whenToUse:
-      'Upgrade a subscription (reserve seats, capture invoice, provision) with auto-rollback on failure.',
-    category: 'payments',
+      'Run a sequence of steps where each registers a compensation. If any step throws a FatalError, compensations execute in reverse order.',
+    category: 'common-patterns',
   },
-  choreography: {
-    slug: 'choreography',
-    title: 'Choreography',
+  batching: {
+    slug: 'batching',
+    title: 'Batching & Parallel Processing',
     description:
-      'Peers react to events independently \u2014 no central orchestrator.',
+      'Process large collections in parallel batches with failure isolation between groups.',
     whenToUse:
-      'Order flow where inventory, payment, and shipping react to events with automatic compensation on failure.',
-    category: 'payments',
+      'Split items into fixed-size batches, process each batch concurrently with Promise.allSettled, and pace batches with sleep.',
+    category: 'common-patterns',
   },
-  'process-manager': {
-    slug: 'process-manager',
-    title: 'Process Manager',
+  'rate-limiting': {
+    slug: 'rate-limiting',
+    title: 'Rate Limiting & Retries',
     description:
-      'Track a multi-step business process and react to events until it completes.',
+      'Handle 429 responses and transient failures with RetryableError and exponential backoff.',
     whenToUse:
-      'Orchestrate payment, inventory, backorder, shipping, and delivery with branching logic.',
-    category: 'payments',
-  },
-  'guaranteed-delivery': {
-    slug: 'guaranteed-delivery',
-    title: 'Guaranteed Delivery',
-    description:
-      'Persist-and-retry semantics so work is not lost across crashes or restarts.',
-    whenToUse:
-      'Ensure a payment confirmation is delivered even if the server restarts mid-send.',
-    category: 'payments',
-  },
-  'transactional-outbox': {
-    slug: 'transactional-outbox',
-    title: 'Transactional Outbox',
-    description:
-      'Write business data and an outbox event in one transaction, then publish reliably.',
-    whenToUse:
-      'Persist an order and relay it to a message broker in one transaction for at-least-once delivery.',
-    category: 'payments',
-  },
-  'idempotent-receiver': {
-    slug: 'idempotent-receiver',
-    title: 'Idempotent Receiver',
-    description:
-      'Handle duplicate deliveries safely (same logical operation, same outcome).',
-    whenToUse:
-      'Detect duplicate payment webhooks with an idempotency key and return the cached result.',
-    category: 'payments',
-  },
-  'approval-gate': {
-    slug: 'approval-gate',
-    title: 'Approval Gate',
-    description:
-      'Pause the workflow until a human approves or rejects, then resume or fail.',
-    whenToUse:
-      'Content moderation hold: pause publishing until a reviewer clicks approve or reject.',
-    category: 'approvals',
-  },
-  'cancellable-export': {
-    slug: 'cancellable-export',
-    title: 'Cancellable Export',
-    description:
-      'Long-running job that the user can cancel while steps are in flight.',
-    whenToUse:
-      'User starts a 100k-row data export and hits Cancel mid-flight without waiting for completion.',
-    category: 'approvals',
-  },
-  'approval-chain': {
-    slug: 'approval-chain',
-    title: 'Approval Chain',
-    description:
-      'Route work through a sequence of approvers; advance only when each step signs off.',
-    whenToUse:
-      'Purchase orders needing manager, director, VP sign-off with per-level escalation timeouts.',
-    category: 'approvals',
-  },
-  'scheduler-agent-supervisor': {
-    slug: 'scheduler-agent-supervisor',
-    title: 'Scheduler-Agent-Supervisor',
-    description:
-      'Scheduled triggers plus supervised agent/worker style execution.',
-    whenToUse:
-      'Dispatch content generation to agents in sequence, checking quality thresholds with escalation.',
-    category: 'approvals',
-  },
-  'retry-backoff': {
-    slug: 'retry-backoff',
-    title: 'Retry with Backoff',
-    description:
-      'Retry failed steps with increasing delay to avoid hammering flaky dependencies.',
-    whenToUse:
-      'Retry a flaky email API with 1s, 2s, 4s backoff instead of failing on the first hiccup.',
-    category: 'resilience',
-  },
-  'retryable-rate-limit': {
-    slug: 'retryable-rate-limit',
-    title: 'Retryable Rate Limit',
-    description:
-      'On 429 / rate limits, back off and retry instead of failing immediately.',
-    whenToUse:
-      'Sync contacts to an external CRM and auto-retry when the API returns 429 with retry-after.',
-    category: 'resilience',
-  },
-  throttle: {
-    slug: 'throttle',
-    title: 'Throttle',
-    description:
-      'Limit how often work runs or how many concurrent operations are allowed.',
-    whenToUse:
-      'Cap outbound API calls to 10/second so you do not blow your third-party rate limit.',
-    category: 'resilience',
-  },
-  'circuit-breaker': {
-    slug: 'circuit-breaker',
-    title: 'Circuit Breaker',
-    description:
-      'Stop calling a failing dependency for a cooldown, then probe for recovery.',
-    whenToUse:
-      'Stop hammering a down payment gateway after 3 failures, wait 30s, then test with one probe request.',
-    category: 'resilience',
-  },
-  bulkhead: {
-    slug: 'bulkhead',
-    title: 'Bulkhead',
-    description:
-      'Isolate capacity or failure domains so one overloaded path does not sink the whole system.',
-    whenToUse:
-      'Partition order items into isolated groups so one bad SKU does not block the rest of the shipment.',
-    category: 'resilience',
-  },
-  'hedge-request': {
-    slug: 'hedge-request',
-    title: 'Hedge Request',
-    description:
-      'Send duplicate requests; take the first successful response to cut tail latency.',
-    whenToUse:
-      'Fire the same search query to two replicas and use whichever responds first.',
-    category: 'resilience',
-  },
-  'dead-letter-queue': {
-    slug: 'dead-letter-queue',
-    title: 'Dead Letter Queue',
-    description:
-      'After repeated failure, move a message aside for inspection instead of infinite retry.',
-    whenToUse:
-      'Route undeliverable messages to a dead-letter queue after 3 retries for ops review.',
-    category: 'resilience',
+      'When an external API returns 429, throw RetryableError with the Retry-After value so the runtime reschedules the step.',
+    category: 'common-patterns',
   },
   'fan-out': {
     slug: 'fan-out',
-    title: 'Fan-Out',
+    title: 'Fan-Out & Parallel Delivery',
     description:
-      'One trigger fans out to parallel branches (often paired with gather/aggregate).',
+      'Send a message to multiple channels or recipients in parallel with independent failure handling.',
     whenToUse:
-      'Broadcast an incident alert to Slack, email, SMS, and PagerDuty in parallel.',
-    category: 'notifications',
+      'Fan out an alert to Slack, email, SMS, and PagerDuty simultaneously so a failure in one channel does not block the others.',
+    category: 'common-patterns',
   },
-  'publish-subscribe': {
-    slug: 'publish-subscribe',
-    title: 'Publish-Subscribe',
+  scheduling: {
+    slug: 'scheduling',
+    title: 'Sleep, Scheduling & Timed Workflows',
     description:
-      'One publisher, many subscribers \u2014 broadcast-style distribution.',
+      'Use durable sleep to schedule actions minutes, hours, days, or weeks into the future.',
     whenToUse:
-      'A product-update event triggers email, push notification, and analytics subscribers independently.',
-    category: 'notifications',
+      'Schedule future actions with durable sleep that survives cold starts, and race sleeps against hooks for early wake.',
+    category: 'common-patterns',
   },
-  'recipient-list': {
-    slug: 'recipient-list',
-    title: 'Recipient List',
+  idempotency: {
+    slug: 'idempotency',
+    title: 'Idempotency',
     description:
-      'Same logical message delivered to a list of recipients (static or dynamic).',
+      'Ensure external side effects happen exactly once, even when steps are retried or workflows are replayed.',
     whenToUse:
-      'Evaluate severity rules at runtime and alert matching channels (Slack, email, PagerDuty).',
-    category: 'notifications',
+      'Use step IDs as idempotency keys for external APIs like Stripe so retries and replays do not create duplicates.',
+    category: 'common-patterns',
   },
-  'onboarding-drip': {
-    slug: 'onboarding-drip',
-    title: 'Onboarding Drip',
+  webhooks: {
+    slug: 'webhooks',
+    title: 'Webhooks & External Callbacks',
     description:
-      'Time-delayed sequence (e.g. emails or nudges) with durable waits between steps.',
+      'Receive HTTP callbacks from external services, process them durably, and respond inline.',
     whenToUse:
-      'Send a welcome email on signup, a tips email after 2 days, and a check-in after a week.',
-    category: 'notifications',
+      'Create webhook endpoints that your workflow can await, process incoming requests in steps, and respond to the caller.',
+    category: 'common-patterns',
   },
-  'wakeable-reminder': {
-    slug: 'wakeable-reminder',
-    title: 'Wakeable Reminder',
+  'content-router': {
+    slug: 'content-router',
+    title: 'Conditional Routing',
     description:
-      'Sleep until a deadline or wake early when an external event arrives.',
+      'Inspect a payload and route it to different step handlers based on its content.',
     whenToUse:
-      'Schedule a payment reminder for 3 days out, but let the user cancel, snooze, or pay early via webhook.',
-    category: 'notifications',
+      'Classify incoming messages and branch to specialized handlers using standard if/else logic in the workflow function.',
+    category: 'common-patterns',
   },
-  'scheduled-digest': {
-    slug: 'scheduled-digest',
-    title: 'Scheduled Digest',
+
+  'child-workflows': {
+    slug: 'child-workflows',
+    title: 'Child Workflows',
     description:
-      'Accumulate activity and emit a summary on a schedule (e.g. daily digest).',
+      'Spawn and orchestrate child workflows from a parent, polling for completion and handling partial failures.',
     whenToUse:
-      'Open a 1-hour collection window for events, then email a digest when the window closes.',
-    category: 'notifications',
+      'Fan out work to independent child workflows via start(), poll with getRun() and sleep(), and collect results.',
+    category: 'common-patterns',
   },
-  'async-request-reply': {
-    slug: 'async-request-reply',
-    title: 'Async Request-Reply',
+
+  // Agent Patterns
+  'durable-agent': {
+    slug: 'durable-agent',
+    title: 'Durable Agent',
     description:
-      'Start work, wait off-thread, and continue when an async callback or signal arrives.',
+      'Replace a stateless AI agent with a durable one that survives crashes, retries tool calls, and streams output.',
     whenToUse:
-      'Submit a request to a vendor API and resume when the webhook callback arrives.',
-    category: 'webhooks',
+      'Convert an AI SDK Agent into a DurableAgent backed by a workflow, with tools as retryable steps.',
+    category: 'agent-patterns',
   },
-  'request-reply': {
-    slug: 'request-reply',
-    title: 'Request-Reply',
+  'tool-streaming': {
+    slug: 'tool-streaming',
+    title: 'Tool Streaming',
     description:
-      'Call/response style interaction modeled inside a durable workflow.',
+      'Stream real-time progress updates from tools to the UI while they execute.',
     whenToUse:
-      'Send a request to a service, wait for a correlated reply with a deadline, and retry on timeout.',
-    category: 'webhooks',
+      'Emit custom data parts from step functions to show incremental results during long-running tool calls.',
+    category: 'agent-patterns',
   },
-  'webhook-basics': {
-    slug: 'webhook-basics',
-    title: 'Webhook Basics',
+  'human-in-the-loop': {
+    slug: 'human-in-the-loop',
+    title: 'Human-in-the-Loop',
     description:
-      'Ingest HTTP webhooks, validate, and drive workflow steps from external systems.',
+      'Pause an AI agent to wait for human approval, then resume based on the decision.',
     whenToUse:
-      'Accept Stripe or GitHub webhooks, validate signatures, and kick off internal workflow steps.',
-    category: 'webhooks',
+      'Use defineHook with the tool call ID to suspend an agent for human approval, with an optional timeout.',
+    category: 'agent-patterns',
   },
-  'claim-check': {
-    slug: 'claim-check',
-    title: 'Claim Check',
+  'tool-orchestration': {
+    slug: 'tool-orchestration',
+    title: 'Tool Orchestration',
     description:
-      'Pass a small reference through the workflow; store or fetch the heavy payload elsewhere.',
+      'Choose between step-level and workflow-level tools, or combine both for complex tool implementations.',
     whenToUse:
-      'Accept a lightweight token instead of passing a 50 MB file through every workflow step.',
-    category: 'webhooks',
+      'Implement tools as steps for retries and I/O, at the workflow level for sleep and hooks, or combine both.',
+    category: 'agent-patterns',
   },
-  'event-gateway': {
-    slug: 'event-gateway',
-    title: 'Event Gateway',
+  'stop-workflow': {
+    slug: 'stop-workflow',
+    title: 'Stop Workflow',
     description:
-      'Normalize many external event shapes into one internal representation.',
+      'Gracefully cancel a running agent workflow using a hook signal.',
     whenToUse:
-      'Wait for payment, inventory, and fraud-check signals to all arrive before shipping an order.',
-    category: 'webhooks',
+      'Use a hook as a stop signal to break out of an agent loop and close the stream cleanly.',
+    category: 'agent-patterns',
   },
-  'status-poller': {
-    slug: 'status-poller',
-    title: 'Status Poller',
+
+  // Integrations
+  'ai-sdk': {
+    slug: 'ai-sdk',
+    title: 'AI SDK',
     description:
-      'Poll an external API or job until it reaches a terminal state, with backoff.',
+      'Use AI SDK model providers, tool calling, and streaming inside durable workflows.',
     whenToUse:
-      'Poll a video transcoding job until it is ready, sleeping between checks with a max-poll safety valve.',
-    category: 'webhooks',
+      'Turn any AI SDK model call into a retryable, observable workflow step with built-in streaming.',
+    category: 'integrations',
   },
-  pipeline: {
-    slug: 'pipeline',
-    title: 'Pipeline',
+  sandbox: {
+    slug: 'sandbox',
+    title: 'Sandbox',
     description:
-      'Linear chain of stages \u2014 each step\u2019s output feeds the next.',
+      'Orchestrate Vercel Sandbox lifecycle \u2014 creation, code execution, snapshotting \u2014 inside durable workflows.',
     whenToUse:
-      'Run a 4-stage ETL (extract, transform, validate, load) with live progress streaming.',
-    category: 'data-processing',
+      'Use workflow steps to provision sandboxes, run code, and manage sandbox lifecycle with automatic cleanup on failure.',
+    category: 'integrations',
   },
-  'batch-processor': {
-    slug: 'batch-processor',
-    title: 'Batch Processor',
+  'chat-sdk': {
+    slug: 'chat-sdk',
+    title: 'Chat SDK',
     description:
-      'Collect items over time or up to a size, then process them as a single batch.',
+      'Build durable chat sessions by combining workflow persistence with AI SDK chat primitives.',
     whenToUse:
-      'Process a large CSV import in batches, auto-resuming from the last completed batch after a crash.',
-    category: 'data-processing',
+      'Use workflow hooks and streaming to create chat sessions that survive disconnects and server restarts.',
+    category: 'integrations',
   },
-  'map-reduce': {
-    slug: 'map-reduce',
-    title: 'Map-Reduce',
+
+  // Advanced
+  'serializable-steps': {
+    slug: 'serializable-steps',
+    title: 'Serializable Steps',
     description:
-      'Map work in parallel, then reduce partial results into a single answer.',
+      'Wrap non-serializable objects (like AI model providers) inside step functions so they can cross the workflow boundary.',
     whenToUse:
-      'Partition a large analytics dataset into chunks, process in parallel, and merge into one report.',
-    category: 'data-processing',
+      'Return a callback from a step to defer provider initialization, making non-serializable AI SDK models work inside durable workflows.',
+    category: 'advanced',
   },
-  'scatter-gather': {
-    slug: 'scatter-gather',
-    title: 'Scatter-Gather',
+  'durable-objects': {
+    slug: 'durable-objects',
+    title: 'Durable Objects',
     description:
-      'Fan out to many workers, then collect and merge their replies.',
+      'Model long-lived stateful entities as workflows that persist state across requests.',
     whenToUse:
-      'Query 4 shipping providers for quotes in parallel and pick the cheapest one that responds.',
-    category: 'data-processing',
+      'Build a durable counter or session object whose state survives restarts by using the event log as the persistence layer.',
+    category: 'advanced',
   },
-  aggregator: {
-    slug: 'aggregator',
-    title: 'Aggregator',
+  'isomorphic-packages': {
+    slug: 'isomorphic-packages',
+    title: 'Isomorphic Packages',
     description:
-      'Merge many parallel outcomes into one combined result (pair with scatter-gather / fan-out).',
+      'Publish reusable workflow packages that work both inside and outside the workflow runtime.',
     whenToUse:
-      'Collect inventory from multiple warehouses with a timeout so stragglers do not block checkout.',
-    category: 'data-processing',
+      'Use try/catch around getWorkflowMetadata, dynamic imports, and optional peer dependencies for dual-environment libraries.',
+    category: 'advanced',
   },
-  splitter: {
-    slug: 'splitter',
-    title: 'Splitter',
+  'secure-credentials': {
+    slug: 'secure-credentials',
+    title: 'Secure Credentials',
     description:
-      'Break one compound message into many smaller messages for downstream steps.',
+      'Encrypt secrets before passing them through workflows so they never appear in the event log.',
     whenToUse:
-      'Split a multi-item order into individual line items for independent validation and fulfillment.',
-    category: 'data-processing',
+      'Encrypt credentials before start(), resolve them inside steps via a provider, and avoid making secret-returning functions into steps.',
+    category: 'advanced',
   },
-  resequencer: {
-    slug: 'resequencer',
-    title: 'Resequencer',
+  'custom-serialization': {
+    slug: 'custom-serialization',
+    title: 'Custom Serialization',
     description:
-      'Buffer and reorder out-of-order messages before the next stage.',
+      'Make custom classes survive workflow serialization using the WORKFLOW_SERIALIZE/WORKFLOW_DESERIALIZE protocol.',
     whenToUse:
-      'Buffer out-of-order webhook fragments and release them in the correct sequence.',
-    category: 'data-processing',
+      'Implement static serde symbols on a class so instances can cross the workflow/step boundary intact.',
+    category: 'advanced',
   },
-  'competing-consumers': {
-    slug: 'competing-consumers',
-    title: 'Competing Consumers',
+  'publishing-libraries': {
+    slug: 'publishing-libraries',
+    title: 'Publishing Libraries',
     description:
-      'Multiple workers consume the same kind of work for throughput and scale-out.',
+      'Ship an npm package that exports reusable workflow functions with stable IDs and clean step I/O.',
     whenToUse:
-      'Multiple workflow instances race to claim items from a shared queue \u2014 only one wins each item.',
-    category: 'data-processing',
-  },
-  'priority-queue': {
-    slug: 'priority-queue',
-    title: 'Priority Queue',
-    description: 'Prefer higher-priority work when multiple items are waiting.',
-    whenToUse:
-      'Process enterprise-tier jobs before free-tier jobs when the queue is backed up.',
-    category: 'data-processing',
-  },
-  'content-based-router': {
-    slug: 'content-based-router',
-    title: 'Content-Based Router',
-    description:
-      'Branch to different handlers based on fields inside the message or payload.',
-    whenToUse:
-      'Classify a support ticket and route it to billing, technical, account, or feedback handlers.',
-    category: 'routing',
-  },
-  detour: {
-    slug: 'detour',
-    title: 'Detour',
-    description:
-      'Temporarily bypass or replace a step (e.g. maintenance, A/B, fallback path).',
-    whenToUse:
-      'Toggle a QA review stage on/off in a deploy pipeline based on a runtime feature flag.',
-    category: 'routing',
-  },
-  'routing-slip': {
-    slug: 'routing-slip',
-    title: 'Routing Slip',
-    description:
-      'Attach an itinerary to the message so each hop knows where to send it next.',
-    whenToUse:
-      'Execute a flexible sequence of processing stages defined per-request in a routing slip.',
-    category: 'routing',
-  },
-  'message-translator': {
-    slug: 'message-translator',
-    title: 'Message Translator',
-    description:
-      'Convert between external and internal message formats at the boundary.',
-    whenToUse:
-      'Convert partner XML orders into your internal JSON schema at the API boundary.',
-    category: 'routing',
-  },
-  normalizer: {
-    slug: 'normalizer',
-    title: 'Normalizer',
-    description:
-      'Map heterogeneous inputs into one canonical shape before routing.',
-    whenToUse:
-      'Accept orders as XML, CSV, or legacy JSON and transform them into a single canonical shape.',
-    category: 'routing',
-  },
-  'content-enricher': {
-    slug: 'content-enricher',
-    title: 'Content Enricher',
-    description:
-      'Look up extra data and attach it before the next step sees the message.',
-    whenToUse:
-      'Enrich a sales lead by querying CRM, social, and Clearbit in parallel before routing to sales.',
-    category: 'routing',
-  },
-  'message-filter': {
-    slug: 'message-filter',
-    title: 'Message Filter',
-    description:
-      'Drop or accept messages based on rules before downstream processing.',
-    whenToUse:
-      'Drop low-priority log events before they hit the expensive analytics pipeline.',
-    category: 'routing',
-  },
-  'wire-tap': {
-    slug: 'wire-tap',
-    title: 'Wire Tap',
-    description:
-      'Observe or copy messages in flight for logging/debugging without changing the main path.',
-    whenToUse:
-      'Mirror production order events to a debug logger without touching the main processing path.',
-    category: 'observability',
-  },
-  'message-history': {
-    slug: 'message-history',
-    title: 'Message History',
-    description:
-      'Keep an audit trail of what passed through the flow and in what order.',
-    whenToUse:
-      'Track a support ticket through normalize, classify, route, dispatch with full history at each step.',
-    category: 'observability',
-  },
-  'correlation-identifier': {
-    slug: 'correlation-identifier',
-    title: 'Correlation Identifier',
-    description:
-      'Tie outbound requests to the right workflow run when async replies arrive.',
-    whenToUse:
-      'Tag outbound API calls with a correlation ID so async responses match back to the right order.',
-    category: 'observability',
-  },
-  'event-sourcing': {
-    slug: 'event-sourcing',
-    title: 'Event Sourcing',
-    description:
-      'Drive behavior from an append-only event log; rebuild or audit state from history.',
-    whenToUse:
-      'Append domain events to an immutable log and replay them to detect bugs or migrate projections.',
-    category: 'observability',
-  },
-  'namespaced-streams': {
-    slug: 'namespaced-streams',
-    title: 'Namespaced Streams',
-    description:
-      'Separate streams (e.g. per tenant or topic) so clients only see relevant events.',
-    whenToUse:
-      'Emit workflow events to separate UI and ops-telemetry streams simultaneously.',
-    category: 'observability',
+      'Structure, test, and publish a library that consumers can import and start() in their own workflow apps.',
+    category: 'advanced',
   },
 };
 
@@ -602,43 +329,44 @@ export const tree: TreeNode = {
             slugs: ['saga'],
           },
           {
-            label: 'Let services react independently',
-            icon: '\u26a1',
-            slugs: ['choreography'],
-          },
-          {
-            label: 'Orchestrate with branching logic',
-            icon: '\u25c8',
-            slugs: ['process-manager', 'pipeline'],
-          },
-          {
-            label: 'Make sure nothing gets lost',
+            label: 'Make sure nothing is duplicated',
             icon: '\u2713',
-            slugs: [
-              'guaranteed-delivery',
-              'transactional-outbox',
-              'idempotent-receiver',
-            ],
+            slugs: ['idempotency'],
+          },
+          {
+            label: 'Route to the right handler',
+            icon: '\u25c8',
+            slugs: ['content-router'],
           },
         ],
       },
     },
     {
-      label: 'Approve or review something',
-      icon: '\u270b',
+      label: 'Build a durable AI agent',
+      icon: '\u2605',
       next: {
-        id: 'approve',
-        question: 'How many approvers?',
+        id: 'agent',
+        question: 'What does the agent need?',
         branches: [
           {
-            label: 'One person',
-            icon: '1',
-            slugs: ['approval-gate', 'cancellable-export'],
+            label: 'Basic durable agent setup',
+            icon: '\u25b8',
+            slugs: ['durable-agent'],
           },
           {
-            label: 'A chain of approvers',
-            icon: '\u22ef',
-            slugs: ['approval-chain', 'scheduler-agent-supervisor'],
+            label: 'Stream progress from tools',
+            icon: '\u2192',
+            slugs: ['tool-streaming'],
+          },
+          {
+            label: 'Wait for human approval',
+            icon: '\u270b',
+            slugs: ['human-in-the-loop'],
+          },
+          {
+            label: 'Complex tool patterns',
+            icon: '\u2699',
+            slugs: ['tool-orchestration', 'stop-workflow'],
           },
         ],
       },
@@ -651,24 +379,19 @@ export const tree: TreeNode = {
         question: "What's going wrong?",
         branches: [
           {
-            label: 'Random failures or timeouts',
-            icon: '\u26a0',
-            slugs: ['retry-backoff'],
-          },
-          {
             label: 'Rate limited (429s)',
             icon: '\u2298',
-            slugs: ['retryable-rate-limit', 'throttle'],
+            slugs: ['rate-limiting'],
           },
           {
-            label: 'Service is fully down',
-            icon: '\u2715',
-            slugs: ['circuit-breaker', 'bulkhead'],
+            label: 'Need parallel processing with isolation',
+            icon: '\u25a4',
+            slugs: ['batching'],
           },
           {
-            label: 'Too slow, need a faster fallback',
-            icon: '\u23f1',
-            slugs: ['hedge-request', 'dead-letter-queue'],
+            label: 'Orchestrate many child workflows',
+            icon: '\u2b50',
+            slugs: ['child-workflows'],
           },
         ],
       },
@@ -683,22 +406,12 @@ export const tree: TreeNode = {
           {
             label: 'All at once, in parallel',
             icon: '\u2ad8',
-            slugs: ['fan-out', 'publish-subscribe'],
-          },
-          {
-            label: 'Only to matching recipients',
-            icon: '\u2442',
-            slugs: ['recipient-list'],
+            slugs: ['fan-out'],
           },
           {
             label: 'Spread out over days or weeks',
             icon: '\u25f4',
-            slugs: ['onboarding-drip', 'wakeable-reminder'],
-          },
-          {
-            label: 'Batched into a digest',
-            icon: '\u25a4',
-            slugs: ['scheduled-digest'],
+            slugs: ['scheduling'],
           },
         ],
       },
@@ -706,102 +419,43 @@ export const tree: TreeNode = {
     {
       label: 'Wait for a webhook or callback',
       icon: '\u2193',
+      slugs: ['webhooks'],
+    },
+    {
+      label: 'Integrate with Vercel products',
+      icon: '\u25b2',
       next: {
-        id: 'wait',
-        question: 'What are you waiting for?',
+        id: 'integrate',
+        question: 'Which product?',
         branches: [
           {
-            label: 'An async API response',
-            icon: '\u21c4',
-            slugs: ['async-request-reply', 'request-reply'],
+            label: 'AI SDK',
+            icon: '\u2605',
+            slugs: ['ai-sdk'],
           },
           {
-            label: 'An inbound webhook',
-            icon: '\u2193',
-            slugs: ['webhook-basics', 'claim-check'],
+            label: 'Chat SDK',
+            icon: '\u2328',
+            slugs: ['chat-sdk'],
           },
           {
-            label: 'Multiple signals to converge',
-            icon: '\u2295',
-            slugs: ['event-gateway'],
-          },
-          {
-            label: 'A job to finish (polling)',
-            icon: '\u25f4',
-            slugs: ['status-poller'],
+            label: 'Sandbox',
+            icon: '\u2610',
+            slugs: ['sandbox'],
           },
         ],
       },
     },
     {
-      label: 'Process data in bulk',
-      icon: '\u25a4',
-      next: {
-        id: 'bulk',
-        question: "What's the shape of the work?",
-        branches: [
-          {
-            label: 'Linear pipeline (A then B then C)',
-            icon: '\u25b8',
-            slugs: ['pipeline', 'batch-processor'],
-          },
-          {
-            label: 'Parallel map, then merge results',
-            icon: '\u2295',
-            slugs: ['map-reduce', 'scatter-gather', 'aggregator'],
-          },
-          {
-            label: 'Split one payload into many',
-            icon: '\u2ad8',
-            slugs: ['splitter', 'resequencer'],
-          },
-          {
-            label: 'Many workers competing for items',
-            icon: '\u2299',
-            slugs: ['competing-consumers', 'priority-queue'],
-          },
-        ],
-      },
-    },
-    {
-      label: 'Route to the right handler',
-      icon: '\u2442',
-      next: {
-        id: 'route',
-        question: "What's the main operation?",
-        branches: [
-          {
-            label: 'Branch based on message content',
-            icon: '\u25c8',
-            slugs: ['content-based-router', 'detour'],
-          },
-          {
-            label: 'Dynamic route list per request',
-            icon: '\u22ef',
-            slugs: ['routing-slip', 'recipient-list'],
-          },
-          {
-            label: 'Transform or normalize the format',
-            icon: '\u21c4',
-            slugs: ['message-translator', 'normalizer', 'content-enricher'],
-          },
-          {
-            label: 'Filter out noise before processing',
-            icon: '\u2715',
-            slugs: ['message-filter'],
-          },
-        ],
-      },
-    },
-    {
-      label: 'Observe & audit the flow',
-      icon: '\u25ce',
+      label: 'Advanced internals',
+      icon: '\u2699',
       slugs: [
-        'wire-tap',
-        'message-history',
-        'correlation-identifier',
-        'event-sourcing',
-        'namespaced-streams',
+        'serializable-steps',
+        'durable-objects',
+        'isomorphic-packages',
+        'secure-credentials',
+        'custom-serialization',
+        'publishing-libraries',
       ],
     },
   ],
