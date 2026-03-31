@@ -1,9 +1,34 @@
+import type { Node } from 'fumadocs-core/page-tree';
 import { source } from './source';
 
-const COOKBOOK_URL_RE = /\/docs\/cookbook(?=\/|$)/;
+const COOKBOOK_DOCS_PREFIX_RE = /\/docs\/cookbook(?=\/|$)/g;
 
 export function rewriteCookbookUrl(url: string): string {
-  return url.replace(COOKBOOK_URL_RE, '/cookbooks');
+  return url.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
+}
+
+export function rewriteCookbookUrlsInText(text: string): string {
+  return text.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
+}
+
+function isCookbookFolder(node: Node): boolean {
+  if (node.type !== 'folder') {
+    return false;
+  }
+
+  if (node.index?.url?.startsWith('/docs/cookbook')) {
+    return true;
+  }
+
+  return node.children.some((child) => {
+    if (child.type === 'page') {
+      return child.url.startsWith('/docs/cookbook');
+    }
+    if (child.type === 'folder') {
+      return child.index?.url?.startsWith('/docs/cookbook') ?? false;
+    }
+    return false;
+  });
 }
 
 /**
@@ -13,12 +38,10 @@ export function rewriteCookbookUrl(url: string): string {
 export function getCookbookTree(lang: string) {
   const fullTree = source.pageTree[lang];
 
-  const cookbookNode = fullTree.children.find(
-    (node) => node.type === 'folder' && node.name === 'Cookbook'
-  );
+  const cookbookNode = fullTree.children.find(isCookbookFolder);
 
   if (!cookbookNode || cookbookNode.type !== 'folder') {
-    return { name: 'Cookbooks', children: [] };
+    return { name: 'Cookbooks', children: [] as Node[] };
   }
 
   return {

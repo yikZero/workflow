@@ -3,6 +3,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
+import { rewriteCookbookUrl } from '@/lib/geistdocs/cookbook-source';
 import { AgentTraces } from '@/components/custom/agent-traces';
 import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
 import { FluidComputeCallout } from '@/components/custom/fluid-compute-callout';
@@ -33,8 +34,9 @@ const Page = async ({ params }: PageProps<'/[lang]/docs/[[...slug]]'>) => {
   const { slug, lang } = await params;
 
   if (Array.isArray(slug) && slug[0] === 'cookbook') {
-    const rest = slug.slice(1);
-    permanentRedirect(`/${lang}/cookbooks${rest.length ? `/${rest.join('/')}` : ''}`);
+    const rest = slug.slice(1).join('/');
+    const legacyPath = `/docs/cookbook${rest ? `/${rest}` : ''}`;
+    permanentRedirect(`/${lang}${rewriteCookbookUrl(legacyPath)}`);
   }
 
   const page = source.getPage(slug, lang);
