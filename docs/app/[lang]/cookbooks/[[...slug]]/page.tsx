@@ -4,6 +4,7 @@ import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
+import { rewriteCookbookUrl } from '@/lib/geistdocs/cookbook-source';
 import { AskAI } from '@/components/geistdocs/ask-ai';
 import { CopyPage } from '@/components/geistdocs/copy-page';
 import {
@@ -32,6 +33,9 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
     notFound();
   }
 
+  const publicUrl = rewriteCookbookUrl(page.url);
+  const publicPage = { ...page, url: publicUrl } as typeof page;
+
   const markdown = await getLLMText(page);
   const MDX = page.data.body;
 
@@ -47,8 +51,8 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
             <ScrollTop />
             <Feedback />
             <CopyPage text={markdown} />
-            <AskAI href={page.url} />
-            <OpenInChat href={page.url} />
+            <AskAI href={publicUrl} />
+            <OpenInChat href={publicUrl} />
           </div>
         ),
       }}
@@ -59,7 +63,7 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
       <DocsBody>
         <MDX
           components={getMDXComponents({
-            a: createRelativeLink(source, page),
+            a: createRelativeLink(source, publicPage),
             Badge,
             Step,
             Steps,

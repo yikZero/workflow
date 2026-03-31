@@ -1,5 +1,11 @@
 import { source } from './source';
 
+const COOKBOOK_URL_RE = /\/docs\/cookbook(?=\/|$)/;
+
+export function rewriteCookbookUrl(url: string): string {
+  return url.replace(COOKBOOK_URL_RE, '/cookbooks');
+}
+
 /**
  * Extract the cookbook subtree from the docs page tree,
  * rewriting URLs from /docs/cookbook/... to /cookbooks/...
@@ -7,7 +13,6 @@ import { source } from './source';
 export function getCookbookTree(lang: string) {
   const fullTree = source.pageTree[lang];
 
-  // Find the cookbook folder in the tree
   const cookbookNode = fullTree.children.find(
     (node) => node.type === 'folder' && node.name === 'Cookbook'
   );
@@ -16,7 +21,6 @@ export function getCookbookTree(lang: string) {
     return { name: 'Cookbooks', children: [] };
   }
 
-  // Deep-clone and rewrite URLs
   return {
     name: 'Cookbooks',
     children: rewriteUrls(cookbookNode.children),
@@ -25,27 +29,22 @@ export function getCookbookTree(lang: string) {
 
 function rewriteUrls<T>(nodes: T[]): T[] {
   return nodes.map((node) => {
-    const n = node as Record<string, unknown>;
-    const rewritten = { ...n };
+    const rewritten = { ...(node as Record<string, unknown>) };
 
     if (typeof rewritten.url === 'string') {
-      rewritten.url = rewritten.url.replace(
-        /\/docs\/cookbook\//,
-        '/cookbooks/'
-      );
+      rewritten.url = rewriteCookbookUrl(rewritten.url);
     }
 
     if (Array.isArray(rewritten.children)) {
       rewritten.children = rewriteUrls(rewritten.children);
     }
 
-    // Handle index page inside folders
     if (rewritten.index && typeof rewritten.index === 'object') {
-      const idx = { ...(rewritten.index as Record<string, unknown>) };
-      if (typeof idx.url === 'string') {
-        idx.url = idx.url.replace(/\/docs\/cookbook\//, '/cookbooks/');
+      const index = { ...(rewritten.index as Record<string, unknown>) };
+      if (typeof index.url === 'string') {
+        index.url = rewriteCookbookUrl(index.url);
       }
-      rewritten.index = idx;
+      rewritten.index = index;
     }
 
     return rewritten as T;
