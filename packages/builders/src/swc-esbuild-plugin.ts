@@ -19,6 +19,18 @@ export interface SwcPluginOptions {
   outdir?: string;
   projectRoot?: string;
   workflowManifest?: WorkflowManifest;
+  /**
+   * Rewrite TypeScript extensions (.ts, .tsx, .mts, .cts) to their JS
+   * equivalents (.js, .mjs, .cjs) in externalized import paths.
+   *
+   * Enable this when the output bundle is consumed directly by Node's native
+   * ESM loader (e.g. vitest), which cannot resolve .ts extensions.
+   *
+   * Leave disabled (default) when a downstream bundler (webpack, Vite, etc.)
+   * handles resolution — those tools resolve .ts natively and rewriting
+   * breaks them because the .js file doesn't exist on disk.
+   */
+  rewriteTsExtensions?: boolean;
 }
 
 const NODE_RESOLVE_OPTIONS = {
@@ -131,11 +143,14 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               resolvedPath
             ).replace(/\\/g, '/');
 
-            // Keep the original TypeScript extension for file path externals.
-            // When externalizeNonSteps is used with bundleFinalOutput: false,
-            // the framework bundler (Next.js, SvelteKit, etc.) resolves these
-            // imports and expects the original .ts/.tsx extension. Rewriting
-            // to .js causes "Module not found" errors in Turbopack/webpack.
+            if (options.rewriteTsExtensions) {
+              // Rewrite TypeScript extensions to their JS equivalents so the
+              // externalized import is loadable by Node's native ESM loader.
+              externalPath = externalPath
+                .replace(/\.tsx?$/, '.js')
+                .replace(/\.mts$/, '.mjs')
+                .replace(/\.cts$/, '.cjs');
+            }
           } else {
             externalPath = args.path;
           }

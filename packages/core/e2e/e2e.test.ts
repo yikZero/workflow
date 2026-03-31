@@ -1545,7 +1545,23 @@ describe('e2e', () => {
       expect(flowRes.headers.get('Content-Type')).toBe('text/plain');
       const flowBody = await flowRes.text();
       expect(flowBody).toBe(
-        'Workflow DevKit "/.well-known/workflow/v1/flow" endpoint is healthy'
+        'Workflow SDK "/.well-known/workflow/v1/flow" endpoint is healthy'
+      );
+
+      // Test the step endpoint health check
+      const stepHealthUrl = new URL(
+        '/.well-known/workflow/v1/step?__health',
+        deploymentUrl
+      );
+      const stepRes = await fetch(stepHealthUrl, {
+        method: 'POST',
+        headers: getProtectionBypassHeaders(),
+      });
+      expect(stepRes.status).toBe(200);
+      expect(stepRes.headers.get('Content-Type')).toBe('text/plain');
+      const stepBody = await stepRes.text();
+      expect(stepBody).toBe(
+        'Workflow SDK "/.well-known/workflow/v1/step" endpoint is healthy'
       );
     }
   );
@@ -2112,6 +2128,20 @@ describe('e2e', () => {
 
       const { json: runData } = await cliInspectJson(`runs ${run.runId}`);
       expect(runData.status).toBe('completed');
+    }
+  );
+
+  test(
+    'importMetaUrlWorkflow - import.meta.url is available in step bundles',
+    { timeout: 60_000 },
+    async () => {
+      const run = await start(await e2e('importMetaUrlWorkflow'), []);
+      const returnValue = await run.returnValue;
+      expect(returnValue).toEqual({
+        isDefined: true,
+        type: 'string',
+        isFileUrl: true,
+      });
     }
   );
 });
