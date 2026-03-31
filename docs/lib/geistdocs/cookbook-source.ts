@@ -1,4 +1,10 @@
 import type { Node, Root } from 'fumadocs-core/page-tree';
+import {
+  categoryLabels,
+  categoryOrder,
+  recipes,
+  type RecipeCategory,
+} from '../cookbook-tree';
 import { source } from './source';
 
 const COOKBOOK_DOCS_PREFIX_RE = /\/docs\/cookbook(?=\/|$)/g;
@@ -14,78 +20,55 @@ export function rewriteCookbookUrlsInText(text: string): string {
   return text.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
 }
 
-function isCookbookFolder(node: Node): node is FolderNode {
-  if (node.type !== 'folder') return false;
-
-  if (node.index?.url?.startsWith('/docs/cookbook')) return true;
-
-  // Fallback: check if children contain cookbook pages
-  return node.children.some((child) => {
-    if (child.type === 'page') return child.url.startsWith('/docs/cookbook');
-    if (child.type === 'folder')
-      return child.index?.url?.startsWith('/docs/cookbook') ?? false;
-    return false;
-  });
-}
-
-function rewriteNode<T extends Record<string, unknown>>(node: T): T {
-  const rewritten = { ...node };
-
-  if (typeof rewritten.url === 'string') {
-    rewritten.url = rewriteCookbookUrl(rewritten.url);
-  }
-
-  if (rewritten.index && typeof rewritten.index === 'object') {
-    rewritten.index = rewriteNode(
-      rewritten.index as Record<string, unknown>,
-    );
-  }
-
-  if (Array.isArray(rewritten.children)) {
-    rewritten.children = rewritten.children.map((child) =>
-      rewriteNode(child as Record<string, unknown>),
-    );
-  }
-
-  return rewritten as T;
-}
-
-function createOverviewPage(cookbookNode: FolderNode): PageNode | null {
-  if (!cookbookNode.index) {
-    return null;
-  }
-
+function createOverviewPage(): PageNode {
   return {
     type: 'page',
-    $id: `${cookbookNode.$id}__overview`,
+    $id: 'cookbook__overview',
     name: 'Overview',
-    url: rewriteCookbookUrl(cookbookNode.index.url),
+    url: '/cookbooks',
   } as PageNode;
 }
 
+function createRecipePage(
+  category: RecipeCategory,
+  slug: string,
+): PageNode {
+  const recipe = recipes[slug];
+  return {
+    type: 'page',
+    $id: `cookbook__${slug}`,
+    name: recipe.title,
+    url: `/cookbooks/${category}/${slug}`,
+  } as PageNode;
+}
+
+function createCategoryFolder(category: RecipeCategory): FolderNode {
+  const categoryRecipes = Object.values(recipes).filter(
+    (recipe) => recipe.category === category,
+  );
+  return {
+    type: 'folder',
+    $id: `cookbook__${category}`,
+    name: categoryLabels[category],
+    children: categoryRecipes.map((recipe) =>
+      createRecipePage(category as RecipeCategory, recipe.slug),
+    ),
+  } as FolderNode;
+}
+
 /**
- * Extract the cookbook subtree from the docs page tree,
- * rewriting URLs from /docs/cookbook/... to /cookbooks/...
- * Returns a proper Root tree with an Overview entry for the landing page.
+ * Build a standalone cookbook sidebar tree from cookbook-tree metadata.
+ * No longer depends on locating a cookbook node inside the docs page tree.
  */
 export function getCookbookTree(lang: string): Root {
   const fullTree = source.pageTree[lang];
 
-  const cookbookNode = fullTree.children.find(isCookbookFolder);
-
-  if (!cookbookNode) {
-    throw new Error('Cookbook tree not found in docs source');
-  }
-
-  const overview = createOverviewPage(cookbookNode);
-
-  const categoryNodes = cookbookNode.children.map(
-    (child) => rewriteNode(child as Record<string, unknown>) as Node,
-  );
-
   return {
     ...fullTree,
     name: 'Cookbooks',
-    children: [...(overview ? [overview] : []), ...categoryNodes],
+    children: [
+      createOverviewPage(),
+      ...categoryOrder.map((category) => createCategoryFolder(category)),
+    ],
   };
 }
