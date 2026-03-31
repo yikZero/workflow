@@ -5,44 +5,59 @@ type: guide
 summary: Collect inventory from multiple warehouses with a timeout so stragglers don't block checkout.
 ---
 
-Use aggregator when you need to gather signals from multiple sources and combine them, but cannot wait forever for all of them.
+Use aggregator when you need to gather signals from multiple sources and combine whatever arrived before a deadline.
 
 ## Pattern
 
-Create one hook per expected source, then race `Promise.all` (all responded) against `sleep` (deadline). Aggregate whatever data arrived into a single result.
+Create one hook per expected source, keep those promises in a pending map, and repeatedly race the next arrival against a durable timeout. That preserves partial results instead of throwing them away when the deadline wins.
 
 ```typescript lineNumbers
 import { defineHook, sleep } from "workflow";
 
-export const aggregatorSignal = defineHook<{ source: string; value: number }>();
+declare function summarizeAvailability(
+  batchId: string,
+  received: Record<string, number>,
+): Promise<{ totalAvailable: number }>; // @setup
 
-declare function processBatch(batchId: string, received: { source: string; value: number }[]): Promise<{ totalValue: number }>; // @setup
+export const inventorySignal = defineHook<{ available: number }>();
 
 const SOURCES = ["warehouse-a", "warehouse-b", "warehouse-c"] as const;
 
-export async function aggregator(batchId: string, timeoutMs: number = 8000) {
+export async function aggregator(batchId: string, timeoutMs: number = 8_000) {
   "use workflow";
 
-  const hooks = SOURCES.map((source) =>
-    aggregatorSignal
-      .create({ token: `${source}:${batchId}` })
-      .then((payload) => ({ source, payload }))
+  const pending = new Map(
+    SOURCES.map((source) => [
+      source,
+      inventorySignal
+        .create({ token: `${source}:${batchId}` })
+        .then(({ available }) => ({ type: "signal" as const, source, available })),
+    ]),
   );
 
-  const outcome = await Promise.race([
-    Promise.all(hooks).then((results) => ({ type: "ready" as const, results })),
-    sleep(`${timeoutMs}ms`).then(() => ({ type: "timeout" as const, results: [] as { source: string; payload: { source: string; value: number } }[] })),
-  ]);
+  const received: Record<string, number> = {};
+  const deadline = sleep(`${timeoutMs}ms`).then(() => ({ type: "timeout" as const }));
 
-  const received = outcome.results.map(({ payload }) => payload);
-  const summary = await processBatch(batchId, received);
+  while (pending.size > 0) {
+    const outcome = await Promise.race([...pending.values(), deadline]);
+    if (outcome.type === "timeout") break;
+    received[outcome.source] = outcome.available;
+    pending.delete(outcome.source);
+  }
 
-  return { batchId, status: outcome.type === "ready" ? "aggregated" : "partial", summary };
+  const summary = await summarizeAvailability(batchId, received);
+
+  return {
+    batchId,
+    received: Object.keys(received),
+    missing: [...pending.keys()],
+    summary,
+  };
 }
 ```
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`defineHook()`](/docs/api-reference/workflow/define-hook) — creates a named hook that suspends until signaled
-- [`sleep()`](/docs/api-reference/workflow/sleep) — durable timer that survives restarts
+- [`defineHook()`](/docs/api-reference/workflow/define-hook) — creates one durable signal per expected source
+- [`sleep()`](/docs/api-reference/workflow/sleep) — sets the deadline without burning compute

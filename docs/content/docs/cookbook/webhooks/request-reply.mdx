@@ -12,8 +12,6 @@ Send a request to a service, wait for a correlated reply with a deadline, and re
 For each downstream service, send the request and wait up to a deadline for the reply. If the deadline expires, retry up to a configurable maximum.
 
 ```typescript lineNumbers
-import { sleep } from "workflow";
-
 declare function sendRequest(
   requestId: string, service: string, payload: string, timeoutMs: number, maxAttempts: number
 ): Promise<{ service: string; response: string | null; success: boolean }>; // @setup
@@ -40,4 +38,4 @@ export async function requestReplyFlow(
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`sleep()`](/docs/api-reference/workflow/sleep) — durable timer that survives restarts
+- [`"use step"`](/docs/api-reference/workflow/use-step) — the helper step owns retries, deadlines, and downstream delivery

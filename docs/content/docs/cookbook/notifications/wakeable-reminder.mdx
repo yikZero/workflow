@@ -23,15 +23,14 @@ declare function sendReminderEmail(userId: string): Promise<void>; // @setup
 
 export const reminderActionHook = defineHook<ReminderAction>();
 
-export async function scheduleReminder(userId: string, delayMs: number) {
+export async function scheduleReminder(userId: string, sendAt: Date) {
   "use workflow";
-
-  let sendAt = new Date(Date.now() + delayMs);
-  const action = reminderActionHook.create({ token: `reminder:${userId}` });
 
   const outcome = await Promise.race([
     sleep(sendAt).then(() => ({ kind: "time" as const })),
-    action.then((payload) => ({ kind: "action" as const, payload })),
+    reminderActionHook
+      .create({ token: `reminder:${userId}` })
+      .then((payload) => ({ kind: "action" as const, payload })),
   ]);
 
   if (outcome.kind === "action") {
@@ -39,8 +38,7 @@ export async function scheduleReminder(userId: string, delayMs: number) {
       return { userId, status: "cancelled" };
     }
     if (outcome.payload.type === "snooze") {
-      sendAt = new Date(Date.now() + outcome.payload.seconds * 1000);
-      await sleep(sendAt);
+      await sleep(`${outcome.payload.seconds}s`);
     }
   }
 

@@ -5,20 +5,23 @@ type: guide
 summary: Fire the same search query to two replicas and use whichever responds first.
 ---
 
-Use hedge request when tail latency matters more than redundant work — fire the same request at multiple providers and take the first response.
+Use hedge request when tail latency matters more than duplicate work.
 
 ## Pattern
 
-Launch the same step against multiple providers using `Promise.race()`. The first to respond wins. Because steps run in parallel, this cuts tail latency at the cost of extra calls.
+Send the same request to multiple providers and use `Promise.any()` so the first successful response wins. Failures are ignored unless every provider fails.
 
 ```typescript lineNumbers
-declare function queryProvider(name: string, query: string): Promise<{ provider: string; data: unknown }>; // @setup
+declare function queryProvider(
+  name: string,
+  query: string,
+): Promise<{ provider: string; data: unknown }>; // @setup
 
 export async function hedgeRequest(query: string, providers: string[]) {
   "use workflow";
 
-  const result = await Promise.race(
-    providers.map((name) => queryProvider(name, query))
+  const result = await Promise.any(
+    providers.map((name) => queryProvider(name, query)),
   );
 
   return { winner: result.provider, data: result.data };
@@ -28,4 +31,4 @@ export async function hedgeRequest(query: string, providers: string[]) {
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`Promise.race()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/race) — returns the first provider to respond
+- [`Promise.any()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/any) — returns the first successful response

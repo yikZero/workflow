@@ -5,44 +5,60 @@ type: guide
 summary: Wait for payment, inventory, and fraud-check signals to all arrive before shipping an order.
 ---
 
-Wait for payment, inventory, and fraud-check signals to all arrive before shipping an order. Use this when a workflow must collect multiple independent signals before proceeding.
+Use event gateway when many external systems emit different event shapes, but the workflow only wants a small set of normalized internal signals.
 
 ## Pattern
 
-Create one hook per expected signal, then race `Promise.all` (all signals arrived) against `sleep` (deadline expired). If all signals arrive in time, continue. Otherwise, report which signals are missing.
+Edge handlers normalize each external event before signaling the workflow. The workflow keeps one pending hook per required signal, records what arrived, and returns missing signals if the deadline expires.
 
 ```typescript lineNumbers
 import { defineHook, sleep } from "workflow";
 
-export const orderSignal = defineHook<{ ok: true }>();
+type Signal = "payment" | "inventory" | "fraud";
 
 declare function shipOrder(orderId: string): Promise<void>; // @setup
 
-const SIGNALS = ["payment", "inventory", "fraud"] as const;
+export const orderSignal = defineHook<{ ok: boolean }>();
+
+const SIGNALS: Signal[] = ["payment", "inventory", "fraud"];
 
 export async function eventGateway(orderId: string, timeoutMs: number = 10_000) {
   "use workflow";
 
-  const hooks = SIGNALS.map((kind) =>
-    orderSignal.create({ token: `${kind}:${orderId}` })
+  const pending = new Map(
+    SIGNALS.map((signal) => [
+      signal,
+      orderSignal
+        .create({ token: `${signal}:${orderId}` })
+        .then(({ ok }) => ({ type: "signal" as const, signal, ok })),
+    ]),
   );
 
-  const outcome = await Promise.race([
-    Promise.all(hooks).then(() => ({ type: "ready" as const })),
-    sleep(`${timeoutMs}ms`).then(() => ({ type: "timeout" as const })),
-  ]);
+  const received: Signal[] = [];
+  const deadline = sleep(`${timeoutMs}ms`).then(() => ({ type: "timeout" as const }));
 
-  if (outcome.type === "timeout") {
-    return { orderId, status: "timeout" };
+  while (pending.size > 0) {
+    const outcome = await Promise.race([...pending.values(), deadline]);
+
+    if (outcome.type === "timeout") {
+      return { orderId, status: "timeout", received, missing: [...pending.keys()] };
+    }
+
+    if (!outcome.ok) {
+      return { orderId, status: "blocked", failed: outcome.signal };
+    }
+
+    received.push(outcome.signal);
+    pending.delete(outcome.signal);
   }
 
   await shipOrder(orderId);
-  return { orderId, status: "shipped" };
+  return { orderId, status: "shipped", received };
 }
 ```
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`defineHook()`](/docs/api-reference/workflow/define-hook) — creates a named hook that suspends until signaled
-- [`sleep()`](/docs/api-reference/workflow/sleep) — durable timer that survives restarts
+- [`defineHook()`](/docs/api-reference/workflow/define-hook) — receives normalized signals from the edge
+- [`sleep()`](/docs/api-reference/workflow/sleep) — provides a durable deadline for convergence

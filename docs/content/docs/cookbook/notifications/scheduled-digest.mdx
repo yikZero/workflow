@@ -5,54 +5,41 @@ type: guide
 summary: Open a 1-hour collection window for events, then email a digest when the window closes.
 ---
 
-Open a time window for events, then email a digest when the window closes. The hook can receive multiple events during the window because it is awaited in a loop.
+Use scheduled digest when many small events should be batched into one summary instead of triggering one notification per event.
 
 ## Pattern
 
-Race incoming events from a `defineHook` against a `sleep()` window. Events accumulate in an array until the window closes, then send a digest if any were collected.
+Let external systems write events under a shared digest id. The workflow just sleeps until the window closes, loads what accumulated, and sends one email if there is anything to report.
 
 ```typescript lineNumbers
-import { sleep, defineHook } from "workflow";
+import { sleep } from "workflow";
 
-type EventPayload = { type: string; message: string };
+type DigestEvent = { type: string; message: string };
 
-declare function sendDigestEmail(userId: string, events: EventPayload[]): Promise<void>; // @setup
+declare function loadDigestEvents(digestId: string): Promise<DigestEvent[]>; // @setup
+declare function sendDigestEmail(userId: string, events: DigestEvent[]): Promise<void>; // @setup
 
-export const digestEvent = defineHook<EventPayload>();
-
-export async function collectAndSendDigest(
+export async function scheduledDigest(
   digestId: string,
   userId: string,
-  windowMs: number = 3_600_000
+  window: string = "1h",
 ) {
   "use workflow";
 
-  const hook = digestEvent.create({ token: `digest:${digestId}` });
-  const windowClosed = sleep(`${windowMs}ms`).then(() => ({
-    kind: "window_closed" as const,
-  }));
-  const events: EventPayload[] = [];
+  await sleep(window);
 
-  while (true) {
-    const outcome = await Promise.race([
-      hook.then((payload) => ({ kind: "event" as const, payload })),
-      windowClosed,
-    ]);
+  const events = await loadDigestEvents(digestId);
 
-    if (outcome.kind === "window_closed") break;
-    events.push(outcome.payload);
+  if (events.length === 0) {
+    return { digestId, status: "empty" };
   }
 
-  if (events.length > 0) {
-    await sendDigestEmail(userId, events);
-  }
-
-  return { digestId, status: events.length > 0 ? "sent" : "empty", eventCount: events.length };
+  await sendDigestEmail(userId, events);
+  return { digestId, status: "sent", eventCount: events.length };
 }
 ```
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`sleep()`](/docs/api-reference/workflow/sleep) — durable timer for the collection window
-- [`defineHook()`](/docs/api-reference/workflow/define-hook) — receives events from external systems during the window
+- [`sleep()`](/docs/api-reference/workflow/sleep) — closes the digest window without using compute while waiting

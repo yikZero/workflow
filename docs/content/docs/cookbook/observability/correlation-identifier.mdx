@@ -12,8 +12,6 @@ Use a correlation identifier when your workflow sends requests to external servi
 The workflow generates a unique correlation ID, attaches it to the outbound request, then durably waits for the async response. When the response arrives, the correlation ID verifies it matches the original request.
 
 ```typescript lineNumbers
-import { sleep } from "workflow";
-
 declare function generateCorrelationId(requestId: string): Promise<string>; // @setup
 declare function sendRequest(requestId: string, correlationId: string, service: string, payload: string): Promise<void>; // @setup
 declare function awaitResponse(requestId: string, correlationId: string): Promise<boolean>; // @setup
@@ -42,4 +40,4 @@ export async function correlationIdentifierFlow(
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`sleep()`](/docs/api-reference/workflow/sleep) — durably waits for the async response
+- [`"use step"`](/docs/api-reference/workflow/use-step) — correlation ID generation, outbound delivery, and reply matching live in durable helper steps
