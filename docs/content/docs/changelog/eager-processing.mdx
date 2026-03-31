@@ -12,7 +12,8 @@ This is a major internal architecture change to how Workflow DevKit executes wor
 
 ## Previous Architecture
 
-The previous architecture used two separate routes, each backed by its own queue trigger:
+The previous architecture used two separate routes,
+each backed by its own queue trigger:
 
 ```
 Queue: __wkf_workflow_*  -->  /.well-known/workflow/v1/flow   (workflow replay in VM)
@@ -134,7 +135,8 @@ If a single step takes longer than the timeout threshold, the step runs to compl
 
 The `WorkflowInvokePayload` schema has a new optional field:
 
-{/* @skip-typecheck - snippet, not runnable code */}
+{/*@skip-typecheck - snippet, not runnable code*/}
+
 ```typescript
 stepId: z.string().optional()
 ```
@@ -311,6 +313,7 @@ When esbuild re-bundles this into CJS, the steps bundle's code is inlined. If th
 **Symptoms**: The Vercel deployment builds and starts successfully, but the `POST` handler is missing from the function's exports. Queue messages are delivered to the function but nothing processes them. All e2e tests hang indefinitely.
 
 **Debugging steps that led to the root cause**:
+
 1. Tested the CJS bundle locally with `node -e "require('./index.js')"` — confirmed 92 steps registered, but `module.exports` only contained `{ __steps_registered }`, not `{ POST }`.
 2. Found two `module.exports` assignments in the bundle: line ~45K (from the combined route, exporting `POST`) and line ~95K (from the inlined steps bundle, exporting `__steps_registered`). The second overwrites the first.
 3. Compared with the standalone builder's bundle which had the same steps code wrapped in `__commonJS()` — esbuild's wrapper prevents the inner `module.exports` from leaking.
@@ -334,6 +337,7 @@ The CLI `health` command defaults to `http://localhost:3000` when `WORKFLOW_LOCA
 **Fix**: `write()` now returns a promise that resolves only after the scheduled flush completes. Multiple writes within the 10ms window still share a single batched HTTP request (the batching optimization is preserved). Each write registers a `{resolve, reject}` pair in a `flushWaiters` array. When the `setTimeout` fires and `flush()` completes the HTTP round-trip, all waiters are resolved (or rejected on error). This makes `pendingOps` accurately reflect server-side data state while keeping network-efficient batching.
 
 The 500ms inline ops await in the step executor can now distinguish between:
+
 - **Steps where ops settle** (data on server, ~200ms after lock release + flush) → continue loop inline
 - **Steps where ops don't settle** (WritableStream kept open across steps) → break loop
 
@@ -373,5 +377,6 @@ All framework integrations pass across all test environments:
 | Windows | e2e | Pass |
 
 Known remaining flakes (same as main):
+
 - `webhookWorkflow` / `hookWorkflow` — timing-sensitive hook delivery
 - `promiseRaceStressTestWorkflow` — concurrent step race condition (Postgres only)
