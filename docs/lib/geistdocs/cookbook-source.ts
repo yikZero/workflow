@@ -20,6 +20,25 @@ export function rewriteCookbookUrlsInText(text: string): string {
   return text.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
 }
 
+function isCookbookFolder(node: Node): boolean {
+  return (
+    node.type === 'folder' &&
+    (node.index?.url?.startsWith('/docs/cookbook') ?? false)
+  );
+}
+
+/**
+ * Return the docs page tree with cookbook nodes removed.
+ * Used by the docs layout so the sidebar never shows cookbook entries.
+ */
+export function getDocsTreeWithoutCookbook(lang: string): Root {
+  const fullTree = source.pageTree[lang];
+  return {
+    ...fullTree,
+    children: fullTree.children.filter((node) => !isCookbookFolder(node)),
+  };
+}
+
 function createOverviewPage(): PageNode {
   return {
     type: 'page',

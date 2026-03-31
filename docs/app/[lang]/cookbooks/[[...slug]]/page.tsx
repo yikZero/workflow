@@ -2,8 +2,9 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
+import dynamic from 'next/dynamic';
 import { notFound } from 'next/navigation';
-import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
+import type { ComponentProps } from 'react';
 import {
   rewriteCookbookUrl,
   rewriteCookbookUrlsInText,
@@ -25,6 +26,14 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { getLLMText, getPageImage, source } from '@/lib/geistdocs/source';
 
+const LazyCookbookExplorer = dynamic(
+  () =>
+    import('@/components/geistdocs/cookbook-explorer').then(
+      (mod) => mod.CookbookExplorer,
+    ),
+  { loading: () => null },
+);
+
 const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
   const { slug, lang } = await params;
 
@@ -41,6 +50,13 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
 
   const markdown = rewriteCookbookUrlsInText(await getLLMText(page));
   const MDX = page.data.body;
+
+  const RelativeLink = createRelativeLink(source, publicPage);
+  const PublicCookbookLink = (props: ComponentProps<typeof RelativeLink>) => {
+    const href =
+      typeof props.href === 'string' ? rewriteCookbookUrl(props.href) : props.href;
+    return <RelativeLink {...props} href={href} />;
+  };
 
   return (
     <DocsPage
@@ -66,13 +82,13 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
       <DocsBody>
         <MDX
           components={getMDXComponents({
-            a: createRelativeLink(source, publicPage),
+            a: PublicCookbookLink,
             Badge,
             Step,
             Steps,
             Tabs,
             Tab,
-            CookbookExplorer: () => <CookbookExplorer lang={lang} />,
+            CookbookExplorer: () => <LazyCookbookExplorer lang={lang} />,
           })}
         />
       </DocsBody>

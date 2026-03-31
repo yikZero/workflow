@@ -1,22 +1,11 @@
-import type { Root } from 'fumadocs-core/page-tree';
 import { DocsLayout } from '@/components/geistdocs/docs-layout';
-import { source } from '@/lib/geistdocs/source';
-
-function withoutCookbook(tree: Root): Root {
-  return {
-    ...tree,
-    children: tree.children.filter((node) => {
-      if (node.type !== 'folder') return true;
-      return !node.index?.url?.startsWith('/docs/cookbook');
-    }),
-  };
-}
+import { getDocsTreeWithoutCookbook } from '@/lib/geistdocs/cookbook-source';
 
 const Layout = async ({ children, params }: LayoutProps<'/[lang]/docs'>) => {
   const { lang } = await params;
 
   return (
-    <DocsLayout tree={withoutCookbook(source.pageTree[lang])}>
+    <DocsLayout tree={getDocsTreeWithoutCookbook(lang)}>
       {children}
     </DocsLayout>
   );

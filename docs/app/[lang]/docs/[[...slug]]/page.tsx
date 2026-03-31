@@ -5,7 +5,6 @@ import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { rewriteCookbookUrl } from '@/lib/geistdocs/cookbook-source';
 import { AgentTraces } from '@/components/custom/agent-traces';
-import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
 import { FluidComputeCallout } from '@/components/custom/fluid-compute-callout';
 import { AskAI } from '@/components/geistdocs/ask-ai';
 import { CopyPage } from '@/components/geistdocs/copy-page';
@@ -84,7 +83,6 @@ const Page = async ({ params }: PageProps<'/[lang]/docs/[[...slug]]'>) => {
             ...AccordionComponents,
             Tabs,
             Tab,
-            CookbookExplorer: () => <CookbookExplorer lang={lang} />,
             // No-op for world MDX files (they redirect to /worlds/[id])
             WorldTestingPerformance: WorldTestingPerformanceNoop,
           })}
