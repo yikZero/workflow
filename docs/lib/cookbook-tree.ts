@@ -565,6 +565,25 @@ export const recipes: Record<string, Recipe> = {
   },
 };
 
+/** Build a cookbook recipe href */
+export function getRecipeHref(lang: string, slug: string): string {
+  return `/${lang}/cookbook/${slugToCategory[slug]}/${slug}`;
+}
+
+/** Get recipes for a category, in definition order */
+export function getRecipesByCategory(category: RecipeCategory): Recipe[] {
+  return Object.values(recipes).filter((r) => r.category === category);
+}
+
+/** Recursively collect all slugs reachable from a branch */
+export function collectSlugs(branch: Branch): string[] {
+  const slugs = branch.slugs ?? [];
+  if (branch.next) {
+    return [...slugs, ...branch.next.branches.flatMap(collectSlugs)];
+  }
+  return slugs;
+}
+
 /** The decision tree */
 export const tree: TreeNode = {
   id: 'root',
