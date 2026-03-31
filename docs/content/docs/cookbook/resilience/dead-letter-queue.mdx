@@ -9,47 +9,44 @@ Use dead letter queue when messages that fail repeatedly should be moved aside f
 
 ## Pattern
 
-A step uses `getStepMetadata()` to track the attempt count. If the attempt reaches the maximum, return a dead-lettered status instead of throwing again. This prevents infinite retry loops while preserving the message.
+Retry delivery with plain JavaScript control flow. If a message still fails after the last attempt, move it aside and return a dead-lettered result.
 
 ```typescript lineNumbers
-import { getStepMetadata } from "workflow";
-
 declare function deliverMessage(messageId: string): Promise<void>; // @setup
+declare function moveToDeadLetter(messageId: string): Promise<void>; // @setup
 
-const MAX_ATTEMPTS = 3;
-
-export async function deadLetterQueue(messages: string[]) {
+export async function deadLetterQueue(
+  messages: string[],
+  maxAttempts: number = 3
+) {
   "use workflow";
 
   const results = [];
 
   for (const messageId of messages) {
-    const result = await processMessage(messageId);
-    results.push(result);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await deliverMessage(messageId);
+        results.push({ messageId, status: "delivered", attempts: attempt });
+        break;
+      } catch {
+        if (attempt === maxAttempts) {
+          await moveToDeadLetter(messageId);
+          results.push({
+            messageId,
+            status: "dead_lettered",
+            attempts: attempt,
+          });
+        }
+      }
+    }
   }
 
   return results;
-}
-
-async function processMessage(messageId: string) {
-  "use step";
-
-  const { attempt } = getStepMetadata();
-
-  try {
-    await deliverMessage(messageId);
-    return { messageId, status: "delivered", attempts: attempt };
-  } catch (error) {
-    if (attempt >= MAX_ATTEMPTS) {
-      return { messageId, status: "dead_lettered", attempts: attempt };
-    }
-    throw error;
-  }
 }
 ```
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`"use step"`](/docs/api-reference/workflow/use-step) — marks functions with full Node.js access
-- [`getStepMetadata()`](/docs/api-reference/step/get-step-metadata) — provides the current attempt number
+- [Workflows & Steps](/docs/foundations/workflows-and-steps) — step helpers keep the workflow logic short and durable

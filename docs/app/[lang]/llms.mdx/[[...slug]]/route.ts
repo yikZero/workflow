@@ -1,6 +1,9 @@
 import { notFound } from 'next/navigation';
+import { rewriteCookbookUrl } from '@/lib/geistdocs/cookbook-source';
 import { getLLMText, source } from '@/lib/geistdocs/source';
 import { i18n } from '@/lib/geistdocs/i18n';
+
+const COOKBOOK_URL_RE_GLOBAL = /\/docs\/cookbook(?=\/|$)/g;
 
 export const revalidate = false;
 
@@ -18,8 +21,10 @@ export async function GET(
   const sitemapPath =
     lang === i18n.defaultLanguage ? '/sitemap.md' : `/${lang}/sitemap.md`;
 
+  const text = await getLLMText(page);
+
   return new Response(
-    (await getLLMText(page)) +
+    text.replace(COOKBOOK_URL_RE_GLOBAL, '/cookbooks') +
       `\n\n## Sitemap
 [Overview of all docs pages](${sitemapPath})\n`,
     {

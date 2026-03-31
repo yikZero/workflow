@@ -38,5 +38,4 @@ export async function namespacedStreams(runId: string, topic: string) {
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`getWritable()`](/docs/api-reference/workflow/get-writable) — creates namespaced streams with `{ namespace: "..." }`
-- [`getWorkflowMetadata()`](/docs/api-reference/workflow/get-workflow-metadata) — retrieves the workflow run ID for telemetry correlation
+- [`Promise.all()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/all) — publishes independent outputs in parallel

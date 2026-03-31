@@ -2,7 +2,7 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
-import { notFound, redirect } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import { AgentTraces } from '@/components/custom/agent-traces';
 import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
 import { FluidComputeCallout } from '@/components/custom/fluid-compute-callout';
@@ -34,7 +34,7 @@ const Page = async ({ params }: PageProps<'/[lang]/docs/[[...slug]]'>) => {
 
   if (Array.isArray(slug) && slug[0] === 'cookbook') {
     const rest = slug.slice(1);
-    redirect(`/${lang}/cookbooks${rest.length ? `/${rest.join('/')}` : ''}`);
+    permanentRedirect(`/${lang}/cookbooks${rest.length ? `/${rest.join('/')}` : ''}`);
   }
 
   const page = source.getPage(slug, lang);

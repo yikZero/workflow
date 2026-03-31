@@ -9,40 +9,25 @@ Use retryable rate limit when an external API returns 429 and you want the runti
 
 ## Pattern
 
-A step throws `RetryableError` with a `retryAfter` duration when it receives a 429 response. The runtime automatically reschedules the step after the specified delay — no manual sleep loops needed.
+Keep the workflow itself boring. The CRM step can throw `RetryableError` on 429, and the workflow code stays a normal fetch-then-store sequence.
 
 ```typescript lineNumbers
-import { RetryableError } from "workflow";
+type Contact = { id: string; email: string };
 
-declare function upsertIntoWarehouse(contactId: string, contact: unknown): Promise<void>; // @setup
+declare function fetchContactFromCrm(contactId: string): Promise<Contact>; // @setup throws RetryableError on 429
+declare function upsertIntoWarehouse(contact: Contact): Promise<void>; // @setup
 
 export async function syncCrmContact(contactId: string) {
   "use workflow";
 
   const contact = await fetchContactFromCrm(contactId);
-  await upsertIntoWarehouse(contactId, contact);
+  await upsertIntoWarehouse(contact);
 
   return { contactId, status: "synced" };
-}
-
-async function fetchContactFromCrm(contactId: string) {
-  "use step";
-
-  const res = await fetch(`https://crm.example.com/contacts/${contactId}`);
-
-  if (res.status === 429) {
-    const retryAfterMs = parseInt(res.headers.get("retry-after") || "2000");
-    throw new RetryableError("CRM rate-limited (429)", {
-      retryAfter: retryAfterMs,
-    });
-  }
-
-  return res.json();
 }
 ```
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
-- [`"use step"`](/docs/api-reference/workflow/use-step) — marks functions with full Node.js access
-- [`RetryableError`](/docs/api-reference/workflow/retryable-error) — signals the runtime to retry after a delay
+- [`RetryableError`](/docs/api-reference/workflow/retryable-error) — lets a step ask the runtime to retry after a delay
