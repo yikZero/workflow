@@ -4,7 +4,10 @@ import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { CookbookExplorer } from '@/components/geistdocs/cookbook-explorer';
-import { rewriteCookbookUrl } from '@/lib/geistdocs/cookbook-source';
+import {
+  rewriteCookbookUrl,
+  rewriteCookbookUrlsInText,
+} from '@/lib/geistdocs/cookbook-source';
 import { AskAI } from '@/components/geistdocs/ask-ai';
 import { CopyPage } from '@/components/geistdocs/copy-page';
 import {
@@ -36,7 +39,7 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
   const publicUrl = rewriteCookbookUrl(page.url);
   const publicPage = { ...page, url: publicUrl } as typeof page;
 
-  const markdown = await getLLMText(page);
+  const markdown = rewriteCookbookUrlsInText(await getLLMText(page));
   const MDX = page.data.body;
 
   return (
@@ -99,7 +102,7 @@ export const generateMetadata = async ({
     notFound();
   }
 
-  const publicPath = `/cookbooks${slug ? `/${slug.join('/')}` : ''}`;
+  const publicPath = rewriteCookbookUrl(page.url);
 
   const metadata: Metadata = {
     title: page.data.title,
@@ -110,7 +113,7 @@ export const generateMetadata = async ({
     alternates: {
       canonical: publicPath,
       types: {
-        'text/markdown': publicPath,
+        'text/markdown': `${publicPath}.md`,
       },
     },
   };

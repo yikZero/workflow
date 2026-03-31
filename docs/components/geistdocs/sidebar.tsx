@@ -12,7 +12,7 @@ import {
 import type { SidebarPageTreeComponents } from 'fumadocs-ui/components/sidebar/page-tree';
 import { useTreeContext, useTreePath } from 'fumadocs-ui/contexts/tree';
 import { usePathname } from 'next/navigation';
-import { Fragment, useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -22,16 +22,6 @@ import {
 } from '@/components/ui/sheet';
 import { useSidebarContext } from '@/hooks/geistdocs/use-sidebar';
 import { SearchButton } from './search';
-
-function isCookbookNode(item: Node) {
-  if (item.type === 'page') {
-    return item.url.startsWith('/docs/cookbook');
-  }
-  if (item.type === 'folder') {
-    return item.index?.url?.startsWith('/docs/cookbook') ?? false;
-  }
-  return false;
-}
 
 export const Sidebar = () => {
   const { root } = useTreeContext();
@@ -45,13 +35,6 @@ export const Sidebar = () => {
       previousPathname.current = pathname;
     }
   }, [pathname, setIsOpen]);
-
-  const sidebarItems = useMemo(() => {
-    if (pathname.includes('/cookbooks')) {
-      return root.children;
-    }
-    return root.children.filter((item) => !isCookbookNode(item));
-  }, [pathname, root.children]);
 
   const renderSidebarList = (items: Node[]) =>
     items.map((item) => {
@@ -77,7 +60,7 @@ export const Sidebar = () => {
       data-sidebar-placeholder
     >
       <div className="h-full overflow-y-auto px-4 pt-12 pb-4">
-        <Fragment key={root.$id}>{renderSidebarList(sidebarItems)}</Fragment>
+        <Fragment key={root.$id}>{renderSidebarList(root.children)}</Fragment>
       </div>
       <Sheet onOpenChange={setIsOpen} open={isOpen}>
         <SheetContent className="gap-0">
@@ -89,7 +72,7 @@ export const Sidebar = () => {
             <SearchButton onClick={() => setIsOpen(false)} />
           </SheetHeader>
           <div className="flex-1 overflow-y-auto px-4 pb-4">
-            {renderSidebarList(sidebarItems)}
+            {renderSidebarList(root.children)}
           </div>
         </SheetContent>
       </Sheet>
