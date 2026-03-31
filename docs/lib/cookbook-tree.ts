@@ -19,6 +19,38 @@ export type Recipe = {
   category: string;
 };
 
+export type RecipeCategory =
+  | 'payments'
+  | 'approvals'
+  | 'resilience'
+  | 'notifications'
+  | 'webhooks'
+  | 'data-processing'
+  | 'routing'
+  | 'observability';
+
+export const categoryOrder: RecipeCategory[] = [
+  'payments',
+  'approvals',
+  'resilience',
+  'notifications',
+  'webhooks',
+  'data-processing',
+  'routing',
+  'observability',
+];
+
+export const categoryLabels: Record<RecipeCategory, string> = {
+  payments: 'Payments & Orders',
+  approvals: 'Approvals',
+  resilience: 'Resilience',
+  notifications: 'Notifications',
+  webhooks: 'Webhooks & Callbacks',
+  'data-processing': 'Data Processing',
+  routing: 'Routing',
+  observability: 'Observability',
+};
+
 /** Map from slug → category folder for URL construction */
 export const slugToCategory: Record<string, string> = {
   saga: 'payments',
