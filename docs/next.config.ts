@@ -39,7 +39,7 @@ const config: NextConfig = {
           ],
         },
         {
-          source: '/cookbooks',
+          source: '/cookbook',
           destination: '/llms.mdx/cookbook',
           has: [
             {
@@ -50,7 +50,7 @@ const config: NextConfig = {
           ],
         },
         {
-          source: '/cookbooks/:path*',
+          source: '/cookbook/:path*',
           destination: '/llms.mdx/cookbook/:path*',
           has: [
             {
@@ -73,12 +73,22 @@ const config: NextConfig = {
       },
       {
         source: '/docs/cookbook',
-        destination: '/cookbooks',
+        destination: '/cookbook',
         permanent: true,
       },
       {
         source: '/docs/cookbook/:path*',
-        destination: '/cookbooks/:path*',
+        destination: '/cookbook/:path*',
+        permanent: true,
+      },
+      {
+        source: '/cookbooks',
+        destination: '/cookbook',
+        permanent: true,
+      },
+      {
+        source: '/cookbooks/:path*',
+        destination: '/cookbook/:path*',
         permanent: true,
       },
       {

@@ -111,7 +111,7 @@ function getRecipeCategory(recipe: Recipe): RecipeCategory {
 }
 
 function getRecipeHref(lang: string, recipe: Recipe) {
-  return `/${lang}/cookbooks/${getRecipeCategory(recipe)}/${recipe.slug}`;
+  return `/${lang}/cookbook/${getRecipeCategory(recipe)}/${recipe.slug}`;
 }
 
 function RecipeCard({

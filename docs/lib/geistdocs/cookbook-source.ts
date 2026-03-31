@@ -13,11 +13,11 @@ type FolderNode = Extract<Node, { type: 'folder' }>;
 type PageNode = Extract<Node, { type: 'page' }>;
 
 export function rewriteCookbookUrl(url: string): string {
-  return url.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
+  return url.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbook');
 }
 
 export function rewriteCookbookUrlsInText(text: string): string {
-  return text.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbooks');
+  return text.replace(COOKBOOK_DOCS_PREFIX_RE, '/cookbook');
 }
 
 function isCookbookFolder(node: Node): boolean {
@@ -44,33 +44,30 @@ function createOverviewPage(): PageNode {
     type: 'page',
     $id: 'cookbook__overview',
     name: 'Overview',
-    url: '/cookbooks',
+    url: '/cookbook',
   } as PageNode;
 }
 
-function createRecipePage(
-  category: RecipeCategory,
-  slug: string,
-): PageNode {
+function createRecipePage(category: RecipeCategory, slug: string): PageNode {
   const recipe = recipes[slug];
   return {
     type: 'page',
     $id: `cookbook__${slug}`,
     name: recipe.title,
-    url: `/cookbooks/${category}/${slug}`,
+    url: `/cookbook/${category}/${slug}`,
   } as PageNode;
 }
 
 function createCategoryFolder(category: RecipeCategory): FolderNode {
   const categoryRecipes = Object.values(recipes).filter(
-    (recipe) => recipe.category === category,
+    (recipe) => recipe.category === category
   );
   return {
     type: 'folder',
     $id: `cookbook__${category}`,
     name: categoryLabels[category],
     children: categoryRecipes.map((recipe) =>
-      createRecipePage(category as RecipeCategory, recipe.slug),
+      createRecipePage(category as RecipeCategory, recipe.slug)
     ),
   } as FolderNode;
 }
@@ -84,7 +81,7 @@ export function getCookbookTree(lang: string): Root {
 
   return {
     ...fullTree,
-    name: 'Cookbooks',
+    name: 'Cookbook',
     children: [
       createOverviewPage(),
       ...categoryOrder.map((category) => createCategoryFolder(category)),

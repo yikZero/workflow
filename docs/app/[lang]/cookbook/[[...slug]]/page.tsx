@@ -29,7 +29,7 @@ import { getLLMText, getPageImage, source } from '@/lib/geistdocs/source';
 const LazyCookbookExplorer = dynamic(
   () =>
     import('@/components/geistdocs/cookbook-explorer').then(
-      (mod) => mod.CookbookExplorer,
+      (mod) => mod.CookbookExplorer
     ),
   {
     loading: () => (
@@ -41,10 +41,10 @@ const LazyCookbookExplorer = dynamic(
         Loading cookbook explorer&hellip;
       </div>
     ),
-  },
+  }
 );
 
-const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
+const Page = async ({ params }: PageProps<'/[lang]/cookbook/[[...slug]]'>) => {
   const { slug, lang } = await params;
 
   // Prepend 'cookbook' to resolve from the docs source
@@ -64,7 +64,9 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
   const RelativeLink = createRelativeLink(source, publicPage);
   const PublicCookbookLink = (props: ComponentProps<typeof RelativeLink>) => {
     const href =
-      typeof props.href === 'string' ? rewriteCookbookUrl(props.href) : props.href;
+      typeof props.href === 'string'
+        ? rewriteCookbookUrl(props.href)
+        : props.href;
     return <RelativeLink {...props} href={href} />;
   };
 
@@ -119,7 +121,7 @@ export const generateStaticParams = () => {
 
 export const generateMetadata = async ({
   params,
-}: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
+}: PageProps<'/[lang]/cookbook/[[...slug]]'>) => {
   const { slug, lang } = await params;
   const resolvedSlug = slug ? ['cookbook', ...slug] : ['cookbook'];
   const page = source.getPage(resolvedSlug, lang);

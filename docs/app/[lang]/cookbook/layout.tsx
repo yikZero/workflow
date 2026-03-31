@@ -4,7 +4,7 @@ import { getCookbookTree } from '@/lib/geistdocs/cookbook-source';
 const Layout = async ({
   children,
   params,
-}: LayoutProps<'/[lang]/cookbooks'>) => {
+}: LayoutProps<'/[lang]/cookbook'>) => {
   const { lang } = await params;
 
   return <DocsLayout tree={getCookbookTree(lang)}>{children}</DocsLayout>;
