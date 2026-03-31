@@ -52,6 +52,7 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     { inputExt: '.cts', outputExt: '.cjs' },
   ])('rewrites externalized $inputExt imports to $outputExt when rewriteTsExtensions is enabled', async ({
     inputExt,
+    outputExt,
   }) => {
     const outdir = join(testRoot, 'out');
     const srcDir = join(testRoot, 'src');
@@ -116,7 +117,7 @@ describe('createSwcPlugin externalizeNonSteps', () => {
 
     expect(result.errors).toHaveLength(0);
     const output = result.outputFiles[0].text;
-    expect(output).toContain(`/dep$inputExt`);
+    expect(output).toContain(`/dep${inputExt}`);
   });
 });
 
