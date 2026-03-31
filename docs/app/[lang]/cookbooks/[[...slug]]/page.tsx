@@ -99,6 +99,8 @@ export const generateMetadata = async ({
     notFound();
   }
 
+  const publicPath = `/cookbooks${slug ? `/${slug.join('/')}` : ''}`;
+
   const metadata: Metadata = {
     title: page.data.title,
     description: page.data.description,
@@ -106,9 +108,9 @@ export const generateMetadata = async ({
       images: getPageImage(page).url,
     },
     alternates: {
-      canonical: `/cookbooks${slug ? `/${slug.join('/')}` : ''}`,
+      canonical: publicPath,
       types: {
-        'text/markdown': `/cookbooks${slug ? `/${slug.join('/')}` : ''}.md`,
+        'text/markdown': publicPath,
       },
     },
   };

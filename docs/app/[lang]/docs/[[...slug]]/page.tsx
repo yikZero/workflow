@@ -94,7 +94,13 @@ const Page = async ({ params }: PageProps<'/[lang]/docs/[[...slug]]'>) => {
   );
 };
 
-export const generateStaticParams = () => source.generateParams();
+export const generateStaticParams = () =>
+  source
+    .generateParams()
+    .filter(
+      (params) =>
+        !(Array.isArray(params.slug) && params.slug[0] === 'cookbook'),
+    );
 
 export const generateMetadata = async ({
   params,
