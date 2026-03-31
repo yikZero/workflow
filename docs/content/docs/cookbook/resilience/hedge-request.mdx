@@ -5,166 +5,27 @@ type: guide
 summary: Fire the same search query to two replicas and use whichever responds first.
 ---
 
-Fire the same search query to two replicas and use whichever responds first.
+Use hedge request when tail latency matters more than redundant work — fire the same request at multiple providers and take the first response.
 
 ## Pattern
 
-The workflow launches the same step against multiple providers using `Promise.race()`. The first provider to respond wins, and the result is returned immediately. Because steps run in parallel, this cuts tail latency at the cost of redundant work.
-
-### Simplified
+Launch the same step against multiple providers using `Promise.race()`. The first to respond wins. Because steps run in parallel, this cuts tail latency at the cost of extra calls.
 
 ```typescript lineNumbers
-export async function hedgeRequest(
-  query: string,
-  providers: { name: string }[]
-) {
+declare function queryProvider(name: string, query: string): Promise<{ provider: string; data: unknown }>; // @setup
+
+export async function hedgeRequest(query: string, providers: string[]) {
   "use workflow";
 
   const result = await Promise.race(
-    providers.map((provider) => callProvider(provider.name, query))
+    providers.map((name) => queryProvider(name, query))
   );
 
-  return { winner: result.provider, result: result.data };
-}
-
-async function callProvider(provider: string, query: string) {
-  "use step";
-  const data = await fetch(`https://${provider}.example.com/search?q=${query}`);
-  return { provider, data: await data.json() };
-}
-```
-
-### Full Implementation
-
-```typescript lineNumbers
-import { getWritable } from "workflow";
-
-export type HedgeEvent =
-  | { type: "config"; providers: string[]; query: string }
-  | { type: "provider_started"; provider: string }
-  | { type: "provider_responded"; provider: string; latencyMs: number }
-  | { type: "provider_lost"; provider: string; latencyMs: number }
-  | { type: "winner"; provider: string; latencyMs: number; result: string }
-  | { type: "done"; winner: string; latencyMs: number; totalProviders: number };
-
-export interface HedgeResult {
-  winner: string;
-  latencyMs: number;
-  totalProviders: number;
-}
-
-export interface HedgeInput {
-  query: string;
-  providers: ProviderConfig[];
-}
-
-export type ProviderConfig = {
-  name: string;
-  simulatedLatencyMs: number;
-};
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function hedgeRequestFlow(
-  input: HedgeInput
-): Promise<HedgeResult> {
-  "use workflow";
-
-  const { query, providers } = input;
-
-  await emitEvent({
-    type: "config",
-    providers: providers.map((p) => p.name),
-    query,
-  });
-
-  // Launch all providers in parallel, race for fastest
-  const raceResult = await Promise.race(
-    providers.map((provider) => callProvider(provider, query))
-  );
-
-  // Mark losers
-  for (const provider of providers) {
-    if (provider.name !== raceResult.provider) {
-      await emitEvent({
-        type: "provider_lost",
-        provider: provider.name,
-        latencyMs: provider.simulatedLatencyMs,
-      });
-    }
-  }
-
-  await emitEvent({
-    type: "done",
-    winner: raceResult.provider,
-    latencyMs: raceResult.latencyMs,
-    totalProviders: providers.length,
-  });
-
-  return {
-    winner: raceResult.provider,
-    latencyMs: raceResult.latencyMs,
-    totalProviders: providers.length,
-  };
-}
-
-export async function callProvider(
-  provider: ProviderConfig,
-  query: string
-): Promise<{ provider: string; latencyMs: number; result: string }> {
-  "use step";
-
-  const writer = getWritable<HedgeEvent>().getWriter();
-  try {
-    await writer.write({
-      type: "provider_started",
-      provider: provider.name,
-    });
-
-    // Simulate variable latency
-    await delay(provider.simulatedLatencyMs);
-
-    const result = `${provider.name} processed "${query}"`;
-
-    await writer.write({
-      type: "provider_responded",
-      provider: provider.name,
-      latencyMs: provider.simulatedLatencyMs,
-    });
-
-    await writer.write({
-      type: "winner",
-      provider: provider.name,
-      latencyMs: provider.simulatedLatencyMs,
-      result,
-    });
-
-    return {
-      provider: provider.name,
-      latencyMs: provider.simulatedLatencyMs,
-      result,
-    };
-  } finally {
-    writer.releaseLock();
-  }
-}
-
-async function emitEvent(event: HedgeEvent): Promise<void> {
-  "use step";
-  const writer = getWritable<HedgeEvent>().getWriter();
-  try {
-    await writer.write(event);
-  } finally {
-    writer.releaseLock();
-  }
+  return { winner: result.provider, data: result.data };
 }
 ```
 
 ## Key APIs
 
-- [`"use workflow"`](/docs/foundations/workflows-and-steps) — marks the orchestrator function
-- [`"use step"`](/docs/foundations/workflows-and-steps) — marks functions that run with full Node.js access
+- [`"use workflow"`](/docs/api-reference/workflow/use-workflow) — declares the orchestrator function
 - [`Promise.race()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/race) — returns the first provider to respond
-- [`getWritable()`](/docs/api-reference/step/get-writable) — streams events to the caller

@@ -161,7 +161,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
               return (
                 <Link
                   key={recipe.slug}
-                  href={`/${lang}/docs/cookbook/${category}/${recipe.slug}`}
+                  href={`/${lang}/cookbooks/${category}/${recipe.slug}`}
                   className="group flex flex-col rounded-xl border border-border bg-card p-6 transition-all hover:border-muted-foreground/40 hover:bg-accent"
                 >
                   <p className="text-base leading-relaxed text-foreground">
