@@ -31,7 +31,17 @@ const LazyCookbookExplorer = dynamic(
     import('@/components/geistdocs/cookbook-explorer').then(
       (mod) => mod.CookbookExplorer,
     ),
-  { loading: () => null },
+  {
+    loading: () => (
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground"
+      >
+        Loading cookbook explorer&hellip;
+      </div>
+    ),
+  },
 );
 
 const Page = async ({ params }: PageProps<'/[lang]/cookbooks/[[...slug]]'>) => {
