@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   useCallback,
   useEffect,
@@ -34,6 +34,77 @@ type RecipeCardProps = {
   onFocus?: () => void;
   onKeyDown?: (event: ReactKeyboardEvent<HTMLAnchorElement>) => void;
 };
+
+type SearchParamReader = { get(name: string): string | null };
+
+const VIEW_PARAM = 'view';
+const QUERY_PARAM = 'q';
+const CATEGORY_PARAM = 'category';
+
+function isRecipeCategory(value: string | null): value is RecipeCategory {
+  return value != null && categoryOrder.includes(value as RecipeCategory);
+}
+
+function readExplorerMode(params: SearchParamReader): ExplorerMode {
+  return params.get(VIEW_PARAM) === 'browse' ? 'browse' : 'guided';
+}
+
+function readExplorerQuery(params: SearchParamReader): string {
+  return params.get(QUERY_PARAM) ?? '';
+}
+
+function readExplorerCategory(params: SearchParamReader): CategoryFilter {
+  const value = params.get(CATEGORY_PARAM);
+  return isRecipeCategory(value) ? value : 'all';
+}
+
+function buildExplorerUrl(
+  pathname: string,
+  mode: ExplorerMode,
+  query: string,
+  category: CategoryFilter
+) {
+  const params = new URLSearchParams();
+  if (mode === 'browse') params.set(VIEW_PARAM, 'browse');
+  if (query.trim()) params.set(QUERY_PARAM, query.trim());
+  if (category !== 'all') params.set(CATEGORY_PARAM, category);
+  const search = params.toString();
+  return search ? `${pathname}?${search}` : pathname;
+}
+
+type QuickPick = {
+  label: string;
+  query: string;
+  category: CategoryFilter;
+  description: string;
+};
+
+const QUICK_PICKS: QuickPick[] = [
+  {
+    label: 'Retry flaky APIs',
+    query: 'retry',
+    category: 'resilience',
+    description: 'Backoff, 429s, circuit breakers',
+  },
+  {
+    label: 'Wait for approval',
+    query: 'approval',
+    category: 'approvals',
+    description: 'Single-step or chained sign-off',
+  },
+  {
+    label: 'Handle webhooks',
+    query: 'webhook',
+    category: 'webhooks',
+    description: 'Callbacks, polling, claim checks',
+  },
+  {
+    label: 'Route dynamically',
+    query: 'route',
+    category: 'routing',
+    description: 'Routers, slips, detours, filters',
+  },
+];
 
 function getRecipeCategory(recipe: Recipe): RecipeCategory {
   return slugToCategory[recipe.slug] as RecipeCategory;
@@ -100,14 +171,45 @@ function RecipeCard({
 
 export function CookbookExplorer({ lang }: { lang: string }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const [mode, setMode] = useState<ExplorerMode>('guided');
+  const [mode, setMode] = useState<ExplorerMode>(() =>
+    readExplorerMode(searchParams)
+  );
   const [path, setPath] = useState<PathEntry[]>([]);
-  const [query, setQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] =
-    useState<CategoryFilter>('all');
+  const [query, setQuery] = useState(() => readExplorerQuery(searchParams));
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>(() =>
+    readExplorerCategory(searchParams)
+  );
   const [activeIndex, setActiveIndex] = useState(0);
+
+  // Sync state from URL on popstate / external navigation
+  useEffect(() => {
+    const nextMode = readExplorerMode(searchParams);
+    const nextQuery = readExplorerQuery(searchParams);
+    const nextCategory = readExplorerCategory(searchParams);
+    setMode((current) => (current === nextMode ? current : nextMode));
+    setQuery((current) => (current === nextQuery ? current : nextQuery));
+    setSelectedCategory((current) =>
+      current === nextCategory ? current : nextCategory
+    );
+  }, [searchParams]);
+
+  // Push state changes to the URL
+  useEffect(() => {
+    const currentUrl = buildExplorerUrl(
+      pathname,
+      readExplorerMode(searchParams),
+      readExplorerQuery(searchParams),
+      readExplorerCategory(searchParams)
+    );
+    const nextUrl = buildExplorerUrl(pathname, mode, query, selectedCategory);
+    if (nextUrl !== currentUrl) {
+      router.replace(nextUrl, { scroll: false });
+    }
+  }, [pathname, router, searchParams, mode, query, selectedCategory]);
 
   const allRecipes = useMemo(
     () =>
@@ -181,8 +283,38 @@ export function CookbookExplorer({ lang }: { lang: string }) {
     [filteredRecipes.length]
   );
 
+  const openBrowse = useCallback(
+    (next?: Partial<{ query: string; category: CategoryFilter }>) => {
+      setMode('browse');
+      if (next?.query !== undefined) setQuery(next.query);
+      if (next?.category !== undefined) setSelectedCategory(next.category);
+      setActiveIndex(0);
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    },
+    []
+  );
+
+  const clearBrowse = useCallback(() => {
+    setQuery('');
+    setSelectedCategory('all');
+    setActiveIndex(0);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  const closeBrowse = useCallback(() => {
+    setMode('guided');
+    setQuery('');
+    setSelectedCategory('all');
+    setActiveIndex(0);
+  }, []);
+
   const handleRecipeKeyDown = useCallback(
     (index: number) => (event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
       if (filteredRecipes.length === 0) return;
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -204,7 +336,6 @@ export function CookbookExplorer({ lang }: { lang: string }) {
     [filteredRecipes.length, focusRecipe]
   );
 
-  // Only / and ⌘K stay global — arrow keys are handled per-element
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -213,21 +344,30 @@ export function CookbookExplorer({ lang }: { lang: string }) {
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
           target.isContentEditable);
+      const isInsideExplorer = !!target?.closest?.('[data-cookbook-explorer]');
 
       if (
-        ((event.metaKey || event.ctrlKey) &&
-          event.key.toLowerCase() === 'k') ||
+        ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') ||
         (event.key === '/' && !isEditable)
       ) {
         event.preventDefault();
-        setMode('browse');
-        requestAnimationFrame(() => searchInputRef.current?.focus());
+        openBrowse();
+        return;
+      }
+
+      if (event.key === 'Escape' && isInsideExplorer && mode === 'browse') {
+        event.preventDefault();
+        if (query || selectedCategory !== 'all') {
+          clearBrowse();
+        } else {
+          closeBrowse();
+        }
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [openBrowse, clearBrowse, closeBrowse, mode, query, selectedCategory]);
 
   // --- Guided mode state ---
 
@@ -284,7 +424,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
   );
 
   return (
-    <div>
+    <div data-cookbook-explorer>
       {/* Mode switcher */}
       <div
         className="mb-8 flex flex-wrap items-center gap-2"
@@ -294,7 +434,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
           type="button"
           aria-pressed={mode === 'guided'}
           aria-controls="cookbook-guided-panel"
-          onClick={() => setMode('guided')}
+          onClick={() => closeBrowse()}
           className={`min-h-11 rounded-full px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
             mode === 'guided'
               ? 'bg-primary text-primary-foreground'
@@ -307,10 +447,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
           type="button"
           aria-pressed={mode === 'browse'}
           aria-controls="cookbook-browse-panel"
-          onClick={() => {
-            setMode('browse');
-            requestAnimationFrame(() => searchInputRef.current?.focus());
-          }}
+          onClick={() => openBrowse()}
           className={`min-h-11 rounded-full px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
             mode === 'browse'
               ? 'bg-primary text-primary-foreground'
@@ -321,16 +458,35 @@ export function CookbookExplorer({ lang }: { lang: string }) {
         </button>
         <span className="ml-2 text-xs font-mono text-muted-foreground">
           Press{' '}
-          <kbd className="rounded border border-border px-1.5 py-0.5">/</kbd>{' '}
-          or{' '}
+          <kbd className="rounded border border-border px-1.5 py-0.5">/</kbd> or{' '}
+          <kbd className="rounded border border-border px-1.5 py-0.5">⌘K</kbd> /{' '}
           <kbd className="rounded border border-border px-1.5 py-0.5">
-            ⌘K
+            Ctrl+K
           </kbd>
         </span>
       </div>
 
       {/* Browse mode */}
       <div id="cookbook-browse-panel" hidden={mode !== 'browse'}>
+        <div
+          className="mb-4 flex flex-wrap gap-2"
+          aria-label="Quick cookbook picks"
+        >
+          {QUICK_PICKS.map((pick) => (
+            <button
+              key={pick.label}
+              type="button"
+              title={pick.description}
+              onClick={() =>
+                openBrowse({ query: pick.query, category: pick.category })
+              }
+              className="min-h-11 rounded-full border border-border px-4 py-2 text-xs font-mono text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {pick.label}
+            </button>
+          ))}
+        </div>
+
         <div className="mb-4 rounded-2xl border border-border bg-card p-4 focus-within:ring-2 focus-within:ring-primary">
           <div className="flex items-center gap-3">
             <svg
@@ -354,10 +510,31 @@ export function CookbookExplorer({ lang }: { lang: string }) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  if (query || selectedCategory !== 'all') {
+                    clearBrowse();
+                  } else {
+                    closeBrowse();
+                  }
+                  return;
+                }
                 if (filteredRecipes.length === 0) return;
                 if (event.key === 'ArrowDown') {
                   event.preventDefault();
                   focusRecipe(activeIndex);
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  focusRecipe(filteredRecipes.length - 1);
+                }
+                if (event.key === 'Home') {
+                  event.preventDefault();
+                  focusRecipe(0);
+                }
+                if (event.key === 'End') {
+                  event.preventDefault();
+                  focusRecipe(filteredRecipes.length - 1);
                 }
                 if (event.key === 'Enter') {
                   event.preventDefault();
@@ -375,11 +552,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
             Type to filter recipes. Press Arrow Down to move into the results.
             Press Enter to open the highlighted recipe.
           </p>
-          <p
-            id="cookbook-search-status"
-            className="sr-only"
-            aria-live="polite"
-          >
+          <p id="cookbook-search-status" className="sr-only" aria-live="polite">
             {filteredRecipes.length} of {recipeCount} recipes shown.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -483,9 +656,8 @@ export function CookbookExplorer({ lang }: { lang: string }) {
             {currentNode.id === 'root' && (
               <p className="mb-6 text-sm text-muted-foreground">
                 Answer a few questions to find the right pattern from{' '}
-                {recipeCount} recipes, or switch to{' '}
-                <strong>Browse all</strong> if you already know roughly what
-                you want.
+                {recipeCount} recipes, or switch to <strong>Browse all</strong>{' '}
+                if you already know roughly what you want.
               </p>
             )}
             <div className="grid gap-3">
@@ -534,11 +706,7 @@ export function CookbookExplorer({ lang }: { lang: string }) {
             </p>
             <div className="grid gap-4">
               {resultRecipes.map((recipe) => (
-                <RecipeCard
-                  key={recipe.slug}
-                  lang={lang}
-                  recipe={recipe}
-                />
+                <RecipeCard key={recipe.slug} lang={lang} recipe={recipe} />
               ))}
             </div>
             <div className="mt-8">
