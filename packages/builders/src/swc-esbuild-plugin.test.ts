@@ -117,7 +117,7 @@ describe('createSwcPlugin externalizeNonSteps', () => {
 
     expect(result.errors).toHaveLength(0);
     const output = result.outputFiles[0].text;
-    expect(output).toContain(`/dep$inputExt`);
+    expect(output).toContain(`/dep${inputExt}`);
   });
 });
 
