@@ -49,9 +49,6 @@ class VitestBuilder extends BaseBuilder {
       format: 'esm',
       bundleFinalOutput: false,
       externalizeNonSteps: true,
-      rewriteTsExtensions: true,
-      format: 'esm',
-      inputFiles,
     });
   }
 }
