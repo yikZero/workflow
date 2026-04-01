@@ -11,17 +11,59 @@
 
 ## Choosing hook vs webhook
 
-Prefer `createHook()` + `resumeHook()` when:
+Choose exactly one resume surface for Signals, `step.waitForEvent()`, and `.waitForTaskToken`.
 
-- the source system used Signals, `step.waitForEvent()`, or `.waitForTaskToken`
+Use `createHook()` + `resumeHook()` when:
+- the app resumes the workflow from server-side code
 - the resume point can be addressed with a deterministic business token such as `order:${orderId}:approval`
-- the app will resume the workflow from server-side code
 
 Use `createWebhook()` when:
+- the external system needs a generated callback URL
+- the migration needs raw `Request` handling inside the workflow
+- the intended resume surface is the generated `webhook.url`
 
-- the external system should call the generated URL directly
-- the migration needs raw `Request` / `Response` handling
-- deterministic tokens are not required
+Do not:
+- pair `createWebhook()` with `resumeHook()`
+- pass `token:` to `createWebhook()`
+- invent a custom callback route when `webhook.url` is the intended resume surface
+
+## Named-framework internal resume example (Hono)
+
+Use this when the migration selected `resume/internal` and the prompt names Hono.
+
+```ts
+import { Hono } from 'hono';
+import { resumeHook } from 'workflow/api';
+
+const app = new Hono();
+
+app.post('/api/orders/:orderId/approve', async (c) => {
+  const orderId = c.req.param('orderId');
+  const body = (await c.req.json()) as { approved: boolean };
+
+  await resumeHook(`order:${orderId}:approval`, {
+    approved: body.approved,
+  });
+
+  return c.json({ ok: true });
+});
+
+export default app;
+```
+
+**Sample input**
+
+```md
+Migrate an Inngest approval workflow to Vercel Workflow for Hono.
+The app resumes approvals from server-side code with a deterministic token.
+```
+
+**Expected output**
+
+- Uses `createHook()` in workflow code
+- Uses Hono syntax for the `resumeHook()` endpoint
+- Does not use `createWebhook()`
+- Does not emit a plain `Request` / `Response` approval handler
 
 ## Deterministic server-side resume
 

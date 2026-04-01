@@ -66,6 +66,24 @@ export async function POST(request: Request) {
 }
 ```
 
+Named-framework app boundary example (Hono):
+
+```ts
+import { Hono } from 'hono';
+import { start } from 'workflow/api';
+import { onboardingWorkflow } from '../workflows/onboarding';
+
+const app = new Hono();
+
+app.post('/api/onboarding/start', async (c) => {
+  const body = (await c.req.json()) as { userId: string };
+  const run = await start(onboardingWorkflow, [body.userId]);
+  return c.json({ runId: run.runId });
+});
+
+export default app;
+```
+
 Startup bootstrap:
 
 ```ts
@@ -85,5 +103,7 @@ export async function startWorkflowWorld(): Promise<void> {
 Apply these in order:
 
 1. If the prompt explicitly asks for framework-agnostic app-boundary examples, use plain `Request` / `Response` even when a framework like Hono is named.
-2. Otherwise, if the target framework is named, shape app-boundary examples to that framework.
+2. Otherwise, if the target framework is named, shape every user-authored app-boundary snippet to that framework.
 3. Otherwise, keep examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
+
+For `createWebhook()` migrations, the generated `webhook.url` is the callback surface. Do not invent a separate framework callback route unless the prompt explicitly asks for one.

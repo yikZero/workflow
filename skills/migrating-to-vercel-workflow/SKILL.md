@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.4'
+  version: '0.1.5'
 ---
 
 # Migrating to Vercel Workflow
@@ -114,9 +114,11 @@ Apply every obligation that matches the selected route keys.
 - `resume/url`
   - Workflow code must use `createWebhook({ respondWith: 'manual' })`.
   - External request setup must pass `webhook.url`.
+  - In `## App Boundary / Resume Endpoints`, treat the generated `webhook.url` as the resume surface.
   - Callback parsing and `request.respondWith()` must stay inside a `"use step"` function using `RequestWithResponse`.
   - Do not emit `resumeHook(...)`.
   - Do not pass `token:` to `createWebhook()`.
+  - Do not invent a user-authored callback route or `resumeWebhook()` wrapper unless the prompt explicitly asks for one.
 - `runtime/self-hosted`
   - Include `interface World extends Storage, Queue, Streamer { start?(): Promise<void>; }`.
   - Include `startWorkflowWorld(): Promise<void>`.
@@ -125,7 +127,9 @@ Apply every obligation that matches the selected route keys.
 - `boundary/framework-agnostic`
   - Use plain `Request` / `Response`.
 - `boundary/named-framework`
-  - Use the named framework's syntax for start-route examples.
+  - Use the named framework's syntax for every user-authored app-boundary snippet.
+  - This includes `start()` routes and any `resumeHook()` or status endpoints.
+  - Do not mix a named framework `start()` route with a plain `Request` / `Response` internal-resume endpoint unless the prompt explicitly asks for framework-agnostic app-boundary code.
 
 Use this exact planning shape:
 
@@ -203,6 +207,7 @@ Fail the draft if any of these are true:
 - [ ] `createWebhook()` is given a custom `token` or paired with `resumeHook()`
 - [ ] A self-hosted or non-Vercel target omits the `World` requirement or startup bootstrap
 - [ ] App-boundary examples ignore an explicitly requested framework-agnostic requirement or a named target framework
+- [ ] A named-framework migration mixes framework syntax for `start()` with plain `Request` / `Response` for a user-authored `resumeHook()` endpoint without a framework-agnostic override
 - [ ] The migration claims Vercel-managed execution for a self-hosted or non-Vercel target
 
 ## Sample prompt
@@ -256,6 +261,61 @@ app.post('/api/refunds/start', async (c) => {
   const run = await start(refundWorkflow, [body.refundId]);
   return c.json({ runId: run.runId });
 });
+export default app;
+```
+
+```ts
+import { Hono } from 'hono';
+import { resumeHook } from 'workflow/api';
+
+const app = new Hono();
+
+app.post('/api/refunds/:refundId/approve', async (c) => {
+  const refundId = c.req.param('refundId');
+  const body = (await c.req.json()) as { approved: boolean };
+
+  await resumeHook(`refund:${refundId}:approval`, {
+    approved: body.approved,
+  });
+
+  return c.json({ ok: true });
+});
+
+export default app;
+```
+
+**Sample input:**
+
+```md
+Migrate this Temporal approval flow to Vercel Workflow for Hono.
+Keep app-boundary code in Hono syntax.
+```
+
+**Expected output:**
+
+```md
+## Migration Plan
+- Source: Temporal
+- Route keys: resume/internal, boundary/named-framework
+```
+
+```ts
+import { Hono } from 'hono';
+import { resumeHook } from 'workflow/api';
+
+const app = new Hono();
+
+app.post('/api/orders/:orderId/approve', async (c) => {
+  const orderId = c.req.param('orderId');
+  const body = (await c.req.json()) as { approved: boolean };
+
+  await resumeHook(`order:${orderId}:approval`, {
+    approved: body.approved,
+  });
+
+  return c.json({ ok: true });
+});
+
 export default app;
 ```
 
