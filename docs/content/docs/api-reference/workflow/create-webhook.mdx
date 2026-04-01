@@ -51,9 +51,9 @@ The returned `Webhook` object has:
 
 - `url`: The HTTP endpoint URL that external systems can call
 - `token`: The unique token identifying this webhook
-- Implements `AsyncIterable<RequestWithResponse>` for handling multiple requests
+- Implements `AsyncIterable<T>` for handling multiple requests, where `T` is `Request` (default) or `RequestWithResponse` (manual mode)
 
-The `RequestWithResponse` type extends the standard `Request` interface with a `respondWith(response: Response)` method for sending custom responses back to the caller.
+When using `createWebhook({ respondWith: 'manual' })`, the resolved request type is `RequestWithResponse`, which extends the standard `Request` interface with a `respondWith(response: Response): Promise<void>` method for sending custom responses back to the caller.
 
 ## Examples
 
@@ -80,27 +80,27 @@ export async function basicWebhookWorkflow() {
 }
 ```
 
-### Responding to Webhook Requests
+### Responding to Webhook Requests (Manual Mode)
 
-Use the `respondWith()` method to send custom HTTP responses. Note that `respondWith()` must be called from within a step function:
+Pass `{ respondWith: "manual" }` to get a `RequestWithResponse` object with a `respondWith()` method. Note that `respondWith()` must be called from within a step function:
 
 ```typescript lineNumbers
 import { createWebhook, type RequestWithResponse } from "workflow"
 
-async function sendResponse(request: RequestWithResponse) { // [!code highlight]
-  "use step"; // [!code highlight]
-  await request.respondWith( // [!code highlight]
-    new Response(JSON.stringify({ success: true, message: "Received!" }), { // [!code highlight]
-      status: 200, // [!code highlight]
-      headers: { "Content-Type": "application/json" } // [!code highlight]
-    }) // [!code highlight]
-  ); // [!code highlight]
-} // [!code highlight]
+async function sendResponse(request: RequestWithResponse): Promise<void> {
+  "use step";
+  await request.respondWith(
+    new Response(JSON.stringify({ success: true, message: "Received!" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })
+  );
+}
 
 export async function respondingWebhookWorkflow() {
   "use workflow";
 
-  using webhook = createWebhook();
+  using webhook = createWebhook({ respondWith: "manual" });
   console.log("Webhook URL:", webhook.url);
 
   const request = await webhook;
@@ -113,7 +113,7 @@ export async function respondingWebhookWorkflow() {
   await processData(data);
 }
 
-async function processData(data: any) {
+async function processData(data: any): Promise<void> {
   "use step";
   // Process the webhook data
   console.log("Processing:", data);

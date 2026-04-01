@@ -35,7 +35,9 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Use `sleep()` only in workflow context.
 - For Signals, `step.waitForEvent()`, and `.waitForTaskToken`, choose exactly one resume surface:
   - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
-  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`.
+  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`, and the default `202 Accepted` response is fine.
+  - Use `createWebhook({ respondWith: 'manual' })` only when the prompt explicitly requires a custom response body, status, or headers.
+  - If a callback-URL prompt does not specify response semantics, default to plain `createWebhook()` and make the assumption explicit in `## Open Questions`.
 - Never pair `createWebhook()` with `resumeHook()`, and never pass `token:` to `createWebhook()`.
 - Wrap `start()` and `getRun()` inside `"use step"` functions for child runs.
 - Use `getStepMetadata().stepId` as the idempotency key for external writes.

@@ -21,6 +21,15 @@ Use `createWebhook()` when:
 - the external system needs a generated callback URL
 - the migration needs raw `Request` handling inside the workflow
 - the intended resume surface is the generated `webhook.url`
+- the default `202 Accepted` response is fine
+
+Use `createWebhook({ respondWith: 'manual' })` when:
+- the external system still needs a generated callback URL
+- the prompt explicitly requires a custom response body, status, or headers
+- the migration needs `RequestWithResponse`
+- `request.respondWith()` will run inside a `"use step"` function
+
+Default to plain `createWebhook()` when the prompt only says "callback URL" and does not require a custom response.
 
 Do not:
 - pair `createWebhook()` with `resumeHook()`
