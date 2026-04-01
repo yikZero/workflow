@@ -95,7 +95,7 @@ export async function createUser(email: string) {
   return { id: crypto.randomUUID(), email };
 }
 
-registerStepFunction("step//./workflows/user//createUser", createUser); // [!code highlight]
+registerStepFunction("step//workflows/user.js//createUser", createUser); // [!code highlight]
 ```
 
 **What happens:**
@@ -107,7 +107,7 @@ registerStepFunction("step//./workflows/user//createUser", createUser); // [!cod
 
 **Why no transformation?** Step functions execute in your main runtime with full access to Node.js APIs, file system, databases, etc. They don't need any special handling—they just run normally.
 
-**ID Format:** Step IDs follow the pattern `step//{modulePath}//{functionName}`, where the module path is a `./`-prefixed relative path with file extensions stripped.
+**ID Format:** Step IDs follow the pattern `step//{filepath}//{functionName}`, where the filepath is relative to your project root.
 
 </Tab>
 <Tab value="Workflow Mode">
@@ -134,18 +134,20 @@ export async function handleUserSignup(email: string) {
 
 {/* @skip-typecheck: incomplete code sample */}
 ```typescript
-export var createUser = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/user//createUser"); // [!code highlight]
+export async function createUser(email: string) {
+  return globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//workflows/user.js//createUser")(email); // [!code highlight]
+}
 
 export async function handleUserSignup(email: string) {
   const user = await createUser(email);
   return { userId: user.id };
 }
-handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup"; // [!code highlight]
+handleUserSignup.workflowId = "workflow//workflows/user.js//handleUserSignup"; // [!code highlight]
 ```
 
 **What happens:**
 
-- Step functions are **replaced entirely** with a `var` assignment calling `globalThis[Symbol.for("WORKFLOW_USE_STEP")]`, which returns a callable function
+- Step function bodies are **replaced** with calls to `globalThis[Symbol.for("WORKFLOW_USE_STEP")]`
 - Workflow function bodies remain **intact**—they execute deterministically during replay
 - The workflow function gets a `workflowId` property for runtime identification
 - The `"use workflow"` directive is removed
@@ -156,7 +158,7 @@ handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup"; //
 2. If yes: Returns the cached result
 3. If no: Triggers a suspension and enqueues the step for background execution
 
-**ID Format:** Workflow IDs follow the pattern `workflow//{modulePath}//{functionName}`. The `workflowId` property is attached to the function to allow [`start()`](/docs/api-reference/workflow-api/start) to work at runtime.
+**ID Format:** Workflow IDs follow the pattern `workflow//{filepath}//{functionName}`. The `workflowId` property is attached to the function to allow [`start()`](/docs/api-reference/workflow-api/start) to work at runtime.
 
 </Tab>
 <Tab value="Client Mode">
@@ -181,7 +183,7 @@ export async function handleUserSignup(email: string) {
 export async function handleUserSignup(email: string) {
   throw new Error("You attempted to execute ..."); // [!code highlight]
 }
-handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup"; // [!code highlight]
+handleUserSignup.workflowId = "workflow//workflows/user.js//handleUserSignup"; // [!code highlight]
 ```
 
 **What happens:**
@@ -303,15 +305,13 @@ Learn more about [Workflows and Steps](/docs/foundations/workflows-and-steps).
 
 The compiler generates stable IDs for workflows and steps based on file paths and function names:
 
-**Pattern:** `{type}//{modulePath}//{functionName}`
-
-Where `modulePath` is a relative path prefixed with `./` and file extensions are stripped. When a module specifier with version is configured (for npm packages), it uses that instead (e.g., `@myorg/tasks@2.0.0`).
+**Pattern:** `{type}//{filepath}//{functionName}`
 
 **Examples:**
 
-- `workflow//./workflows/user-signup//handleUserSignup`
-- `step//./workflows/user-signup//createUser`
-- `step//./workflows/payments/checkout//processPayment`
+- `workflow//workflows/user-signup.js//handleUserSignup`
+- `step//workflows/user-signup.js//createUser`
+- `step//workflows/payments/checkout.ts//processPayment`
 
 **Key properties:**
 
