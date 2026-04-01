@@ -2,7 +2,7 @@
 title: "Streaming Data That Survives a Crash — How Workflow DevKit Makes Streams Durable"
 description: A developer-facing deep dive into Workflow DevKit's durable streaming architecture — how streams survive function suspensions and crashes through world-backed persistence, namespaced IDs, buffered flushes, and lock-aware completion semantics.
 type: conceptual
-summary: Workflow DevKit persists streaming data through world-backed storage so that streams outlive the functions that create them. Chunks are batched in a 10 ms window and flushed to the configured backend — filesystem locally, HTTP or Postgres in production. A lock-polling mechanism detects when the writer is done without requiring explicit stream closure, and namespaced stream IDs allow a single run to own multiple independent streams.
+summary: Workflow DevKit persists streaming data through world-backed storage so that streams outlive the functions that create them. Chunks are batched in a 10 ms window and flushed to the configured backend — filesystem locally, Vercel's workflow-server over HTTP in hosted deployments, or Postgres when using the `world-postgres` backend. A lock-polling mechanism detects when the writer is done without requiring explicit stream closure, and namespaced stream IDs allow a single run to own multiple independent streams.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:

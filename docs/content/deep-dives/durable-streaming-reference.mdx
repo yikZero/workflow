@@ -18,11 +18,11 @@ Durable streaming lets step functions write data that outlives any single functi
 
 ## Overview
 
-A durable stream connects three layers:
+A durable stream has two distinct phases:
 
-1. **Handle creation** — workflow or step code calls `getWritable()` to obtain a `WritableStream` tied to the current run.
-2. **Serialization and buffered flush** — chunks flow through a serialization transform, are batched in a `WorkflowServerWritableStream` buffer, and flushed to the world backend on a 10 ms timer.
-3. **Persistence** — the world backend (`world-local`, `world-vercel`, or `world-postgres`) stores each chunk as an individually addressable record that readers can consume from any index.
+1. **Workflow-side handle creation** — inside a `"use workflow"` function, `getWritable()` returns a serializable handle that carries the deterministic stream ID. It does **not** create a real writable or any I/O pipeline.
+2. **Step-side reconstitution and flush pipeline** — when that handle reaches a `"use step"` function — or when `getWritable()` is called directly in step code — the runtime creates the real `WritableStream`, attaches the serialization transform, connects `flushablePipe`, and starts `pollWritableLock`.
+3. **Persistence** — the configured world backend (`world-local`, `world-vercel`, or `world-postgres`) stores each chunk as an individually addressable record that readers can consume from any index.
 
 ### Namespaced stream IDs
 
@@ -48,20 +48,24 @@ When you call `getWritable({ namespace: 'progress' })`, the namespace is base64u
 
 ```mermaid
 flowchart TD
-    A["Workflow or step calls getWritable()"] --> B["Stream ID generated from runId + namespace"]
-    B --> C["Serialization TransformStream created"]
-    C --> D["flushablePipe connects readable → WorkflowServerWritableStream"]
-    D --> E["Chunks buffered, flushed every 10 ms via writeToStreamMulti"]
-    E --> F{"World backend"}
-    F -->|"world-local"| G["Chunk files written to streams/chunks/ as ULID-named .bin files"]
-    F -->|"world-vercel"| H["HTTP PUT to workflow-server /v2/runs/:runId/stream/:name"]
-    F -->|"world-postgres"| P["Rows via Drizzle ORM + LISTEN/NOTIFY"]
-    G --> I["Reader calls readFromStream with optional startIndex"]
-    H --> I
-    P --> I
-    I --> J["ReadableStream delivered to external consumer"]
-    D --> K["pollWritableLock detects lock release at 100 ms intervals"]
-    K --> L["State promise resolves → step completion unblocked"]
+    A{"Where is `getWritable()` called?"}
+    A -->|"Workflow"| B["Serializable handle created with stream ID only"]
+    B --> C["Handle crosses workflow → step boundary"]
+    A -->|"Step"| D["Real writable created for current run"]
+    C --> D
+    D --> E["Serialization TransformStream created"]
+    E --> F["flushablePipe connects readable → WorkflowServerWritableStream"]
+    F --> G["Chunks buffered, flushed every 10 ms via writeToStreamMulti"]
+    G --> H{"World backend"}
+    H -->|"world-local"| I["Chunk files written to streams/chunks/ as ULID-named .bin files"]
+    H -->|"world-vercel"| J["HTTP PUT to workflow-server /v2/runs/:runId/stream/:name"]
+    H -->|"world-postgres"| K["Rows via Drizzle ORM + LISTEN/NOTIFY"]
+    I --> L["Reader calls readFromStream with optional startIndex"]
+    J --> L
+    K --> L
+    L --> M["ReadableStream delivered to external consumer"]
+    F --> N["pollWritableLock detects lock release at 100 ms intervals"]
+    N --> O["State promise resolves → step completion unblocked"]
 ```
 
 ### Workflow-side handle creation

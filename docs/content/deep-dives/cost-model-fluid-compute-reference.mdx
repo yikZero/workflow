@@ -21,14 +21,16 @@ Traditional long-running background jobs keep a process alive for the entire dur
 The cost model is a direct consequence of three runtime mechanics:
 
 1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. When there is no message, there is no compute.
-2. **Zero-cost suspension** — when a workflow encounters a step, hook, or sleep, the handler records the pending operations as events, optionally returns a `timeoutSeconds` value, and exits. No thread, connection, or process is held open.
-3. **Delayed re-enqueue** — for timed waits (`sleep()`), the queue infrastructure delivers the next message after the specified delay. The workflow process does not exist during the gap.
+2. **Zero-cost suspension for pending work** — when a workflow encounters a step or hook, the handler records the pending operation as an event, queues the out-of-band work, and exits. Nothing stays in memory between decision points.
+3. **Delayed re-enqueue for timed waits** — when a workflow suspends on `sleep()`, the handler records a `wait_created` event, returns `timeoutSeconds`, and the queue delivers the next message after that delay.
+
+Step completions and timed waits wake the workflow through different paths: steps resume the run by persisting `step_completed` and re-enqueueing the workflow, while waits resume the run by delayed queue delivery based on `timeoutSeconds`.
 
 These three properties mean a workflow that sleeps for a week consumes compute only during the brief moments when it replays state and dispatches or collects results — not for the seven days in between.
 
 ## Lifecycle
 
-The following diagram traces a single workflow run from creation through suspension, step execution, and completion:
+The following diagram traces a single workflow run from creation through suspension, step execution, timed waits, and completion:
 
 ```mermaid
 flowchart TD
@@ -37,19 +39,19 @@ flowchart TD
     C --> D["Workflow handler invoked"]
     D --> E["run_started event — status: running"]
     E --> F["Event log loaded, VM replays workflow code"]
-    F --> G{{"Workflow suspends on step / hook / wait"}}
-    G --> H["step_created / hook_created / wait_created events"]
+    F --> G{"Next pending operation?"}
+    G -->|"step / hook"| H["step_created / hook_created events persisted"]
     H --> I["Step messages queued out-of-band"]
     I --> J["Handler returns — compute released"]
-    J --> K["Step handler invoked via queue"]
-    K --> L["Step function executes with full Node.js access"]
-    L --> M["step_completed event persisted"]
-    M --> N["Workflow message re-enqueued"]
-    N --> D
-    G -->|"wait with resumeAt"| O["Handler returns timeoutSeconds"]
+    J --> K["Step handler or external delivery completes"]
+    K --> L["step_completed / hook_received event persisted"]
+    L --> M["Workflow message re-enqueued"]
+    M --> D
+    G -->|"wait / sleep"| N["wait_created event persisted"]
+    N --> O["Handler returns timeoutSeconds"]
     O --> P["Queue delays next delivery"]
     P --> D
-    D -->|"No pending steps/waits"| Q["Workflow runs to completion"]
+    F -->|"No pending work"| Q["Workflow runs to completion"]
     Q --> R["run_completed event persisted"]
 ```
 
@@ -153,6 +155,8 @@ if (minTimeoutSeconds !== null) {
 
 return {};
 ```
+
+Only waits contribute `timeoutSeconds` here. A step-driven suspension normally returns `{}` from `handleSuspension`; the later wake-up happens when the step handler persists `step_completed` and explicitly re-enqueues the workflow.
 
 When `timeoutSeconds` is returned, the queue infrastructure uses it to schedule the next delivery. **The handler exits and the compute is freed.** No process sleeps or polls during the delay.
 
