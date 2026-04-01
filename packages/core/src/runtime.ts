@@ -15,11 +15,7 @@ import { classifyRunError } from './classify-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
-import { MAX_QUEUE_DELIVERIES } from './runtime/constants.js';
-import {
-  MAX_QUEUE_DELIVERIES,
-  REPLAY_TIMEOUT_MS,
-} from './runtime/constants.js';
+import { MAX_QUEUE_DELIVERIES, REPLAY_TIMEOUT_MS } from './runtime/constants.js';
 import {
   getAllWorkflowRunEvents,
   getQueueOverhead,
