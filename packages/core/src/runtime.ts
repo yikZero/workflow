@@ -199,9 +199,10 @@ export function workflowEntrypoint(
                 // --- Infrastructure: prepare the run state ---
                 // Always call run_started directly — this both transitions
                 // the run to 'running' AND returns the run entity, saving
-                // a separate runs.get round-trip. When runInput is present
-                // (resilient start), pass it so the server can create the
-                // run if run_created was missed.
+                // a separate runs.get round-trip.
+                // Contract: events.create('run_started') must be idempotent
+                // for runs already in 'running' status (return the run
+                // without error), not just for pending → running transitions.
                 // Network/server errors propagate to the queue handler for retry.
                 // WorkflowRuntimeError (data integrity issues) are fatal and
                 // produce run_failed since retrying won't fix them.
