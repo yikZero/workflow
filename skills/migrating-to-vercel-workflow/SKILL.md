@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.5'
+  version: '0.1.6'
 ---
 
 # Migrating to Vercel Workflow
@@ -48,25 +48,19 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 
 ## Resume surface selection
 
-Choose one resume surface and explain the choice inside `## App Boundary / Resume Endpoints`.
+Choose exactly one resume key and explain it inside `## App Boundary / Resume Endpoints`.
 
-- `createHook()` + `resumeHook()`
-  - Use for Signals, `step.waitForEvent()`, or `.waitForTaskToken`.
-  - Use when the app resumes the workflow from server-side code with a deterministic business token.
-- `createWebhook()`
-  - Use when the external system needs a callback URL.
-  - Use when the migrated flow should receive a raw `Request`.
-  - With `respondWith: 'manual'`, call `request.respondWith()` inside a `"use step"` function.
-  - Never pass `token:` to `createWebhook()`.
+- `resume/internal` -> `createHook()` + `resumeHook()` + deterministic business token
+- `resume/url` -> `createWebhook({ respondWith: 'manual' })` + `webhook.url` + `RequestWithResponse`
+- Never pair `createWebhook()` with `resumeHook()`
+- Never pass `token:` to `createWebhook()`
 
-Canonical examples live in:
+Load worked code only when needed:
 
-- `references/shared-patterns.md` -> `## Deterministic server-side resume`
+- `references/shared-patterns.md` -> `## Named-framework internal resume example (Hono)`
 - `references/shared-patterns.md` -> `## Generated callback URL`
-
-**Sample input:** `Migrate a third-party document verification callback flow to Vercel Workflow. The vendor needs a callback URL.`
-
-**Expected output:** The migration uses `createWebhook({ respondWith: 'manual' })`, passes `webhook.url` to the vendor, handles `RequestWithResponse` in a step, and does **not** use `resumeHook()`.
+- `references/runtime-targets.md` -> `## Non-Vercel output block`
+- `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
 ## Fast-path router
 
@@ -222,35 +216,18 @@ Fail the draft if any of these are true:
 - [ ] A `resume/url` migration invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` should be the only resume surface
 - [ ] `createWebhook()` is given a custom `token` or paired with `resumeHook()`
 
-Sample invalid output:
+Additional fail conditions:
 
-```ts
-import { createWebhook } from 'workflow';
-import { Hono } from 'hono';
-import { resumeHook } from 'workflow/api';
+- `resume/url` output invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` is the intended resume surface
+- `createWebhook()` is paired with `resumeHook()`
+- self-hosted output omits `World extends Storage, Queue, Streamer` or `startWorkflowWorld()`
+- named-framework output mixes framework syntax with plain `Request` / `Response` app-boundary code without a framework-agnostic override
 
-export async function refundWorkflow(refundId: string) {
-  'use workflow';
-  using approval = createWebhook({ respondWith: 'manual' });
-  return { refundId, callbackUrl: approval.url };
-}
+For concrete passing code, load:
 
-const app = new Hono();
-app.post('/api/refunds/:refundId/approve', async (c) => {
-  await resumeHook(`refund:${c.req.param('refundId')}:approval`, {
-    approved: true,
-  });
-  return c.json({ ok: true });
-});
-```
-
-Expected verification outcome:
-- Fail on: invented callback route for `resume/url`
-- Fail on: `createWebhook()` paired with `resumeHook()`
-- [ ] A self-hosted or non-Vercel target omits the `World` requirement or startup bootstrap
-- [ ] App-boundary examples ignore an explicitly requested framework-agnostic requirement or a named target framework
-- [ ] A named-framework migration mixes framework syntax for `start()` with plain `Request` / `Response` for a user-authored `resumeHook()` endpoint without a framework-agnostic override
-- [ ] The migration claims Vercel-managed execution for a self-hosted or non-Vercel target
+- `references/shared-patterns.md` -> `## Generated callback URL`
+- `references/runtime-targets.md` -> `## Non-Vercel output block`
+- `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
 ## Sample prompt
 
@@ -270,168 +247,17 @@ Expected response shape:
 ## Open Questions
 ```
 
-### Example: callback URL on self-hosted Hono
+## Example references
 
-**Sample input:**
+Load a worked example only when the prompt needs concrete code:
 
-```md
-Migrate this AWS Step Functions approval flow to Vercel Workflow for Hono on self-hosted Postgres.
-The external vendor needs a callback URL.
-Keep app-boundary code in Hono syntax.
-```
+- `references/shared-patterns.md` -> `## Named-framework internal resume example (Hono)`
+- `references/shared-patterns.md` -> `## Generated callback URL`
+- `references/runtime-targets.md` -> `## Non-Vercel output block`
+- `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
-**Expected output:**
+Reject these counterexamples:
 
-```md
-## Migration Plan
-- Source: AWS Step Functions
-- Route keys: resume/url, runtime/self-hosted, boundary/named-framework
-```
-
-```ts
-interface World extends Storage, Queue, Streamer {
-  start?(): Promise<void>;
-}
-```
-
-```ts
-import { getWorld } from 'workflow/runtime';
-export async function startWorkflowWorld(): Promise<void> {
-  await getWorld().start?.();
-}
-```
-
-```ts
-import { createWebhook, type RequestWithResponse } from 'workflow';
-
-export async function refundWorkflow(refundId: string) {
-  'use workflow';
-
-  using approval = createWebhook({ respondWith: 'manual' });
-  await sendApprovalRequest(refundId, approval.url);
-  const request = await approval;
-  const payload = await readApproval(request);
-
-  return {
-    refundId,
-    status: payload.approved ? ('approved' as const) : ('rejected' as const),
-  };
-}
-
-async function sendApprovalRequest(
-  refundId: string,
-  callbackUrl: string,
-): Promise<void> {
-  'use step';
-  await fetch(process.env.APPROVALS_URL!, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refundId, callbackUrl }),
-  });
-}
-
-async function readApproval(
-  request: RequestWithResponse,
-): Promise<{ approved: boolean }> {
-  'use step';
-  const payload = (await request.json()) as { approved: boolean };
-  await request.respondWith(Response.json({ ok: true }));
-  return payload;
-}
-```
-
-```ts
-import { Hono } from 'hono';
-import { start } from 'workflow/api';
-import { refundWorkflow } from '../workflows/refund';
-
-const app = new Hono();
-
-app.post('/api/refunds/start', async (c) => {
-  const body = (await c.req.json()) as { refundId: string };
-  const run = await start(refundWorkflow, [body.refundId]);
-  return c.json({ runId: run.runId });
-});
-
-export default app;
-```
-
-Required explanation: The workflow and step code can stay the same. Because this target is self-hosted, the app still needs a `World` implementation for storage, queueing, and streaming, plus a startup path that calls `await getWorld().start?.()` when the selected world runs background workers.
-
-Required explanation in `## App Boundary / Resume Endpoints`: The generated `webhook.url` is the resume surface. Do not add a user-authored Hono callback route unless the prompt explicitly asks for one.
-
-Must not appear:
-
-```ts
-resumeHook(...)
-```
-
-### Example: deterministic internal resume on Hono
-
-**Sample input:**
-
-```md
-Migrate this Temporal approval flow to Vercel Workflow for Hono.
-Keep app-boundary code in Hono syntax.
-```
-
-**Expected output:**
-
-```md
-## Migration Plan
-- Source: Temporal
-- Route keys: resume/internal, boundary/named-framework
-```
-
-```ts
-import { createHook } from 'workflow';
-
-export async function orderWorkflow(orderId: string) {
-  'use workflow';
-
-  using approval = createHook<{ approved: boolean }>({
-    token: `order:${orderId}:approval`,
-  });
-
-  const payload = await approval;
-
-  return {
-    orderId,
-    status: payload.approved ? ('approved' as const) : ('rejected' as const),
-  };
-}
-```
-
-```ts
-import { Hono } from 'hono';
-import { resumeHook } from 'workflow/api';
-
-const app = new Hono();
-
-app.post('/api/orders/:orderId/approve', async (c) => {
-  const orderId = c.req.param('orderId');
-  const body = (await c.req.json()) as { approved: boolean };
-
-  await resumeHook(`order:${orderId}:approval`, {
-    approved: body.approved,
-  });
-
-  return c.json({ ok: true });
-});
-
-export default app;
-```
-
-Do not add the self-hosted World explanation unless the prompt explicitly says self-hosted or non-Vercel.
-
-Must not appear:
-
-```ts
-createWebhook()
-webhook.url
-```
-
-**Sample inputs and expected outputs:**
-
-- Input: `AWS Step Functions + Hono + self-hosted + vendor callback URL` → expected output uses `resume/url`, `createWebhook({ respondWith: 'manual' })`, `webhook.url`, Hono `start()` route, self-hosted explanation, and no custom resume endpoint.
-- Input: `Temporal + Hono + deterministic approval API` → expected output uses `resume/internal`, `createHook()`, Hono `resumeHook()` route, and no webhook code.
+- `resume/url` + user-authored callback route when `webhook.url` is the intended resume surface
+- `createWebhook()` paired with `resumeHook()`
+- named-framework app-boundary output mixed with plain `Request` / `Response` without a framework-agnostic override
