@@ -1,3 +1,4 @@
+import { decode } from 'cbor-x';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -67,8 +68,9 @@ describe('createQueue', () => {
         await queue.queue('__wkf_workflow_test', { runId: 'run-123' });
 
         expect(mockSend).toHaveBeenCalledTimes(1);
-        // send(topicName, payload, options)
-        const payload = mockSend.mock.calls[0][1];
+        // send(topicName, cborBuffer, options)
+        const raw = mockSend.mock.calls[0][1];
+        const payload = decode(raw);
 
         expect(payload.payload).toEqual({ runId: 'run-123' });
         expect(payload.queueName).toBe('__wkf_workflow_test');
@@ -721,8 +723,9 @@ describe('createQueue', () => {
         );
 
         expect(mockSend).toHaveBeenCalledTimes(1);
-        // send(topicName, payload, options)
-        const payload = mockSend.mock.calls[0][1];
+        // send(topicName, cborBuffer, options)
+        const raw = mockSend.mock.calls[0][1];
+        const payload = decode(raw);
         expect(payload.payload).toEqual(stepPayload);
         expect(payload.queueName).toBe('__wkf_step_myStep');
       } finally {

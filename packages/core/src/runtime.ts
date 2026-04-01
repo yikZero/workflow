@@ -215,14 +215,12 @@ export function workflowEntrypoint(
                       specVersion: SPEC_VERSION_CURRENT,
                       // Pass run input from queue so the server can
                       // create the run if run_created was missed.
-                      // Input is sent as Array<number> for JSON queue
-                      // transport; reconstruct Uint8Array here.
+                      // Uint8Array values survive the queue natively
+                      // (CBOR on world-vercel, JSON reviver on world-local).
                       ...(runInput
                         ? {
                             eventData: {
-                              input: Array.isArray(runInput.input)
-                                ? new Uint8Array(runInput.input)
-                                : runInput.input,
+                              input: runInput.input,
                               deploymentId: runInput.deploymentId,
                               workflowName: runInput.workflowName,
                               executionContext: runInput.executionContext,
