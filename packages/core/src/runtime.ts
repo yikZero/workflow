@@ -212,19 +212,16 @@ export function workflowEntrypoint(
                     {
                       eventType: 'run_started',
                       specVersion: SPEC_VERSION_CURRENT,
-                      // Pass run input from queue so server can create
-                      // the run if run_created was missed.
-                      // Input is base64-encoded for queue transport since
-                      // Uint8Array doesn't survive JSON serialization.
+                      // Pass run input from queue so the server can
+                      // create the run if run_created was missed.
+                      // Input is sent as Array<number> for JSON queue
+                      // transport; reconstruct Uint8Array here.
                       ...(runInput
                         ? {
                             eventData: {
-                              input:
-                                typeof runInput.input === 'string'
-                                  ? Uint8Array.from(atob(runInput.input), (c) =>
-                                      c.charCodeAt(0)
-                                    )
-                                  : runInput.input,
+                              input: Array.isArray(runInput.input)
+                                ? new Uint8Array(runInput.input)
+                                : runInput.input,
                               deploymentId: runInput.deploymentId,
                               workflowName: runInput.workflowName,
                               executionContext: runInput.executionContext,
@@ -253,8 +250,11 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
-                  if (RunExpiredError.is(err)) {
-                    // 410: already finished — log and exit
+                  if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
+                    // EntityConflictError: run was concurrently
+                    // completed/failed/cancelled during setup.
+                    // RunExpiredError: run already in terminal state.
+                    // In both cases, skip processing this message.
                     runtimeLogger.info(
                       'Run already finished during setup, skipping',
                       { workflowRunId: runId, message: err.message }
@@ -296,11 +296,6 @@ export function workflowEntrypoint(
                   }
                 }
 
-                if (!workflowRun.startedAt) {
-                  throw new WorkflowRuntimeError(
-                    `Workflow run "${runId}" has no "startedAt" timestamp`
-                  );
-                }
                 workflowStartedAt = +workflowRun.startedAt;
 
                 span?.setAttributes({

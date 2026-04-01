@@ -166,11 +166,11 @@ export async function start<TArgs extends unknown[], TResult>(
 
       const executionContext = { traceCarrier, workflowCoreVersion };
 
-      // Encode input for queue transport — Uint8Array doesn't survive JSON
-      // serialization, so we base64-encode it for the queue payload.
+      // Encode input for queue transport — Uint8Array doesn't survive
+      // JSON serialization, so we convert to a plain number array.
       const encodedInput =
         workflowArguments instanceof Uint8Array
-          ? btoa(String.fromCharCode(...workflowArguments))
+          ? Array.from(workflowArguments)
           : workflowArguments;
 
       // Call events.create (run_created) and queue in parallel.

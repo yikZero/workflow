@@ -394,7 +394,11 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
             runInputData.workflowName &&
             runInputData.input !== undefined
           ) {
-            // Create the run entity
+            // Create run + run_created event. If the run insert
+            // succeeds, the event insert must also succeed for
+            // consistency; if the event insert fails, the run is
+            // orphaned but run_started will still work (it will
+            // find the existing run via the validation query).
             const [createdRun] = await drizzle
               .insert(Schema.runs)
               .values({
@@ -412,7 +416,6 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
               .returning();
 
             if (createdRun) {
-              // Create run_created event
               const runCreatedEventId = `wevt_${ulid()}`;
               await drizzle.insert(events).values({
                 runId: effectiveRunId,
