@@ -34,7 +34,7 @@ The migration path is mostly about **replacing declarative configuration with id
 | Map state | Loop + `Promise.all()` or batched child workflows | Iterate over items with `for`/`map` and parallelize as needed. |
 | Retry / Catch | Step retries, `RetryableError`, `FatalError`, `maxRetries` | Retry logic moves down to the step level with `try`/`catch` for error handling. |
 | `.waitForTaskToken` | `createHook()` or `createWebhook()` | Use hooks for typed resume signals; webhooks for HTTP callbacks. |
-| Child state machine (`StartExecution`) | `start()` + `getRun()` | Spawn another workflow and poll or await its result. |
+| Child state machine (`StartExecution`) | `"use step"` wrappers around `start()` / `getRun()` | Start the child from a step, return its `runId`, then poll or await the child result from another step. |
 | Execution event history | Workflow event log / run timeline | Same durable replay idea, fewer surfaces to manage directly. |
 
 ## Side-by-side: hello workflow
@@ -241,6 +241,47 @@ export async function POST(
 ```
 
 Step Functions' `.waitForTaskToken` pattern requires SQS (or another service) to deliver the task token, a separate Lambda to call `SendTaskSuccess`/`SendTaskFailure`, and a Choice state to branch on the result. With Workflow, `createHook()` suspends durably until resumed — no queue, no task token plumbing, no separate callback handler.
+
+### Child workflows: keep `start()` and `getRun()` in steps
+
+When you need an independent child run, the important migration detail is the **step boundary**. `start()` and `getRun()` are runtime APIs, so wrap them in `"use step"` functions and pass serializable `runId` values through the workflow:
+
+```typescript
+import { getRun, start } from 'workflow/api';
+
+async function processItem(item: string): Promise<string> {
+  'use step';
+  return `processed-${item}`;
+}
+
+export async function childWorkflow(item: string) {
+  'use workflow';
+  const result = await processItem(item);
+  return { item, result };
+}
+
+async function spawnChild(item: string): Promise<string> {
+  'use step';
+  const run = await start(childWorkflow, [item]);
+  return run.runId;
+}
+
+async function collectResult(
+  runId: string
+): Promise<{ item: string; result: string }> {
+  'use step';
+  const run = getRun(runId);
+  const value = await run.returnValue;
+  return value as { item: string; result: string };
+}
+
+export async function parentWorkflow(item: string) {
+  'use workflow';
+  const runId = await spawnChild(item);
+  const result = await collectResult(runId);
+  return { childRunId: runId, result };
+}
+```
 
 ## End-to-end migration: order processing saga
 
@@ -465,7 +506,8 @@ This is not about replacing every Step Functions feature. It is about recognizin
 - Replace Choice states with `if`/`else`/`switch` in your workflow function.
 - Replace Wait states with `sleep()` imported from `workflow`.
 - Replace Parallel states with `Promise.all()` over concurrent step calls.
-- Replace Map states with loops or `Promise.all()` over arrays, using child workflows via `start()` for large fan-outs.
+- Replace Map states with loops or `Promise.all()` over arrays, using `"use step"` wrappers around `start()` for large fan-outs.
+- Replace child state machines (`StartExecution`) with `"use step"` wrappers around `start()` and `getRun()` when you need independent child runs.
 - Replace `.waitForTaskToken` callback patterns with `createHook()` or `createWebhook()` depending on whether the caller is internal or HTTP-based.
 - Move Retry/Catch configuration down to step boundaries using default retries, `maxRetries`, `RetryableError`, and `FatalError`, with standard `try`/`catch` for error handling.
 - Add idempotency keys to external side effects using `getStepMetadata().stepId`.

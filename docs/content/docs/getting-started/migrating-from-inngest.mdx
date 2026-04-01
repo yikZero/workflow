@@ -30,10 +30,10 @@ The migration path is mostly about **collapsing the SDK abstraction** and **writ
 | `step.run()` | `"use step"` function | Each step is a standalone async function with full Node.js access. |
 | `step.sleep()` / `step.sleepUntil()` | `sleep()` | Import `sleep` from `workflow` and call it in your workflow function. |
 | `step.waitForEvent()` | `createHook()` or `createWebhook()` | Use hooks for typed resume signals; webhooks for HTTP callbacks. |
-| `step.invoke()` | `start()` + `getRun()` | Spawn another workflow and await its result. |
+| `step.invoke()` | `"use step"` wrappers around `start()` / `getRun()` | Start another workflow from a step, return its `runId`, then await the child result from another step. |
 | `inngest.send()` / event triggers | `start()` from your app boundary | Start workflows directly instead of routing through an event bus. |
 | Retry configuration (`retries`) | Step retries, `RetryableError`, `FatalError`, `maxRetries` | Retry logic moves down to the step level. |
-| `step.sendEvent()` | `start()` inside a workflow | Fan out to other workflows with `start()`. |
+| `step.sendEvent()` | `"use step"` wrapper around `start()` | Fan out to other workflows from a step instead of emitting onto an event bus. |
 | Realtime / `step.realtime.publish()` | `getWritable()` | Stream progress directly from steps with built-in durable streaming. |
 
 ## Side-by-side: hello workflow
@@ -145,7 +145,11 @@ export const refundWorkflow = inngest.createFunction(
 
 ```typescript
 // workflow/workflows/refund.ts
-import { createHook } from 'workflow';
+import { createHook, sleep } from 'workflow';
+
+type ApprovalResult =
+  | { type: 'decision'; approved: boolean }
+  | { type: 'timeout'; approved: false };
 
 export async function refundWorkflow(refundId: string) {
   'use workflow';
@@ -154,9 +158,22 @@ export async function refundWorkflow(refundId: string) {
     token: `refund:${refundId}:approval`,
   });
 
-  const { approved } = await approval;
+  const result: ApprovalResult = await Promise.race([
+    approval.then((payload) => ({
+      type: 'decision' as const,
+      approved: payload.approved,
+    })),
+    sleep('7d').then(() => ({
+      type: 'timeout' as const,
+      approved: false as const,
+    })),
+  ]);
 
-  if (!approved) {
+  if (result.type === 'timeout') {
+    return { refundId, status: 'timed-out' };
+  }
+
+  if (!result.approved) {
     return { refundId, status: 'rejected' };
   }
 
@@ -185,7 +202,48 @@ export async function POST(
 }
 ```
 
-Inngest's `step.waitForEvent()` with event matching becomes a single `createHook()` call. The workflow suspends durably until the hook is resumed — no event bus, no matching expression, and no separate timeout to configure.
+Inngest's `step.waitForEvent()` with event matching maps to `createHook()`, and the `timeout: '7d'` behavior maps to `sleep('7d')` combined with `Promise.race()`. The workflow still suspends durably in both branches — there is no event bus or matching expression, but the timeout is modeled explicitly.
+
+### Child workflows: keep `start()` and `getRun()` in steps
+
+When you need an independent child run, the important migration detail is the **step boundary**. `start()` and `getRun()` are runtime APIs, so wrap them in `"use step"` functions and pass serializable `runId` values through the workflow:
+
+```typescript
+import { getRun, start } from 'workflow/api';
+
+async function processItem(item: string): Promise<string> {
+  'use step';
+  return `processed-${item}`;
+}
+
+export async function childWorkflow(item: string) {
+  'use workflow';
+  const result = await processItem(item);
+  return { item, result };
+}
+
+async function spawnChild(item: string): Promise<string> {
+  'use step';
+  const run = await start(childWorkflow, [item]);
+  return run.runId;
+}
+
+async function collectResult(
+  runId: string
+): Promise<{ item: string; result: string }> {
+  'use step';
+  const run = getRun(runId);
+  const value = await run.returnValue;
+  return value as { item: string; result: string };
+}
+
+export async function parentWorkflow(item: string) {
+  'use workflow';
+  const runId = await spawnChild(item);
+  const result = await collectResult(runId);
+  return { childRunId: runId, result };
+}
+```
 
 ## End-to-end migration: order processing saga
 
@@ -419,7 +477,9 @@ This is not about replacing every Inngest feature. It is about recognizing that 
 - Convert each `step.run()` callback into a named `"use step"` function.
 - Replace `step.sleep()` / `step.sleepUntil()` with `sleep()` imported from `workflow`.
 - Replace `step.waitForEvent()` with `createHook()` or `createWebhook()` depending on whether the caller is internal or HTTP-based.
-- Replace `step.invoke()` with `start()` + `getRun()` when you need to call another workflow and await its result.
+- When `step.waitForEvent()` includes a timeout, map it to `createHook()` or `createWebhook()` plus `sleep()` and `Promise.race()`.
+- Replace `step.invoke()` with `"use step"` wrappers around `start()` and `getRun()` when you need a child workflow with an independent run.
+- Replace `step.sendEvent()` fan-out with `start()` called from a `"use step"` function when the fan-out originates inside a workflow.
 - Remove the Inngest client, `serve()` handler, and event definitions from your app.
 - Move retry configuration down to step boundaries using default retries, `maxRetries`, `RetryableError`, and `FatalError`.
 - Add idempotency keys to external side effects using `getStepMetadata().stepId`.

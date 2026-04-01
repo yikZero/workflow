@@ -31,7 +31,7 @@ The migration path is mostly about **removing infrastructure** and **collapsing 
 | Worker + Task Queue | Vercel-managed execution on Vercel World | No worker fleet or polling loop to operate on Vercel. |
 | Signal | `createHook()` or `createWebhook()` | Use hooks for typed resume signals; webhooks for HTTP callbacks. |
 | Query / Update | `getRun()` + app API, or hook-driven mutation + returned state | Usually model reads through your app and writes through hooks/webhooks. |
-| Child Workflow | `start()` + `getRun()` | Spawn another workflow and poll or await its result. |
+| Child Workflow | `"use step"` wrappers around `start()` / `getRun()` | Spawn children from a step, return serializable `runId` values, then poll or await child results from another step. |
 | Activity retry policy | Step retries, `RetryableError`, `FatalError`, `maxRetries` | Retry logic moves down to the step level. |
 | Event History | Workflow event log / run timeline | Same durable replay idea, fewer surfaces to manage directly. |
 
@@ -165,6 +165,47 @@ export async function POST(
 ```
 
 Temporal's Signal + `condition()` pattern becomes a single `createHook()` call. The workflow suspends durably until the hook is resumed — no polling, no separate signal handler registration.
+
+### Child workflows: keep `start()` and `getRun()` in steps
+
+When you need an independent child run, the important migration detail is the **step boundary**. `start()` and `getRun()` are runtime APIs, so wrap them in `"use step"` functions and pass serializable `runId` values through the workflow:
+
+```typescript
+import { getRun, start } from 'workflow/api';
+
+async function processItem(item: string): Promise<string> {
+  'use step';
+  return `processed-${item}`;
+}
+
+export async function childWorkflow(item: string) {
+  'use workflow';
+  const result = await processItem(item);
+  return { item, result };
+}
+
+async function spawnChild(item: string): Promise<string> {
+  'use step';
+  const run = await start(childWorkflow, [item]);
+  return run.runId;
+}
+
+async function collectResult(
+  runId: string
+): Promise<{ item: string; result: string }> {
+  'use step';
+  const run = getRun(runId);
+  const value = await run.returnValue;
+  return value as { item: string; result: string };
+}
+
+export async function parentWorkflow(item: string) {
+  'use workflow';
+  const runId = await spawnChild(item);
+  const result = await collectResult(runId);
+  return { childRunId: runId, result };
+}
+```
 
 ## End-to-end migration: order processing saga
 
@@ -382,7 +423,7 @@ This is not about replacing every Temporal feature. It is about recognizing that
 - Convert each Temporal Activity into a `"use step"` function.
 - Remove Worker and task-queue application code; start workflows from your app boundary with `start()`.
 - Replace Signals with `createHook()` or `createWebhook()` depending on whether the caller is internal or HTTP-based.
-- Replace Child Workflows with `start()` + `getRun()` when you need independent runs.
+- Replace Child Workflows with `"use step"` wrappers around `start()` and `getRun()` when you need independent runs. Return serializable `runId` values to the workflow and collect child results from a step.
 - Move retry policy down to step boundaries using default retries, `maxRetries`, `RetryableError`, and `FatalError`.
 - Add idempotency keys to external side effects using `getStepMetadata().stepId`.
 - Stream user-visible progress from steps with `getWritable()` when you previously used custom progress plumbing.
