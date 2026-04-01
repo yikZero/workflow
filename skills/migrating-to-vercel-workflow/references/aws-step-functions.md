@@ -113,3 +113,93 @@ async function readApproval(
 ```
 
 Choose exactly one of these paths. Do not combine them in the same migration.
+
+## Combined recipe: callback URL on self-hosted Hono
+
+Use this when all of the following are true:
+
+- the Step Functions source used `.waitForTaskToken`
+- the external system needs a callback URL
+- the target is self-hosted or otherwise non-Vercel
+- the prompt names Hono
+
+Workflow code:
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+export async function refundWorkflow(refundId: string) {
+  'use workflow';
+  using approval = createWebhook({ respondWith: 'manual' });
+  await sendApprovalRequest(refundId, approval.url);
+  const request = await approval;
+  const payload = await readApproval(request);
+  return {
+    refundId,
+    status: payload.approved ? ('approved' as const) : ('rejected' as const),
+  };
+}
+
+async function sendApprovalRequest(
+  refundId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+  await fetch('https://example.com/approvals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundId, callbackUrl }),
+  });
+}
+
+async function readApproval(
+  request: RequestWithResponse,
+): Promise<{ approved: boolean }> {
+  'use step';
+  const payload = (await request.json()) as { approved: boolean };
+  await request.respondWith(Response.json({ ok: true }));
+  return payload;
+}
+```
+
+Self-hosted runtime requirements:
+
+```ts
+interface World extends Storage, Queue, Streamer {
+  start?(): Promise<void>;
+}
+```
+
+```ts
+import { getWorld } from 'workflow/runtime';
+
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
+}
+```
+
+Hono app boundary:
+
+```ts
+import { Hono } from 'hono';
+import { start } from 'workflow/api';
+import { refundWorkflow } from '../workflows/refund';
+
+const app = new Hono();
+
+app.post('/api/refunds/start', async (c) => {
+  const body = (await c.req.json()) as { refundId: string };
+  const run = await start(refundWorkflow, [body.refundId]);
+  return c.json({ runId: run.runId });
+});
+
+export default app;
+```
+
+Required explanation: The workflow and step code can stay the same. Because this target is self-hosted, the app still needs a `World` implementation for storage, queueing, and streaming, plus a startup path that calls `await getWorld().start?.()` when the selected world runs background workers.
+
+Must not appear:
+
+```ts
+resumeHook(...)
+```

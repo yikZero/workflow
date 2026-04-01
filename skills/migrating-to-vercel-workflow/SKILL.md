@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.3'
+  version: '0.1.4'
 ---
 
 # Migrating to Vercel Workflow
@@ -70,17 +70,99 @@ Canonical examples live in:
 
 ## Fast-path router
 
-Choose the first matching route before writing any code.
+Route selection is compositional. A prompt can require multiple route keys.
+Select up to one key from each axis below.
+
+### Resume axis
 
 | Route key | Trigger phrases in the prompt | Must emit | Must not emit |
 | --- | --- | --- | --- |
 | `resume/internal` | signal, approval API, deterministic token, server-side resume | `createHook()`, deterministic `token`, `resumeHook()` | `createWebhook()`, callback URL |
 | `resume/url` | callback URL, vendor webhook, raw `Request`, external POST back, `.waitForTaskToken` with an external caller | `createWebhook()`, `webhook.url`, `RequestWithResponse` when manual response is needed | `resumeHook()`, `token:` on `createWebhook()` |
+
+### Runtime axis
+
+| Route key | Trigger phrases in the prompt | Must emit | Must not emit |
+| --- | --- | --- | --- |
 | `runtime/self-hosted` | self-hosted, non-Vercel, custom infra, Hono + Postgres, Express + Redis | `World extends Storage, Queue, Streamer`, `await getWorld().start?.()`, explicit note that workflow/step code can stay the same | claims of Vercel-managed execution |
+
+### App-boundary axis
+
+| Route key | Trigger phrases in the prompt | Must emit | Must not emit |
+| --- | --- | --- | --- |
 | `boundary/framework-agnostic` | "framework-agnostic" explicitly requested | plain `Request` / `Response` handlers | framework-specific route syntax |
 | `boundary/named-framework` | Next.js, Hono, Express, Fastify, NestJS explicitly named without a framework-agnostic override | app-boundary code in that framework's syntax | unrelated framework syntax or defaulting to Next.js |
 
-Before drafting `## Migrated Code`, write the chosen route keys in `## Migration Plan`.
+Selection rules:
+
+1. If the source pauses for Signals, `step.waitForEvent()`, or `.waitForTaskToken`, pick exactly one resume key.
+2. If the target is self-hosted or non-Vercel, also pick `runtime/self-hosted`.
+3. Pick exactly one boundary key when the prompt explicitly requests framework-agnostic output or names a framework.
+4. A combined prompt can require multiple keys, for example: `resume/url + runtime/self-hosted + boundary/named-framework`.
+
+Before drafting `## Migrated Code`, write the selected route keys in `## Migration Plan`.
+
+### Route-key obligations
+
+Apply every obligation that matches the selected route keys.
+
+- `resume/internal`
+  - Workflow code must use `createHook()`.
+  - App boundary must call `resumeHook()`.
+  - Use a deterministic business token.
+  - Do not emit `createWebhook()` or `webhook.url`.
+- `resume/url`
+  - Workflow code must use `createWebhook({ respondWith: 'manual' })`.
+  - External request setup must pass `webhook.url`.
+  - Callback parsing and `request.respondWith()` must stay inside a `"use step"` function using `RequestWithResponse`.
+  - Do not emit `resumeHook(...)`.
+  - Do not pass `token:` to `createWebhook()`.
+- `runtime/self-hosted`
+  - Include `interface World extends Storage, Queue, Streamer { start?(): Promise<void>; }`.
+  - Include `startWorkflowWorld(): Promise<void>`.
+  - Include the explicit self-hosted explanation from `references/runtime-targets.md`.
+  - Do not claim Vercel-managed execution.
+- `boundary/framework-agnostic`
+  - Use plain `Request` / `Response`.
+- `boundary/named-framework`
+  - Use the named framework's syntax for start-route examples.
+
+Use this exact planning shape:
+
+```md
+## Migration Plan
+- Source: [Temporal | Inngest | AWS Step Functions]
+- Route keys: [comma-separated keys]
+- Why these route keys:
+  - [route key]: [reason from the prompt]
+- Required code obligations:
+  - [obligation 1]
+  - [obligation 2]
+```
+
+**Sample input:**
+
+```md
+Migrate this AWS Step Functions approval flow to Vercel Workflow for Hono on self-hosted Postgres.
+The external vendor needs a callback URL.
+Keep app-boundary code in Hono syntax.
+```
+
+Expected `## Migration Plan` excerpt:
+
+```md
+## Migration Plan
+- Source: AWS Step Functions
+- Route keys: resume/url, runtime/self-hosted, boundary/named-framework
+- Why these route keys:
+  - `resume/url`: external vendor needs a callback URL
+  - `runtime/self-hosted`: target says self-hosted Postgres
+  - `boundary/named-framework`: prompt asks for Hono syntax
+- Required code obligations:
+  - use `createWebhook({ respondWith: 'manual' })` and pass `webhook.url`
+  - include `World extends Storage, Queue, Streamer` and `startWorkflowWorld()`
+  - keep app-boundary code in Hono syntax
+```
 
 ## Source references
 

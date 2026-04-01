@@ -1,0 +1,47 @@
+---
+title: "Your Workflow Code Runs Twice. Your Business Logic Doesn't."
+description: A concise explainer on how Workflow DevKit splits code into replayable orchestration and once-only side effects using two directives.
+type: conceptual
+summary: Workflow DevKit uses "use workflow" and "use step" directives to separate deterministic orchestration from side-effecting business logic. Orchestration replays from an event log with seeded randomness and fixed timestamps. Steps execute once and their results are cached — replay returns cached values without re-running your code.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/understanding-directives
+  - /docs/how-it-works/code-transform
+  - /deep-dives/compiler-magic-swc-plugin-reference
+  - /deep-dives/durability-replay-reference
+  - /deep-dives/durable-streaming-reference
+---
+
+What if your orchestration code could crash, restart on a completely different machine, and pick up exactly where it left off — without re-sending that email or re-charging that credit card?
+
+That's what Workflow DevKit's step execution model does, and it works because of a single split.
+
+## Two Directives, Two Worlds
+
+You mark functions with `"use workflow"` (orchestration) or `"use step"` (side effects). The compiler transforms them into separate execution contexts. Workflow functions run in a sandboxed VM where `Math.random()` and `Date.now()` are seeded and deterministic. Step functions run with full Node.js access — but their results get persisted to an event log.
+
+```ts
+export async function chargeCard(amount: number) {
+  "use step";
+  return await stripe.charges.create({ amount });
+}
+
+export async function processOrder(orderId: string) {
+  "use workflow";
+  const charge = await chargeCard(9900);
+  // On replay, chargeCard returns the cached result
+  // — Stripe is never called twice
+  return { orderId, chargeId: charge.id };
+}
+```
+
+When the workflow reaches a step that hasn't completed, it **suspends** — throwing a `WorkflowSuspension` that collects all pending operations. Nothing stays in memory. The step runs in the background, its result is persisted, and the workflow is re-enqueued.
+
+On replay, the runtime feeds the event log back through the workflow. When it hits `await chargeCard(9900)`, the cached `step_completed` result is returned instantly. The orchestration re-runs. The side effect doesn't.
+
+## Why It Matters
+
+This split means your workflows survive crashes, cold starts, and scale-to-zero — with zero re-execution of business logic. A workflow with 50 completed steps replays in milliseconds. You pay for orchestration compute, not idle time waiting on external systems.
+
+Two directives. One architectural insight. Durable execution from ordinary JavaScript.

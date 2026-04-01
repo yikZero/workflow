@@ -1,0 +1,44 @@
+---
+title: "Your Stream Crashed. Your Data Didn't."
+description: A concise explainer on how Workflow DevKit makes streams durable — persisting every chunk to a world backend so streams survive function suspensions, crashes, and scale-to-zero events.
+type: conceptual
+summary: Workflow DevKit persists streaming data through world-backed storage. Chunks are batched and flushed every 10 ms to the backend. A lock-polling mechanism detects when the writer is done without requiring explicit stream closure. Readers can reconnect from any index — no data loss across serverless function boundaries.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/understanding-directives
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durability-replay-reference
+  - /deep-dives/cost-model-fluid-compute-reference
+---
+
+Serverless functions have timeouts. Streams don't care about timeouts. That's a problem — unless every chunk is persisted the moment it arrives.
+
+Workflow DevKit's durable streaming writes every chunk to a world backend (local filesystem in dev, HTTP in production) as it's produced. If the function suspends, crashes, or scales to zero, the chunks are already stored. Readers reconnect from any index and pick up where they left off.
+
+## How It Works
+
+The `getWritable()` call sets up a pipeline: your data flows through a serialization transform, into a buffer that flushes every 10 ms via `writeToStreamMulti`, and out to the world backend. Each stream gets a deterministic namespaced ID:
+
+```ts
+// A single run can own multiple independent streams
+const tokens = getWritable({ namespace: 'tokens' });
+const progress = getWritable({ namespace: 'progress' });
+// IDs: strm_{ULID}_user_{base64('tokens')}, strm_{ULID}_user_{base64('progress')}
+```
+
+The clever part: a 100 ms lock-polling loop detects when you release your writer — no need to explicitly close the stream. The framework sees the unlock, waits for pending flushes to drain, and completes the step automatically.
+
+```ts
+// Write, release, return — the framework handles the rest
+const writer = stream.getWriter();
+for await (const token of llm.stream(prompt)) {
+  await writer.write(token);
+}
+writer.releaseLock();
+return { status: 'done' };
+```
+
+## Why It Matters
+
+Traditional serverless streaming loses data when functions timeout. Durable streaming makes that impossible — chunks are persisted as they arrive, readers reconnect from any offset, and the stream outlives any single function invocation. It turns serverless into a reliable streaming platform.

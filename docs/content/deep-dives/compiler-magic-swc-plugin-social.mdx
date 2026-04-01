@@ -1,0 +1,43 @@
+---
+title: "One File In. Three Bundles Out."
+description: A concise explainer on how the Workflow DevKit SWC compiler plugin transforms a single source file into three execution targets — making durable execution feel like writing normal JavaScript.
+type: conceptual
+summary: The Workflow DevKit SWC plugin takes a single file with "use workflow" and "use step" directives and produces three bundles — step (bodies preserved), workflow (step bodies replaced with WORKFLOW_USE_STEP proxy calls), and client (safe references with workflowId). Stable IDs derived from file path and function name ensure all three modes agree on function identity.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/code-transform
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durability-replay-reference
+  - /deep-dives/durable-streaming-reference
+---
+
+You write one file with two directives. The compiler produces three bundles. That's the trick behind Workflow DevKit's programming model.
+
+## The Split
+
+Mark functions with `"use step"` (side effects) or `"use workflow"` (orchestration). The SWC plugin generates three outputs from the same source:
+
+```ts
+// Your source code
+export async function createUser(email: string) {
+  "use step";
+  return { id: crypto.randomUUID(), email };
+}
+
+export async function handleSignup(email: string) {
+  "use workflow";
+  const user = await createUser(email);
+  return { userId: user.id };
+}
+```
+
+**Step mode** preserves step bodies and registers them for execution. **Workflow mode** replaces step bodies with `WORKFLOW_USE_STEP` proxy calls — so `await createUser(email)` checks the event log for a cached result or suspends. **Client mode** attaches `workflowId` properties while preventing direct execution.
+
+Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build.
+
+A dead code elimination pass strips imports that only the replaced bodies used. Build-time validation catches non-async directives, misspelled hints, and conflicting annotations before deployment.
+
+## Why It Matters
+
+No manual file separation. No hand-maintained ID registries. No server-side imports leaking into client bundles. You write ordinary JavaScript, add two strings, and the compiler handles the three-way split that makes durable execution possible.

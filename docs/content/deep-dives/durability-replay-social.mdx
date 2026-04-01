@@ -1,0 +1,58 @@
+---
+title: "The Event Log Is the State"
+description: A concise explainer on how Workflow DevKit uses an append-only event log and deterministic replay to reconstruct workflow state after crashes — no heap snapshots, no serialized checkpoints.
+type: conceptual
+summary: Workflow DevKit doesn't checkpoint your workflow's memory. It persists every step result as an immutable event in an append-only log. When the workflow resumes after a crash or cold start, the runtime replays the log — cached results return instantly, side effects never re-execute.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/event-sourcing
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durable-streaming-reference
+  - /deep-dives/cost-model-fluid-compute-reference
+---
+
+Your workflow charged a credit card, then the process died. How does it pick up without charging again?
+
+Most durable execution systems snapshot the heap — serialize the in-flight state, persist it, and restore it on restart. That works until you deploy new code and the snapshot format doesn't match. Workflow DevKit skips snapshots entirely. The event log *is* the state.
+
+## One Log, No Snapshots
+
+Every transition — step completion, webhook arrival, sleep elapsed — is an immutable event appended to a log. The current state of any workflow is derived by replaying those events in order.
+
+```ts
+// Every step result is persisted as an event
+// From packages/world/src/events.ts
+const StepCompletedEventSchema = BaseEventSchema.extend({
+  eventType: z.literal('step_completed'),
+  correlationId: z.string(),
+  eventData: z.object({
+    result: SerializedDataSchema,
+  }),
+});
+```
+
+When the workflow resumes, the runtime creates a fresh VM sandbox with the same deterministic seed — same `Math.random()` sequence, same `Date.now()` progression — and re-executes the workflow code from the beginning. The `EventsConsumer` feeds persisted events to the workflow in order. Each step call checks the log: if a `step_completed` event exists, the cached result is returned instantly. If not, the workflow suspends and the step runs in the background.
+
+```ts
+// From packages/core/src/events-consumer.ts
+if (
+  handled === EventConsumerResult.Consumed ||
+  handled === EventConsumerResult.Finished
+) {
+  this.eventIndex++;
+  if (handled === EventConsumerResult.Finished) {
+    this.callbacks.splice(i, 1);
+  }
+  process.nextTick(this.consume);
+  return;
+}
+```
+
+Orchestration re-runs in milliseconds. Side effects execute exactly once. There's no serialization format to version, no snapshot migration when you deploy, and every state transition is an auditable, immutable record.
+
+## Why It Matters
+
+The event log eliminates three problems that plague snapshot-based systems: format versioning across deploys, opaque state for debugging, and the risk of duplicate step execution from stale checkpoints. With event sourcing, you get durability, auditability, and exactly-once semantics from a single append-only sequence.
+
+No heap snapshots. No serialization bugs. The log is the truth.

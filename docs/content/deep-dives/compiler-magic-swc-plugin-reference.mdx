@@ -180,7 +180,7 @@ The plugin validates directive usage during compilation and emits errors for inv
 | Invalid exports | Module-level directive files can only export async functions |
 | Misspelled directive | Detects typos like `"use steps"` or `"use workflows"` |
 
-The workflow-mode transformation also validates that workflow code doesn't import modules that would break determinism — like `fs`, `http`, or `child_process`. Most invalid patterns are caught as build-time errors before deployment.
+Most invalid patterns are caught as build-time errors before deployment.
 
 ## Why This Matters
 
