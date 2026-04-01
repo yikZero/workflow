@@ -16,7 +16,7 @@ Here's a workflow that sends an onboarding email, waits 3 days for the user to a
 
 In a traditional system, that workflow ties up a worker process for a week. The process sits idle for 168 hours, doing nothing, costing money.
 
-In Workflow DevKit, that same workflow consumes compute only in a handful of brief invocations spread across seven days. Between those decision points, nothing stays alive. No worker process. No open connection. No reserved memory. The state lives in durable events and queued wake-ups, not in a running machine.
+In Workflow DevKit, that same workflow consumes compute only in a handful of brief invocations spread across seven days. No worker process stays resident between those decision points. Event writes and queue operations still occur at the suspension boundaries, but the runtime does not hold compute open while the workflow is waiting. The state lives in durable events and queued wake-ups, not in a running machine.
 
 This article explains how that works: the queue-driven execution model, the suspension mechanics, and the delayed re-enqueue infrastructure that makes wall-clock time effectively free.
 
@@ -28,9 +28,9 @@ This article explains how that works: the queue-driven execution model, the susp
 
 The cost model isn't a feature you configure. It's a direct consequence of how the runtime works:
 
-1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
-2. **No idle compute during suspension** — when orchestration hits a step, the handler persists `step_created`, queues the step, and exits. When orchestration hits a hook, the runtime records hook state durably and exits. The workflow stays suspended until external delivery records `hook_received`. Nothing stays resident between decision points. (Event writes and queue operations still occur at suspension boundaries, but no compute is billed while the workflow is waiting.)
-3. **Delayed re-enqueue for timed waits** — when orchestration hits `sleep()`, the handler persists `wait_created`, returns `timeoutSeconds`, and lets the queue schedule the next wake-up. On Vercel, waits longer than 23 hours are implemented as a chain of delayed messages.
+1. **Queue-driven invocation** — workflow handlers run because a queue message arrives, not because a long-lived worker stays alive. No message, no compute.
+2. **External-work suspension** — when orchestration hits a step or hook, the handler persists durable state, dispatches any needed work, and returns. Steps resume when the step handler writes `step_completed` and explicitly re-queues the workflow. Hooks stay suspended until external delivery records `hook_received`.
+3. **Timed re-entry** — waits persist `wait_created` and resume through `timeoutSeconds`. On Vercel, waits longer than 23 hours chain across multiple delayed messages because single-message delay is capped.
 
 <Callout type="info">
 **What "no polling" means here:** the workflow engine does not keep a worker alive and poll while a run is sleeping or waiting on external work. Suspended state lives in durable events plus queued wake-ups. The public `Run.returnValue` helper is separate: it polls run status once per second until the run reaches a terminal state.
@@ -139,7 +139,7 @@ if (minTimeoutSeconds !== null) {
 return {};
 ```
 
-**The handler returns. The compute is freed.** No process sleeps. No connection is held. The event log contains the complete state of the workflow. When the next message arrives — whether from a step completion or a delayed re-enqueue — a fresh invocation loads the log and replays from the beginning.
+**The handler returns. The compute is freed.** No worker process stays resident between decision points. Event writes and queue operations still happen at the suspension boundaries, but the runtime does not hold compute open while the workflow is waiting. When the next message arrives — whether from a step completion or a delayed re-enqueue — a fresh invocation loads the log and replays from the beginning.
 
 Step, hook, and wait suspension all persist durable state, but they re-enter differently. Steps resume when the step handler writes `step_completed` and explicitly re-enqueues the workflow. Waits resume when the handler returns `timeoutSeconds` and the queue schedules the next delivery. The edge case is `hook_conflict`, which forces an immediate replay with `timeoutSeconds: 0`:
 
@@ -304,9 +304,9 @@ Consider a multi-step order pipeline: charge the card, reserve inventory, send c
 - The workflow handler runs for milliseconds per invocation. Between steps, nothing exists. The event log is the complete state.
 - Crashes are invisible. If the process dies after charging the card, the `step_completed` event is already in the log. On re-invocation, the workflow replays through the cached result and suspends at the next uncompleted step.
 - Steps execute as independent queue messages on any available compute. A workflow with 100 concurrent steps (`Promise.all(...)`) dispatches 100 messages — the queue distributes them across available capacity without dedicated workers.
-- Wall-clock time is free. A `sleep('7d')` produces a delayed queue message and exits. A `sleep('5s')` does the same. Both cost the same: zero compute during the wait.
+- Wall-clock time doesn't hold a worker open. A `sleep('7d')` and a `sleep('5s')` both produce delayed queue messages and exit. Short waits usually need one delayed delivery; longer waits chain multiple delayed messages (Vercel caps single-message delay at 23 hours). Either way, no compute stays resident while the workflow is waiting.
 
-Put rough numbers on it: an always-on worker held for 168 hours is billed for 168 hours. The queue-driven version might use a few 50 ms workflow invocations plus the actual step compute. Even before you count step time, the orchestration layer went from 604,800 seconds of wall-clock residency to well under a second of active compute.
+The important comparison is not one exact benchmark number. It is the billing shape. An always-on design pays for wall-clock residency. Workflow DevKit pays for short invocations that persist events, dispatch steps, replay orchestration, and finish the run. The gap between those invocations is durable state plus delayed queue delivery — not an allocated worker.
 
 The difference is most dramatic for workflows with long waits. An email drip campaign that sends messages over two weeks costs compute only for the handful of milliseconds each invocation takes — not for the 14 days between them.
 

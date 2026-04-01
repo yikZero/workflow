@@ -1,8 +1,8 @@
 ---
 title: "A Week-Long Workflow. Milliseconds of Compute."
-description: A concise explainer on how Workflow DevKit's queue-driven execution model makes wall-clock time free — compute exists only at decision points, not during the waits between them.
+description: A concise explainer on how Workflow DevKit's queue-driven runtime avoids idle worker residency — compute runs only at durable decision points, not throughout the wall-clock lifetime of a workflow.
 type: conceptual
-summary: Workflow DevKit's cost model emerges from queue-driven invocation, no idle compute during suspension, and delayed re-enqueue. Compute exists only at decision points — when a run starts, a step is dispatched, a cached result is replayed, or a timed wake-up occurs. Steps resume by explicit re-enqueue after `step_completed`; waits resume through `timeoutSeconds`.
+summary: Workflow DevKit's cost model comes from queue-driven invocation, external-work suspension, and timed re-entry. `start()` persists `run_created` and queues the run. Waits wake it through `timeoutSeconds`, and completed steps wake it by persisting `step_completed` and re-queuing the workflow. Between those decision points, no worker process stays resident.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -12,7 +12,7 @@ related:
   - /deep-dives/durable-streaming-reference
 ---
 
-A workflow that sends an email and waits 3 days for a response. In a traditional system, a worker sits idle for 72 hours. In Workflow DevKit, nothing exists during those 72 hours.
+A workflow that sends an email and waits 3 days for a response. In a traditional system, a worker sits idle for 72 hours. In Workflow DevKit, no worker process stays resident during those 72 hours — the state lives in durable events and queued wake-ups.
 
 ## The Key Insight
 
@@ -43,10 +43,10 @@ Hooks are durable suspension points, not queued jobs. The create phase records `
 
 ## Why It Matters
 
-A `sleep('7d')` costs the same as `sleep('5s')` — both produce a delayed queue message and release all resources. On Vercel, waits longer than 23 hours are chained across multiple delayed messages.
+A long sleep and a short sleep both avoid holding a worker open, which is the real cost-model win. They are not literally identical in the current implementation: short waits usually need one delayed delivery, while longer waits can chain multiple delayed queue messages before the workflow finally resumes. On Vercel, single-message delay is capped at 23 hours, so a `sleep('30d')` chains roughly 32 messages.
 
-Also, the workflow engine itself does not poll while suspended; the separate `Run.returnValue` helper polls run status once per second.
+The workflow engine itself does not poll while suspended; the separate `Run.returnValue` helper polls run status once per second.
 
-Replay through cached step results takes milliseconds. For wait-heavy workflows, orchestration cost is dramatically lower than always-on workers because the runtime bills decision points, not idle wall-clock time. No always-on worker. No sleeping process. No paying to wait.
+Replay stays cheap because the workflow re-runs orchestration code and reuses cached step results instead of re-executing side effects. For wait-heavy workflows, orchestration cost is dramatically lower than always-on workers because the runtime bills decision points, not idle wall-clock time. No always-on worker. No sleeping process. No paying to wait.
 
 A week-long workflow. Milliseconds of compute. That's the model.
