@@ -98,6 +98,8 @@ export async function basicWebhookWorkflow() {
 
 ### Responding to Webhook Requests (Manual Mode)
 
+Use this section only when the caller requires a non-default HTTP response. If `202 Accepted` is acceptable, use `createWebhook()` without `respondWith: "manual"`.
+
 Pass `{ respondWith: "manual" }` to get a `RequestWithResponse` object with a `respondWith()` method. Note that `respondWith()` must be called from within a step function:
 
 ```typescript lineNumbers
@@ -177,6 +179,7 @@ export async function eventCollectorWorkflow() {
 
 ## Related Functions
 
-- [`createHook()`](/docs/api-reference/workflow/create-hook) - Lower-level hook primitive for arbitrary payloads
-- [`defineHook()`](/docs/api-reference/workflow/define-hook) - Type-safe hook helper
-- [`resumeWebhook()`](/docs/api-reference/workflow-api/resume-webhook) - Resume a webhook from an API route
+- [`createHook()`](/docs/api-reference/workflow/create-hook) — Use when the app resumes from server-side code with a deterministic business token.
+- [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) — Pairs with `createHook()` for deterministic server-side resume.
+- [`defineHook()`](/docs/api-reference/workflow/define-hook) — Type-safe hook helper.
+- [`resumeWebhook()`](/docs/api-reference/workflow-api/resume-webhook) — Low-level runtime API. Most integrations should call `webhook.url` directly instead of adding a custom callback route.
