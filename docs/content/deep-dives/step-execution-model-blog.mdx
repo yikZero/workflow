@@ -267,7 +267,7 @@ Consider a traditional always-on worker processing a multi-step order pipeline �
 - Steps execute as individual queued messages that can run on any available compute. A workflow with 100 concurrent steps doesn't need 100 workers — the queue distributes work across whatever capacity is available.
 - Error handling is built into the model: `RetryableError` triggers automatic retries with backoff; `FatalError` terminates the step permanently. The orchestration code doesn't need try/catch around step calls unless you want to handle failures as part of the workflow logic.
 
-The difference is most dramatic for workflows with long waits. A workflow that sends an email and waits 3 days for a customer response costs exactly zero compute during those 3 days. No worker. No connection. No memory. When the response arrives (via a webhook or scheduled poll), the workflow replays from the event log — milliseconds of compute — processes the response in a step, and either completes or suspends again at the next pending operation.
+The difference is most dramatic for workflows with long waits. A workflow that sends an email and waits 3 days for a customer response costs exactly zero compute during those 3 days. No worker. No connection. No memory. When the response arrives (via a webhook that records `hook_received`, or a scheduled wake-up that re-invokes the handler), the workflow replays from the event log — milliseconds of compute — processes the response in a step, and either completes or suspends again at the next pending operation.
 
 ## Writing Workflow Code: Practical Implications
 

@@ -16,11 +16,15 @@ Here's a workflow that sends an onboarding email, waits 3 days for the user to a
 
 In a traditional system, that workflow ties up a worker process for a week. The process sits idle for 168 hours, doing nothing, costing money.
 
-In Workflow DevKit, that same workflow consumes compute for a few milliseconds — scattered across four brief invocations over seven days. Between those invocations, nothing exists. No process. No connection. No memory. No cost.
+In Workflow DevKit, that same workflow consumes compute only in a handful of brief invocations spread across seven days. Between those decision points, nothing stays alive. No worker process. No open connection. No reserved memory. The state lives in durable events and queued wake-ups, not in a running machine.
 
 This article explains how that works: the queue-driven execution model, the suspension mechanics, and the delayed re-enqueue infrastructure that makes wall-clock time effectively free.
 
 ## The Core Insight: Run Only When There's Work
+
+<Callout type="info">
+**Think in decision points, not duration.** A 7-day workflow with 4–6 decision points consumes compute only when it starts, dispatches work, resumes after external completion, or finishes. The 168 hours between those points are represented by durable events and delayed queue messages — not a live worker.
+</Callout>
 
 The cost model isn't a feature you configure. It's a direct consequence of how the runtime works:
 
@@ -301,6 +305,8 @@ Consider a multi-step order pipeline: charge the card, reserve inventory, send c
 - Crashes are invisible. If the process dies after charging the card, the `step_completed` event is already in the log. On re-invocation, the workflow replays through the cached result and suspends at the next uncompleted step.
 - Steps execute as independent queue messages on any available compute. A workflow with 100 concurrent steps (`Promise.all(...)`) dispatches 100 messages — the queue distributes them across available capacity without dedicated workers.
 - Wall-clock time is free. A `sleep('7d')` produces a delayed queue message and exits. A `sleep('5s')` does the same. Both cost the same: zero compute during the wait.
+
+Put rough numbers on it: an always-on worker held for 168 hours is billed for 168 hours. The queue-driven version might use a few 50 ms workflow invocations plus the actual step compute. Even before you count step time, the orchestration layer went from 604,800 seconds of wall-clock residency to well under a second of active compute.
 
 The difference is most dramatic for workflows with long waits. An email drip campaign that sends messages over two weeks costs compute only for the handful of milliseconds each invocation takes — not for the 14 days between them.
 
