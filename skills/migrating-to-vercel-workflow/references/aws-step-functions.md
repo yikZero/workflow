@@ -26,10 +26,12 @@
 
 - Resume surface for `.waitForTaskToken`:
   - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
-  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`.
+  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`, and the default `202 Accepted` response is fine.
+  - Use `createWebhook({ respondWith: 'manual' })` only when the prompt explicitly requires a custom response body, status, or headers.
   - Choose exactly one surface. Do not pair `createWebhook()` with `resumeHook()`.
   - See `references/shared-patterns.md` -> `## Deterministic server-side resume`
-  - See `references/shared-patterns.md` -> `## Generated callback URL`
+  - See `references/shared-patterns.md` -> `## Generated callback URL (default response)`
+  - See `references/shared-patterns.md` -> `## Generated callback URL (manual response)`
 - Explicit `Promise.all()` for parallel work (replaces Parallel state)
 - Loops or `Promise.all()` over arrays for Map state equivalents
 - Rollback stack when the original graph used compensation chains (Catch → compensation states)

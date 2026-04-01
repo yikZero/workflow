@@ -112,7 +112,7 @@ Selection rules:
 1. If the source pauses for Signals, `step.waitForEvent()`, or `.waitForTaskToken`, pick exactly one resume key.
 2. If the target is self-hosted or non-Vercel, also pick `runtime/self-hosted`.
 3. Pick exactly one boundary key when the prompt explicitly requests framework-agnostic output or names a framework.
-4. A combined prompt can require multiple keys, for example: `resume/url + runtime/self-hosted + boundary/named-framework`.
+4. A combined prompt can require multiple keys, for example: `resume/url/default + runtime/self-hosted + boundary/named-framework`.
 5. If the prompt under-specifies response semantics for a callback-URL flow, default to `resume/url/default` and make the assumption explicit in `## Open Questions`.
 6. Only choose `resume/url/manual` when the prompt explicitly requires a custom response body, status, headers, or manual-response handling.
 7. If the prompt under-specifies the resume surface, use these defaults and make the assumption explicit in `## Open Questions`:
