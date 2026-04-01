@@ -1,0 +1,35 @@
+---
+title: "The Event Log Is the State. Replay Just Recomputes the Stack Frame."
+description: A concise explainer on how Workflow DevKit uses an append-only event log and deterministic replay to reconstruct workflow state after crashes — no heap snapshots, no serialized checkpoints.
+type: conceptual
+summary: Workflow DevKit doesn't checkpoint your workflow's memory. It persists every step result as an immutable event in an append-only log. When the workflow resumes, the runtime replays the log — the event log is the complete state, and replay just recomputes the call stack to arrive at the right suspension point.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/event-sourcing
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durable-streaming-reference
+  - /deep-dives/cost-model-fluid-compute-reference
+---
+
+Your workflow charged a credit card, then the process died. How does it pick up without charging again?
+
+Most durable execution systems snapshot the heap — serialize local variables, the call stack, pending promises — and persist that blob. When the process restarts, they deserialize the snapshot and resume. This works until you deploy new code and the snapshot format doesn't match. Now you need migration logic, versioned serialization, or a painful manual recovery.
+
+Workflow DevKit skips snapshots entirely. The **Event log** *is* the state.
+
+## No Snapshots, Just Events
+
+Every transition — `step_completed`, `hook_received`, `wait_completed` — is an immutable event appended to the **Event log**. Events are ordered by ULID-based IDs that embed millisecond timestamps, so sorting by event ID produces chronological order without a separate sequence number. The `validateUlidTimestamp` function rejects any client-generated ID that drifts more than 5 minutes from server time, preventing clock-skew attacks on the log's ordering.
+
+When the workflow resumes after a crash, deploy, or cold start, the runtime doesn't try to deserialize a heap. It loads the **Event log**, creates a fresh VM sandbox with the same deterministic seed — same `Math.random()`, same `Date.now()`, same `crypto.randomUUID()` — and re-executes the **Workflow bundle** from the beginning.
+
+The `EventsConsumer` feeds events to the workflow in order. Each step call checks: is there a `step_completed` for this step? If yes, return the cached result instantly. If no, suspend and queue the step for background execution.
+
+The workflow re-runs its orchestration logic — the `"use workflow"` function — but it never re-runs a step. Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects. Local variables, branching decisions, and promise chains are all recomputed from the **Event log**. Workflow state is reconstructed by replaying code against the **Event log**. The stack frame is ephemeral; the log is permanent.
+
+## Why It Matters
+
+There's no serialization format to version across deploys. There's no opaque binary snapshot to debug when things go wrong. Every state transition is an auditable, immutable record with a timestamp and typed payload. And terminal state enforcement at the storage layer guarantees exactly-once step execution — even if duplicate messages arrive from the queue.
+
+The **Event log** is the state. Replay just recomputes the stack frame. That's the entire durability model.

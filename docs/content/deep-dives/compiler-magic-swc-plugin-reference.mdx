@@ -1,0 +1,452 @@
+---
+title: Compiler Magic (SWC Plugin)
+description: How the Workflow DevKit SWC plugin transforms a single source file into three execution targets — step, workflow, and client — with stable IDs, step proxies, and dead code elimination.
+type: conceptual
+summary: A technical reference covering the three-mode compiler transformation, WORKFLOW_USE_STEP symbol replacement, client-mode error stubs, stable ID generation from module path and function name, nested step handling, and the dead code elimination pass.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/code-transform
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durability-replay-reference
+---
+
+<Callout>
+The SWC compiler plugin is the mechanism that makes the directive-based programming model work. It takes a single source file containing `"use workflow"` and `"use step"` functions and produces three distinct outputs — one for step execution, one for workflow orchestration, and one for client-side references. Without this transformation, the runtime would have no way to separate side-effecting step bodies from deterministic workflow logic, and developers would need to manually split their code across files and maintain separate ID registries.
+</Callout>
+
+## Overview
+
+The Workflow DevKit compiler is an SWC plugin that operates in three modes, each producing a different transformation of the same source file:
+
+| Mode     | Purpose                                    | Output bundle                      | Key transformation                                |
+|----------|--------------------------------------------|------------------------------------|---------------------------------------------------|
+| Step     | Bundles step function bodies for execution | `.well-known/workflow/v1/step`     | Bodies kept intact, registered via `registerStepFunction()` |
+| Workflow | Bundles orchestration logic for the VM     | `.well-known/workflow/v1/flow`     | Step bodies replaced with `WORKFLOW_USE_STEP` proxy calls   |
+| Client   | Provides type-safe workflow references     | Your application code              | Workflow bodies replaced with error throws, `workflowId` attached |
+
+All three modes emit a JSON manifest comment at the top of the output containing metadata about discovered workflows, steps, and serializable classes. This manifest is consumed by bundlers and the runtime to discover and register functions.
+
+## Lifecycle
+
+The following diagram shows how a single source file is transformed into three execution targets:
+
+```mermaid
+flowchart TD
+    A["Source file<br/>'use workflow' + 'use step' directives"] --> B["SWC plugin invoked per mode"]
+    B --> C["Step mode"]
+    B --> D["Workflow mode"]
+    B --> E["Client mode"]
+    C --> F["Step bodies kept intact<br/>registerStepFunction() appended<br/>Workflow bodies → error throw"]
+    D --> G["Step bodies → WORKFLOW_USE_STEP proxy<br/>Workflow bodies intact<br/>Registered via __private_workflows.set()"]
+    E --> H["Step bodies kept intact, stepId attached<br/>Workflow bodies → error throw<br/>workflowId attached"]
+    G --> I["DCE pass removes unreachable code"]
+    E --> I
+    F --> J["step.js bundle"]
+    I --> K["flow.js bundle"]
+    I --> L["Client application code"]
+```
+
+After the workflow-mode and client-mode transforms, the plugin runs a dead code elimination (DCE) pass. In workflow mode, because step bodies are replaced with proxy calls, imports and helper functions that were only referenced from those original step bodies become unreachable and are removed. In client mode, the same pruning applies to code reachable only from workflow bodies that were replaced with error stubs. Exports and identifiers still referenced by the surviving code are preserved.
+
+## Code Walkthrough
+
+### Step mode: register and preserve
+
+In step mode, step function bodies are kept completely intact — they execute with full Node.js runtime access. The plugin strips the directive, appends a `registerStepFunction()` call, and attaches an error-throwing stub to any workflow functions (since workflows should never execute directly in the step bundle):
+
+```ts title="Step mode output (from spec.md)" lineNumbers
+import { registerStepFunction } from "workflow/internal/private";
+
+export async function createUser(email) {
+  // Body preserved exactly as written
+  return { id: crypto.randomUUID(), email };
+}
+registerStepFunction("step//./workflows/user//createUser", createUser);
+
+// Workflow functions throw in step mode — they belong in the flow bundle
+export async function handleUserSignup(email) {
+  throw new Error(
+    "You attempted to execute workflow handleUserSignup function directly. " +
+    "To start a workflow, use start(handleUserSignup) from workflow/api"
+  );
+}
+handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup";
+```
+
+### Workflow mode: step proxy replacement
+
+This is the central transformation. Step function bodies are replaced with calls through `globalThis[Symbol.for("WORKFLOW_USE_STEP")]` — a well-known symbol bound to the runtime's `useStep` function inside the sandboxed VM. Workflow function bodies are left intact because they contain deterministic orchestration logic that must replay identically:
+
+```ts title="Workflow mode output (from spec.md)" lineNumbers
+// Step body replaced — the runtime proxy checks the event log
+// and either returns a cached result or triggers suspension
+export var createUser = globalThis[Symbol.for("WORKFLOW_USE_STEP")](
+  "step//./workflows/user//createUser"
+);
+
+// Workflow body preserved — deterministic orchestration
+export async function handleUserSignup(email) {
+  const user = await createUser(email);
+  return { userId: user.id };
+}
+handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup";
+globalThis.__private_workflows.set(
+  "workflow//./workflows/user//handleUserSignup",
+  handleUserSignup
+);
+```
+
+At runtime, when the workflow calls `await createUser(email)`, the `WORKFLOW_USE_STEP` proxy consults the `EventsConsumer`. If a matching `step_completed` event exists in the log, it returns the cached result. If not, it adds the step to the pending invocations queue and eventually throws a `WorkflowSuspension` to exit the VM.
+
+### Client mode: error stubs with workflow IDs
+
+Client mode prevents direct execution of workflow functions while preserving the `workflowId` property that `start()` needs to identify which workflow to launch:
+
+```ts title="Client mode output (from spec.md)" lineNumbers
+// Workflow body replaced with error throw
+export async function handleUserSignup(email) {
+  throw new Error(
+    "You attempted to execute workflow handleUserSignup function directly. " +
+    "To start a workflow, use start(handleUserSignup) from workflow/api"
+  );
+}
+// workflowId attached — same value as workflow mode
+handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup";
+```
+
+Step functions in client mode keep their bodies intact (allowing local testing) and have their `stepId` property set directly on the function — unlike step mode, client mode does not import `registerStepFunction` because that module contains server-side dependencies.
+
+<Callout type="info">
+Client mode is optional but recommended. Without it, you must manually construct workflow IDs using the `{type}//{modulePath}//{functionName}` pattern or look them up in the build manifest. All framework integrations include client mode as a loader by default.
+</Callout>
+
+### Stable ID generation
+
+The compiler generates deterministic IDs from the module path and function name using the pattern:
+
+```
+{type}//{modulePath}//{identifier}
+```
+
+Where:
+- **type** is `workflow`, `step`, or `class`
+- **modulePath** is either a module specifier with version (e.g., `@myorg/tasks@2.0.0`) when configured, or a relative path prefixed with `./` (e.g., `./src/jobs/order`) — file extensions are stripped
+- **identifier** is the function name, with nested functions using `/` separators and class members using `.` (static) or `#` (instance)
+
+Examples:
+- `workflow//./workflows/user-signup//handleUserSignup`
+- `step//./workflows/user-signup//createUser`
+- `step//./src/jobs/order//processOrder/innerStep` (nested step)
+- `step//./src/jobs/order//MyClass.staticMethod` (static method)
+- `step//./src/jobs/order//MyClass#instanceMethod` (instance method)
+
+IDs are stable: they don't change unless you rename files or functions. The same ID is generated in all three modes for the same function, ensuring that step mode's `registerStepFunction()`, workflow mode's `WORKFLOW_USE_STEP` proxy, and client mode's `workflowId`/`stepId` property all agree.
+
+### Nested step handling
+
+Steps defined inside workflow functions are hoisted to module level with compound names. In step mode, the nested function is extracted and registered independently. In workflow mode, the nested step becomes an inline `WORKFLOW_USE_STEP` call with an optional closure function:
+
+```ts title="Nested step — workflow mode output (from spec.md)" lineNumbers
+export async function myWorkflow(config) {
+  let count = 0;
+
+  // Nested step replaced with proxy — closure function captures `count`
+  var increment = globalThis[Symbol.for("WORKFLOW_USE_STEP")](
+    "step//./input//myWorkflow/increment",
+    () => ({ count })  // Closure variables serialized at call time
+  );
+
+  return await increment();
+}
+myWorkflow.workflowId = "workflow//./input//myWorkflow";
+globalThis.__private_workflows.set("workflow//./input//myWorkflow", myWorkflow);
+```
+
+The second argument to `WORKFLOW_USE_STEP` is a closure function that captures the variables the nested step needs. On the step side, the hoisted function retrieves these variables via `__private_getClosureVars()`.
+
+Steps can also be defined inside deeply nested object properties. The plugin recursively walks the AST to find step-annotated functions, generating compound path-based IDs (e.g., `step//./input//vade/tools/VercelRequest/execute`) and hoisting them with `$`-separated variable names (e.g., `vade$tools$VercelRequest$execute`).
+
+### Build-time validation
+
+The plugin validates directive usage during compilation and emits errors for invalid patterns:
+
+| Error | Description |
+|-------|-------------|
+| Non-async function | Functions with `"use step"` or `"use workflow"` must be async |
+| Instance methods with `"use workflow"` | Only static methods can have `"use workflow"` |
+| Misplaced directive | Directive must be at the top of the file or start of the function body |
+| Conflicting directives | Cannot have both `"use step"` and `"use workflow"` at module level |
+| Invalid exports | Module-level directive files can only export async functions |
+| Misspelled directive | Detects typos like `"use steps"` or `"use workflows"` |
+
+Most invalid patterns are caught as build-time errors before deployment.
+
+## Runtime Integration
+
+The three bundles are consumed by different parts of the Workflow DevKit infrastructure at runtime. Each bundle plugs into a specific stage of the execution lifecycle — the **Client bundle** initiates a run, the **Workflow bundle** orchestrates it inside a deterministic VM, and the **Step bundle** performs real side effects.
+
+### Client bundle runtime
+
+The **Client bundle** is imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function whose body throws an error and whose `workflowId` property identifies the workflow.
+
+At runtime, `start(handleUserSignup)` reads that `workflowId` property, creates a `run_created` event in the **Event log**, and sends a **Queue message** to the workflow queue. The error-throwing body ensures that a stray `await handleUserSignup(email)` throws a helpful message instead of silently bypassing durable execution.
+
+```ts title="packages/core/src/runtime/start.ts — reading workflowId and queuing"
+return await waitedUntil(() => {
+  // @ts-expect-error this field is added by our client transform
+  const workflowName = workflow?.workflowId;
+
+  if (!workflowName) {
+    throw new WorkflowRuntimeError(
+      `'start' received an invalid workflow function. Ensure the Workflow Development Kit is configured correctly and the function includes a 'use workflow' directive.`,
+      { slug: 'start-invalid-workflow-function' }
+    );
+  }
+```
+
+```ts title="packages/core/src/runtime/start.ts — queuing the workflow"
+await world.queue(
+  getWorkflowQueueName(workflowName),
+  {
+    runId,
+    traceCarrier,
+  } satisfies WorkflowInvokePayload,
+  {
+    deploymentId,
+  }
+);
+```
+
+The **Queue message** is a trigger, not durable state — it carries the `runId` and trace context so the workflow handler knows which run to replay. All durable state lives in the **Event log**.
+
+### Workflow bundle runtime
+
+The **Workflow bundle** is loaded into a sandboxed Node.js VM when the workflow handler processes the queue message. The runtime creates a deterministic execution context seeded from run metadata, then injects the `WORKFLOW_USE_STEP` symbol so compiler-generated proxy calls resolve at runtime:
+
+```ts title="packages/core/src/workflow.ts — VM context setup"
+const {
+  context,
+  globalThis: vmGlobalThis,
+  updateTimestamp,
+} = createContext({
+  seed: `${workflowRun.runId}:${workflowRun.workflowName}:${+startedAt}`,
+  fixedTimestamp: +startedAt,
+});
+
+const useStep = createUseStep(workflowContext);
+// @ts-expect-error — `@types/node` says symbol is not valid, but it does work
+vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
+// @ts-expect-error — `@types/node` says symbol is not valid, but it does work
+vmGlobalThis[WORKFLOW_GET_STREAM_ID] = (namespace?: string) =>
+  getWorkflowRunStreamId(workflowRun.runId, namespace);
+```
+
+The VM patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives so every replay sees exactly the same values:
+
+```ts title="packages/core/src/vm/index.ts — deterministic patches"
+g.Math.random = rng;
+
+const Date_ = g.Date;
+(g as any).Date = function Date(
+  ...args: Parameters<(typeof globalThis)['Date']>[]
+) {
+  if (args.length === 0) {
+    return new Date_(fixedTimestamp);
+  }
+  // @ts-expect-error — Args is `Date` constructor arguments
+  return new Date_(...args);
+};
+(g as any).Date.prototype = Date_.prototype;
+Object.setPrototypeOf(g.Date, Date_);
+g.Date.now = () => fixedTimestamp;
+```
+
+```ts title="packages/core/src/vm/index.ts — deterministic crypto"
+if (prop === 'getRandomValues') {
+  return getRandomValues;
+}
+if (prop === 'randomUUID') {
+  return randomUUID;
+}
+```
+
+Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects. When the workflow calls `await createUser(email)`, the `WORKFLOW_USE_STEP` proxy subscribes to the `EventsConsumer`. If a matching `step_completed` event exists in the **Event log**, it returns the cached result. If not, it queues the step for execution and throws a `WorkflowSuspension` to exit the VM:
+
+```ts title="packages/core/src/step.ts — WORKFLOW_USE_STEP proxy behavior"
+const correlationId = `step_${ctx.generateUlid()}`;
+
+const queueItem: StepInvocationQueueItem = {
+  type: 'step',
+  correlationId,
+  stepName,
+  args,
+};
+
+ctx.invocationsQueue.set(correlationId, queueItem);
+
+ctx.eventsConsumer.subscribe((event) => {
+  if (!event) {
+    // End of events — step hasn't completed yet.
+    // Trigger suspension so the workflow handler can queue the step.
+    scheduleWhenIdle(ctx, () => {
+      ctx.onWorkflowError(
+        new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+      );
+    });
+    return EventConsumerResult.NotConsumed;
+  }
+
+  if (event.eventType === 'step_completed') {
+    ctx.invocationsQueue.delete(event.correlationId);
+
+    ctx.pendingDeliveries++;
+    ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+      try {
+        const hydratedResult = await hydrateStepReturnValue(
+          event.eventData.result,
+          ctx.runId,
+          ctx.encryptionKey,
+          ctx.globalThis
+        );
+        resolve(hydratedResult as Result);
+      } catch (error) {
+        reject(error);
+      } finally {
+        ctx.pendingDeliveries--;
+      }
+    });
+    return EventConsumerResult.Finished;
+  }
+
+  return EventConsumerResult.NotConsumed;
+});
+```
+
+### Step bundle runtime
+
+The **Step bundle** is loaded by the step execution handler when a **Queue message** arrives. The suspension handler writes a `step_created` event to the **Event log** (persisting the step's input) and then sends a lightweight queue message to trigger execution:
+
+```ts title="packages/core/src/runtime/suspension-handler.ts — queue the step"
+await queueMessage(
+  world,
+  `__wkf_step_${queueItem.stepName}`,
+  {
+    workflowName,
+    workflowRunId: runId,
+    workflowStartedAt,
+    stepId: queueItem.correlationId,
+    traceCarrier,
+    requestedAt: new Date(),
+  },
+  {
+    idempotencyKey: queueItem.correlationId,
+    headers: {
+      ...extractTraceHeaders(traceCarrier),
+    },
+  }
+);
+```
+
+The step handler parses the queue payload, emits a `step_started` event, then hydrates the step's input from the persisted `step_created` event — not from the queue message. The step function executes with full Node.js runtime access, and the result is persisted as a `step_completed` event. Finally, the handler re-queues the workflow so it can replay with the new result:
+
+```ts title="packages/core/src/runtime/step-handler.ts — complete and re-queue"
+// Run step_completed and trace serialization concurrently
+let stepCompleted409 = false;
+const [, traceCarrier] = await Promise.all([
+  world.events
+    .create(
+      workflowRunId,
+      {
+        eventType: 'step_completed',
+        specVersion: SPEC_VERSION_CURRENT,
+        correlationId: stepId,
+        eventData: {
+          result: result as Uint8Array,
+        },
+      },
+      { requestId }
+    )
+    .catch((err: unknown) => {
+      if (EntityConflictError.is(err)) {
+        runtimeLogger.info(
+          'Tried completing step, but step has already finished.',
+          {
+            workflowRunId,
+            stepId,
+            stepName,
+            message: err.message,
+          }
+        );
+        stepCompleted409 = true;
+        return;
+      }
+      throw err;
+    }),
+  serializeTraceCarrier(),
+]);
+
+if (stepCompleted409) {
+  return;
+}
+
+await queueMessage(world, getWorkflowQueueName(workflowName), {
+  runId: workflowRunId,
+  traceCarrier,
+  requestedAt: new Date(),
+});
+```
+
+A finished step wakes the workflow back up by writing `step_completed` to the **Event log** and sending a **Queue message** to the workflow queue. On the next invocation, the workflow replays from the beginning — but this time the `WORKFLOW_USE_STEP` proxy finds the `step_completed` event and returns the cached result instead of suspending. Workflow state is reconstructed by replaying code against the event log.
+
+### One call, end to end
+
+The following diagram traces a single `await createUser(email)` call through the entire system:
+
+```mermaid
+sequenceDiagram
+    participant App as Application Code
+    participant Client as Client Bundle
+    participant WQ as Workflow Queue
+    participant VM as Workflow VM
+    participant EL as Event Log
+    participant SQ as Step Queue
+    participant Step as Step Handler
+
+    App->>Client: start(handleUserSignup, [email])
+    Client->>EL: write run_created event
+    Client->>WQ: queue message (runId)
+
+    WQ->>VM: invoke workflow handler
+    VM->>VM: replay workflow code in sandbox
+    VM->>VM: await createUser(email) → WORKFLOW_USE_STEP proxy
+    VM->>EL: check for step_completed
+    Note over VM,EL: No matching event found
+    VM->>VM: throw WorkflowSuspension
+
+    VM->>EL: write step_created (with input)
+    VM->>SQ: queue message (stepId)
+
+    SQ->>Step: invoke step handler
+    Step->>EL: read step_created (hydrate input)
+    Step->>Step: execute createUser(email) with full Node.js
+    Step->>EL: write step_completed (with result)
+    Step->>WQ: re-queue workflow
+
+    WQ->>VM: invoke workflow handler (replay)
+    VM->>VM: replay workflow code in sandbox
+    VM->>VM: await createUser(email) → WORKFLOW_USE_STEP proxy
+    VM->>EL: check for step_completed
+    Note over VM,EL: Event found — return cached result
+    VM->>VM: continue to next step
+```
+
+## Why This Matters
+
+The three-mode transformation is what enables writing workflows as ordinary JavaScript functions while gaining durable execution:
+
+1. **Single source of truth** — developers write one file. The compiler handles the separation of concerns, eliminating an entire class of consistency bugs where step registrations, workflow IDs, or function signatures could drift.
+
+2. **Correct by construction** — build-time validation catches invalid patterns (non-async functions, misplaced directives, forbidden imports) before code reaches production. The DCE pass ensures that workflow and client bundles don't carry dead code from replaced function bodies.
+
+3. **Stable, portable identifiers** — IDs derived from module path and function name are deterministic across builds, deployments, and runtime environments. Renaming a file changes the ID, but the build process surfaces this as a manifest change rather than a silent runtime failure.

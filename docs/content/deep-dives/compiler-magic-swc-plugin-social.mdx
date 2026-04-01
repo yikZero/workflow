@@ -1,0 +1,49 @@
+---
+title: "One File In. Three Bundles Out."
+description: A concise explainer on how the Workflow DevKit SWC compiler plugin transforms a single source file into three execution targets — making durable execution feel like writing normal JavaScript.
+type: conceptual
+summary: The Workflow DevKit SWC plugin takes a single file with "use workflow" and "use step" directives and produces three bundles — step (bodies preserved), workflow (step bodies replaced with WORKFLOW_USE_STEP proxy calls), and client (safe references with workflowId). Stable IDs derived from file path and function name ensure all three modes agree on function identity.
+prerequisites:
+  - /docs/foundations/workflows-and-steps
+related:
+  - /docs/how-it-works/code-transform
+  - /deep-dives/step-execution-model-reference
+  - /deep-dives/durability-replay-reference
+  - /deep-dives/durable-streaming-reference
+---
+
+You write one file with two directives. The compiler produces three bundles. That's the trick behind Workflow DevKit's programming model — and it eliminates an entire category of infrastructure code you'd otherwise write by hand.
+
+## The Split
+
+Mark functions with `"use step"` (side effects) or `"use workflow"` (orchestration). The SWC plugin generates three outputs from the same source:
+
+```ts
+export async function handleUserSignup(email: string) {
+  'use workflow';
+  const user = await createUser(email);
+  await sendWelcomeEmail(user);
+  await sleep('5s');
+  const webhook = createWebhook();
+  await sendOnboardingEmail(user, webhook.url);
+  await webhook;
+  console.log('Webhook Resolved');
+  return { userId: user.id, status: 'onboarded' };
+}
+
+async function createUser(email: string) {
+  'use step';
+  console.log(`Creating a new user with email: ${email}`);
+  return { id: crypto.randomUUID(), email };
+}
+```
+
+The compiler produces three bundles from this file. The **Step bundle** preserves `createUser`'s body and registers it via `registerStepFunction()`. The **Workflow bundle** replaces `createUser`'s body with a `WORKFLOW_USE_STEP` proxy call — so `await createUser(email)` checks the Event log for a cached `step_completed` result or suspends the workflow if the step hasn't run yet. The **Client bundle** attaches `workflowId` to `handleUserSignup` so `start()` knows which workflow to queue.
+
+Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build.
+
+Here's the key insight: step bodies are excluded from the Workflow bundle because replay must never re-run side effects. When a step hasn't completed yet, the proxy throws a `WorkflowSuspension`. The suspension handler writes a `step_created` event to the Event log (persisting the input) and sends a Queue message to trigger execution. The step handler runs the real function, writes `step_completed`, and re-queues the workflow. On replay, the proxy finds the cached result and returns it immediately. Workflow state is reconstructed by replaying code against the Event log — the VM's deterministic `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` ensure every replay sees identical values.
+
+## Why It Matters
+
+No manual file separation. No hand-maintained ID registries. No server-side imports leaking into client bundles. You write ordinary JavaScript, add two directive strings, and the compiler handles the three-way split that makes durable execution possible. One file in, three bundles out.
