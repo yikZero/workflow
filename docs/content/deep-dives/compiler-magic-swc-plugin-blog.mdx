@@ -252,6 +252,23 @@ Consider a traditional approach where the developer must manually maintain the s
 
 The compiler is the mechanism that makes the programming model feel like writing normal JavaScript while providing the runtime guarantees that durable execution requires.
 
+## What Happens at Runtime
+
+The three bundles are consumed by different parts of the Workflow DevKit infrastructure:
+
+**Step bundle** → loaded by the step execution handler when a queue message arrives. The handler looks up the step ID in the registry (populated by `registerStepFunction()` calls), invokes the function with the serialized arguments from the event, and persists the result as a `step_completed` event.
+
+**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment also patches `Math.random()`, `Date.now()`, and `crypto` with deterministic alternatives — which is why step bodies can't exist here. A step that calls `crypto.randomUUID()` needs real randomness, not seeded randomness.
+
+**Client bundle** → imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` in your application code throws a helpful message instead of silently bypassing durable execution.
+
+The three bundles are placed in predictable locations by the framework integration:
+- Step: `.well-known/workflow/v1/step`
+- Workflow: `.well-known/workflow/v1/flow`
+- Client: your normal import paths
+
+This convention means the runtime can discover and load bundles without any explicit registration or configuration beyond the directives themselves.
+
 ## The Full Pipeline
 
 ```mermaid
