@@ -413,7 +413,7 @@ With Vercel Workflow:
 - **No separate server.** Durable state lives in the Vercel-managed event log. There is no cluster to provision, monitor, or upgrade.
 - **TypeScript all the way down.** Workflow and step functions are regular TypeScript with directive annotations. No code generation, no separate SDK for activities, no `proxyActivities` indirection.
 - **Durable streaming built in.** `getWritable()` lets you push progress updates from steps without bolting on a separate WebSocket or SSE transport.
-- **Pay for active CPU time.** When a workflow is waiting on a hook, a sleep, or an external call, you are not billed. There is no idle worker fleet consuming resources.
+- **Usage-based pricing with active-CPU compute.** Workflow bills for Workflow Steps and Workflow Storage, and the functions that execute those steps continue to use standard Vercel compute pricing. If you use Fluid Compute, CPU billing pauses while code waits on I/O. When a workflow is suspended on `sleep()` or a hook, it pauses cleanly instead of keeping a worker process alive.
 
 This is not about replacing every Temporal feature. It is about recognizing that most TypeScript teams use a fraction of Temporal's surface and pay for the rest in operational complexity.
 

@@ -255,6 +255,11 @@ This example exercises compensation (rollbacks), idempotency keys, retry semanti
 // inngest/functions/order-saga.ts
 import { inngest } from '../client';
 
+type Order = { id: string; customerId: string; total: number };
+type Reservation = { reservationId: string };
+type Charge = { chargeId: string };
+type Shipment = { shipmentId: string };
+
 export const processOrderSaga = inngest.createFunction(
   { id: 'process-order-saga', retries: 3 },
   { event: 'order/process' },
@@ -266,11 +271,7 @@ export const processOrderSaga = inngest.createFunction(
         `https://example.com/api/orders/${orderId}`
       );
       if (!res.ok) throw new Error('Order not found');
-      return res.json() as Promise<{
-        id: string;
-        customerId: string;
-        total: number;
-      }>;
+      return res.json() as Promise<Order>;
     });
 
     const inventory = await step.run('reserve-inventory', async () => {
@@ -283,10 +284,10 @@ export const processOrderSaga = inngest.createFunction(
         }
       );
       if (!res.ok) throw new Error('Inventory reservation failed');
-      return res.json() as Promise<{ reservationId: string }>;
+      return res.json() as Promise<Reservation>;
     });
 
-    let payment: { chargeId: string };
+    let payment: Charge;
     try {
       payment = await step.run('charge-payment', async () => {
         const res = await fetch(
@@ -302,10 +303,9 @@ export const processOrderSaga = inngest.createFunction(
           }
         );
         if (!res.ok) throw new Error('Payment charge failed');
-        return res.json() as Promise<{ chargeId: string }>;
+        return res.json() as Promise<Charge>;
       });
     } catch (error) {
-      // Compensate: release inventory
       await step.run('release-inventory', async () => {
         await fetch(
           `https://example.com/api/inventory/reservations/${inventory.reservationId}`,
@@ -315,10 +315,66 @@ export const processOrderSaga = inngest.createFunction(
       throw error;
     }
 
-    // ... shipment, more compensation, etc.
-    return { orderId: order.id, status: 'completed' };
+    let shipment: Shipment;
+    try {
+      shipment = await step.run('create-shipment', async () => {
+        const res = await fetch('https://example.com/api/shipments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: order.id }),
+        });
+        if (!res.ok) throw new Error('Shipment creation failed');
+        return res.json() as Promise<Shipment>;
+      });
+    } catch (error) {
+      await step.run('refund-payment', async () => {
+        await fetch(
+          `https://example.com/api/payments/charges/${payment.chargeId}/refund`,
+          { method: 'POST' }
+        );
+      });
+      await step.run('release-inventory-after-refund', async () => {
+        await fetch(
+          `https://example.com/api/inventory/reservations/${inventory.reservationId}`,
+          { method: 'DELETE' }
+        );
+      });
+      throw error;
+    }
+
+    return {
+      orderId: order.id,
+      reservationId: inventory.reservationId,
+      chargeId: payment.chargeId,
+      shipmentId: shipment.shipmentId,
+      status: 'completed',
+    };
   }
 );
+```
+
+**Sample input:**
+
+```json
+{
+  "event": {
+    "data": {
+      "orderId": "ord_123"
+    }
+  }
+}
+```
+
+**Expected output:**
+
+```json
+{
+  "orderId": "ord_123",
+  "reservationId": "res_456",
+  "chargeId": "ch_789",
+  "shipmentId": "shp_101",
+  "status": "completed"
+}
 ```
 
 ### Vercel Workflow version
@@ -467,7 +523,7 @@ With Vercel Workflow:
 - **No event bus.** Start workflows directly with `start()` from your API routes, server actions, or app boundary. You do not need to define event schemas or route through a dispatch layer.
 - **TypeScript all the way down.** Steps are named async functions, not inline closures passed to `step.run()`. They are easier to test, type, and reuse.
 - **Durable streaming built in.** `getWritable()` lets you push progress updates from steps without adding Inngest Realtime or a separate WebSocket/SSE transport.
-- **Pay for active CPU time.** When a workflow is waiting on a hook, a sleep, or an external call, you are not billed. There is no separate platform metering.
+- **Usage-based pricing with active-CPU compute.** Workflow bills for Workflow Steps and Workflow Storage, and the functions that execute those steps continue to use standard Vercel compute pricing. If you use Fluid Compute, CPU billing pauses while code waits on I/O. When a workflow is suspended on `sleep()` or a hook, it pauses cleanly instead of keeping a worker process alive.
 
 This is not about replacing every Inngest feature. It is about recognizing that most TypeScript teams use a fraction of Inngest's event-routing surface and pay for the rest in SDK complexity and platform coupling.
 

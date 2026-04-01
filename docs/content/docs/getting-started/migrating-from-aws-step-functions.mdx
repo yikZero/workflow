@@ -495,7 +495,7 @@ With Vercel Workflow:
 - **No infrastructure to provision.** There is no CloudFormation/CDK stack for the orchestrator, no Lambda concurrency limits to tune, and no Step Functions pricing tiers to navigate.
 - **TypeScript all the way down.** Workflow and step functions are regular TypeScript with directive annotations. State transitions are `await` calls, not `"Next"` pointers.
 - **Durable streaming built in.** `getWritable()` lets you push progress updates from steps without adding DynamoDB, SNS, or a WebSocket API Gateway.
-- **Pay for active CPU time.** When a workflow is waiting on a hook, a sleep, or an external call, you are not billed. There is no idle Lambda or Express state machine cost.
+- **Usage-based pricing with active-CPU compute.** Workflow bills for Workflow Steps and Workflow Storage, and the functions that execute those steps continue to use standard Vercel compute pricing. If you use Fluid Compute, CPU billing pauses while code waits on I/O. When a workflow is suspended on `sleep()` or a hook, it pauses cleanly instead of keeping a worker process alive.
 
 This is not about replacing every Step Functions feature. It is about recognizing that most TypeScript teams use a fraction of Step Functions' state-language surface and pay for the rest in configuration complexity and AWS service sprawl.
 
