@@ -1,8 +1,8 @@
 ---
 title: "Why Your Workflow That Sleeps for a Week Costs Almost Nothing"
-description: A developer-facing deep dive into Workflow DevKit's cost model — how queue-driven execution, zero-cost suspension, and delayed re-enqueue eliminate always-on workers and make workflow compute proportional to work performed, not wall-clock time.
+description: A developer-facing deep dive into Workflow DevKit's cost model — how queue-driven execution, idle-free suspension, and delayed re-enqueue eliminate always-on workers and make workflow compute proportional to work performed, not wall-clock time.
 type: conceptual
-summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, zero-cost suspension for external work, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When orchestration hits a step, the handler persists step_created, queues the step, and exits. When orchestration hits a hook, the handler persists durable hook state and exits until external delivery records hook_received. Completed steps wake the workflow by persisting step_completed and re-enqueueing the run. For timed waits, the queue schedules the next delivery after the next delay interval; on Vercel, long waits are chained across multiple delayed messages. No process exists between invocations.
+summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, idle-free suspension for external work, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When orchestration hits a step, the handler persists step_created, queues the step, and exits. When orchestration hits a hook, the handler persists durable hook state and exits until external delivery records hook_received. Completed steps wake the workflow by persisting step_completed and re-enqueueing the run. For timed waits, the queue schedules the next delivery after the next delay interval; on Vercel, long waits are chained across multiple delayed messages. No process exists between invocations.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -25,8 +25,12 @@ This article explains how that works: the queue-driven execution model, the susp
 The cost model isn't a feature you configure. It's a direct consequence of how the runtime works:
 
 1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
-2. **Zero-cost suspension for external work** — when orchestration hits a step, the handler persists `step_created`, queues the step, and exits. When orchestration hits a hook, the runtime records hook state durably and exits. The workflow stays suspended until external delivery records `hook_received`. Nothing stays resident between decision points.
+2. **No idle compute during suspension** — when orchestration hits a step, the handler persists `step_created`, queues the step, and exits. When orchestration hits a hook, the runtime records hook state durably and exits. The workflow stays suspended until external delivery records `hook_received`. Nothing stays resident between decision points. (Event writes and queue operations still occur at suspension boundaries, but no compute is billed while the workflow is waiting.)
 3. **Delayed re-enqueue for timed waits** — when orchestration hits `sleep()`, the handler persists `wait_created`, returns `timeoutSeconds`, and lets the queue schedule the next wake-up. On Vercel, waits longer than 23 hours are implemented as a chain of delayed messages.
+
+<Callout type="info">
+**What "no polling" means here:** the workflow engine does not keep a worker alive and poll while a run is sleeping or waiting on external work. Suspended state lives in durable events plus queued wake-ups. The public `Run.returnValue` helper is separate: it polls run status once per second until the run reaches a terminal state.
+</Callout>
 
 A workflow in Workflow DevKit does not stay alive while it waits. Step, hook, and wait suspension all persist durable state, but they re-enter differently. Steps resume when the step handler writes `step_completed` and explicitly re-enqueues the workflow. Waits resume when the handler returns `timeoutSeconds` and the queue schedules the next delivery. The immediate `timeoutSeconds: 0` edge case is `hook_conflict`, which forces a replay so the hook promise fails deterministically on the next invocation.
 
@@ -259,17 +263,27 @@ flowchart TD
     A["Client calls start()"] --> B["run_created event + queue message"]
     B --> C["Workflow handler invoked"]
     C --> D["Event log loaded, VM replays"]
-    D --> E{{"Workflow reaches step / sleep"}}
-    E --> F["Events persisted, steps queued"]
+    D --> E{{"Workflow reaches suspension point"}}
+
+    E -->|"step"| F["step_created persisted, step queued"]
     F --> G["Handler returns — compute freed"]
     G --> H["Step executes on separate compute"]
-    H --> I["step_completed event persisted"]
-    I --> J["Workflow message re-enqueued"]
+    H --> I["step_completed persisted"]
+    I --> J["Step handler re-enqueues workflow"]
     J --> C
-    E -->|"sleep() with resumeAt"| K["Handler returns timeoutSeconds"]
-    K --> L["Queue delays next delivery"]
-    L --> C
-    D -->|"All steps done"| M["run_completed — workflow finished"]
+
+    E -->|"hook"| K["hook_created persisted"]
+    K --> L["Handler returns — compute freed"]
+    L --> M["External system delivers payload"]
+    M --> N["hook_received persisted, workflow re-enqueued"]
+    N --> C
+
+    E -->|"sleep()"| O["wait_created persisted"]
+    O --> P["Handler returns timeoutSeconds"]
+    P --> Q["Queue delays next delivery"]
+    Q --> C
+
+    D -->|"All operations done"| R["run_completed — workflow finished"]
 ```
 
 ## Before and After: Always-On vs. Queue-Driven
@@ -333,6 +347,6 @@ The cost characteristics described here are a consequence of the queue and suspe
 
 ## Conclusion
 
-The cost model isn't an optimization layered on top of the runtime — it *is* the runtime. Queue-driven invocation means no idle processes. Zero-cost suspension means no held resources. Delayed re-enqueue means wall-clock time is free. Together, they make workflow compute proportional to the work performed, not the time elapsed.
+The cost model isn't an optimization layered on top of the runtime — it *is* the runtime. Queue-driven invocation means no idle processes. Suspension frees all compute while the workflow waits — event writes and queue operations happen at the boundaries, but nothing is billed in between. Delayed re-enqueue means wall-clock time is free. Together, they make workflow compute proportional to the work performed, not the time elapsed.
 
 A week-long workflow. Milliseconds of compute. That's the model.
