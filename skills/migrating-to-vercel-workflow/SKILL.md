@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.6'
+  version: '0.1.7'
 ---
 
 # Migrating to Vercel Workflow
@@ -51,14 +51,16 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 Choose exactly one resume key and explain it inside `## App Boundary / Resume Endpoints`.
 
 - `resume/internal` -> `createHook()` + `resumeHook()` + deterministic business token
-- `resume/url` -> `createWebhook({ respondWith: 'manual' })` + `webhook.url` + `RequestWithResponse`
-- Never pair `createWebhook()` with `resumeHook()`
+- `resume/url/default` -> `createWebhook()` + `webhook.url` + default `202 Accepted`
+- `resume/url/manual` -> `createWebhook({ respondWith: 'manual' })` + `webhook.url` + `RequestWithResponse`
+- Never pair any `createWebhook(...)` path with `resumeHook()`
 - Never pass `token:` to `createWebhook()`
 
 Load worked code only when needed:
 
 - `references/shared-patterns.md` -> `## Named-framework internal resume example (Hono)`
-- `references/shared-patterns.md` -> `## Generated callback URL`
+- `references/shared-patterns.md` -> `## Generated callback URL (default response)`
+- `references/shared-patterns.md` -> `## Generated callback URL (manual response)`
 - `references/runtime-targets.md` -> `## Non-Vercel output block`
 - `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
@@ -72,22 +74,25 @@ Select up to one key from each axis below.
 | Situation | Route keys | App-boundary output | Never show |
 | --- | --- | --- | --- |
 | App resumes the workflow from server-side code with a deterministic business token | `resume/internal` | `createHook()` in workflow + `resumeHook()` in app-boundary code | `createWebhook()`, `webhook.url` |
-| External vendor needs a generated callback URL or the flow must receive a raw `Request` | `resume/url` | `createWebhook({ respondWith: 'manual' })`, pass `webhook.url`, parse `RequestWithResponse` in a step | `resumeHook()`, `token:` on `createWebhook()`, invented callback route |
+| External vendor needs a generated callback URL and the default `202 Accepted` response is fine | `resume/url/default` | `createWebhook()`, pass `webhook.url` | `resumeHook()`, `token:` on `createWebhook()`, invented callback route, manual-response boilerplate |
+| External vendor needs a generated callback URL and the prompt requires a custom response body, status, or headers | `resume/url/manual` | `createWebhook({ respondWith: 'manual' })`, pass `webhook.url`, use `RequestWithResponse`, call `request.respondWith()` in a step | `resumeHook()`, `token:` on `createWebhook()`, invented callback route |
 | Prompt explicitly names Hono, Express, Fastify, NestJS, or Next.js | `boundary/named-framework` | every user-authored route snippet uses that framework's syntax | mixing plain `Request` / `Response` into user-authored routes |
 | Prompt explicitly asks for framework-agnostic output | `boundary/framework-agnostic` | plain `Request` / `Response` even if a framework is named elsewhere | framework-specific route syntax |
 | Target is self-hosted or non-Vercel | `runtime/self-hosted` | `World extends Storage, Queue, Streamer`, `startWorkflowWorld()`, explicit non-Vercel explanation | claims of Vercel-managed execution |
 
 **Sample route matches:**
 
-- _The vendor needs a callback URL for Hono on self-hosted Postgres._ → `resume/url`, `boundary/named-framework`, `runtime/self-hosted`.
+- _The vendor needs a callback URL for Hono on self-hosted Postgres. Default 202 is fine._ → `resume/url/default`, `boundary/named-framework`, `runtime/self-hosted`.
 - _Approval API resumes by orderId in Hono._ → `resume/internal`, `boundary/named-framework`.
+- _The vendor needs a callback URL and requires a 200 JSON ack body._ → `resume/url/manual`.
 
 ### Resume axis
 
 | Route key | Trigger phrases in the prompt | Must emit | Must not emit |
 | --- | --- | --- | --- |
 | `resume/internal` | signal, approval API, deterministic token, server-side resume | `createHook()`, deterministic `token`, `resumeHook()` | `createWebhook()`, callback URL |
-| `resume/url` | callback URL, vendor webhook, raw `Request`, external POST back, `.waitForTaskToken` with an external caller | `createWebhook()`, `webhook.url`, `RequestWithResponse` when manual response is needed | `resumeHook()`, `token:` on `createWebhook()` |
+| `resume/url/default` | callback URL, vendor webhook, raw `Request`, external POST back, `.waitForTaskToken`, and no custom response requirement | `createWebhook()`, `webhook.url` | `resumeHook()`, `token:` on `createWebhook()`, `respondWith: 'manual'`, `RequestWithResponse` |
+| `resume/url/manual` | callback URL plus explicit custom response requirement: `respondWith`, `RequestWithResponse`, custom ack body, custom status code, custom headers, vendor requires 200 JSON ack | `createWebhook({ respondWith: 'manual' })`, `webhook.url`, `RequestWithResponse`, step-level `request.respondWith()` | `resumeHook()`, `token:` on `createWebhook()` |
 
 ### Runtime axis
 
@@ -108,9 +113,11 @@ Selection rules:
 2. If the target is self-hosted or non-Vercel, also pick `runtime/self-hosted`.
 3. Pick exactly one boundary key when the prompt explicitly requests framework-agnostic output or names a framework.
 4. A combined prompt can require multiple keys, for example: `resume/url + runtime/self-hosted + boundary/named-framework`.
-5. If the prompt under-specifies the resume surface, use these defaults and make the assumption explicit in `## Open Questions`:
+5. If the prompt under-specifies response semantics for a callback-URL flow, default to `resume/url/default` and make the assumption explicit in `## Open Questions`.
+6. Only choose `resume/url/manual` when the prompt explicitly requires a custom response body, status, headers, or manual-response handling.
+7. If the prompt under-specifies the resume surface, use these defaults and make the assumption explicit in `## Open Questions`:
    - Temporal Signals and Inngest `step.waitForEvent()` -> `resume/internal`
-   - AWS `.waitForTaskToken` without a deterministic server-side resume endpoint -> `resume/url`
+   - AWS `.waitForTaskToken` without a deterministic server-side resume endpoint -> `resume/url/default`
    - If the prompt later states that the app resumes from server-side code with a stable business token, override to `resume/internal`
 
 Before drafting `## Migrated Code`, write the selected route keys in `## Migration Plan`.
@@ -124,11 +131,21 @@ Apply every obligation that matches the selected route keys.
   - App boundary must call `resumeHook()`.
   - Use a deterministic business token.
   - Do not emit `createWebhook()` or `webhook.url`.
-- `resume/url`
+- `resume/url/default`
+  - Workflow code must use `createWebhook()`.
+  - External request setup must pass `webhook.url`.
+  - In `## App Boundary / Resume Endpoints`, treat the generated `webhook.url` as the resume surface.
+  - Request reading (`request.json()`, `request.text()`, headers, method, url) may happen in workflow or step context.
+  - Do not emit `resumeHook(...)`.
+  - Do not pass `token:` to `createWebhook()`.
+  - Do not invent a user-authored callback route or `resumeWebhook()` wrapper unless the prompt explicitly asks for one.
+- `resume/url/manual`
   - Workflow code must use `createWebhook({ respondWith: 'manual' })`.
   - External request setup must pass `webhook.url`.
   - In `## App Boundary / Resume Endpoints`, treat the generated `webhook.url` as the resume surface.
-  - Callback parsing and `request.respondWith()` must stay inside a `"use step"` function using `RequestWithResponse`.
+  - Use `RequestWithResponse`.
+  - `request.respondWith()` must stay inside a `"use step"` function.
+  - Request reading (`request.json()`, `request.text()`, headers, method, url) may happen in workflow or step context.
   - Do not emit `resumeHook(...)`.
   - Do not pass `token:` to `createWebhook()`.
   - Do not invent a user-authored callback route or `resumeWebhook()` wrapper unless the prompt explicitly asks for one.
@@ -170,16 +187,21 @@ Expected `## Migration Plan` excerpt:
 ```md
 ## Migration Plan
 - Source: AWS Step Functions
-- Route keys: resume/url, runtime/self-hosted, boundary/named-framework
+- Route keys: resume/url/default, runtime/self-hosted, boundary/named-framework
 - Why these route keys:
-  - `resume/url`: external vendor needs a callback URL
+  - `resume/url/default`: external vendor needs a callback URL, no custom response required
   - `runtime/self-hosted`: target says self-hosted Postgres
   - `boundary/named-framework`: prompt asks for Hono syntax
 - Required code obligations:
-  - use `createWebhook({ respondWith: 'manual' })` and pass `webhook.url`
+  - use `createWebhook()` and pass `webhook.url`
   - include `World extends Storage, Queue, Streamer` and `startWorkflowWorld()`
   - keep app-boundary code in Hono syntax
 ```
+
+Sample prompts this routing must handle correctly:
+
+- Input: `Migrate this Step Functions approval flow. The vendor needs a callback URL. Default 202 is fine.` → Expected route keys: `resume/url/default`
+- Input: `Migrate this Step Functions approval flow. The vendor needs a callback URL and requires a 200 JSON acknowledgement body.` → Expected route keys: `resume/url/manual`
 
 ## Source references
 
@@ -221,25 +243,33 @@ Fail the draft if any of these are true:
 - [ ] External writes omit idempotency keys
 - [ ] Hooks/webhooks are missing where the source used signals, waitForEvent, or task tokens
 - [ ] A callback-URL flow uses `createHook()` + `resumeHook()` instead of `createWebhook()`
-- [ ] A `resume/url` migration invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` should be the only resume surface
+- [ ] A `resume/url/default` or `resume/url/manual` migration invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` should be the only resume surface
 - [ ] `createWebhook()` is given a custom `token` or paired with `resumeHook()`
+
+Validation note:
+
+- Reading webhook request data in workflow context is allowed. Only `request.respondWith()` is step-only.
 
 Additional fail conditions:
 
 - `resume/internal` output omits `resumeHook()` in app-boundary code
 - `resume/internal` output omits a deterministic business token
 - `resume/internal` output emits `createWebhook()` or `webhook.url`
-- `resume/url` output does not pass `webhook.url` to the external system
-- `resume/url` output handles callback parsing outside a `"use step"` function
-- `resume/url` output omits `RequestWithResponse` or `await request.respondWith(...)` after selecting `createWebhook({ respondWith: 'manual' })`
-- `resume/url` output invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` is the intended resume surface
+- `resume/url/default` output does not pass `webhook.url` to the external system
+- `resume/url/default` output emits `resumeHook()`, `respondWith: 'manual'`, or `RequestWithResponse` without a custom-response requirement in the prompt
+- `resume/url/default` output invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` is the intended resume surface
+- `resume/url/manual` output does not pass `webhook.url` to the external system
+- `resume/url/manual` output omits `RequestWithResponse` or `await request.respondWith(...)`
+- `resume/url/manual` output calls `request.respondWith(...)` outside a `"use step"` function
+- `resume/url/manual` output invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` is the intended resume surface
 - `createWebhook()` is paired with `resumeHook()`
 - self-hosted output omits `World extends Storage, Queue, Streamer`, `startWorkflowWorld()`, or the explicit note that the workflow and step code can stay the same while the app still needs a custom `World`
 - named-framework output mixes framework syntax with plain `Request` / `Response` app-boundary code without a framework-agnostic override
 
 For concrete passing code, load:
 
-- `references/shared-patterns.md` -> `## Generated callback URL`
+- `references/shared-patterns.md` -> `## Generated callback URL (default response)`
+- `references/shared-patterns.md` -> `## Generated callback URL (manual response)`
 - `references/runtime-targets.md` -> `## Non-Vercel output block`
 - `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
@@ -266,12 +296,13 @@ Expected response shape:
 Load a worked example only when the prompt needs concrete code:
 
 - `references/shared-patterns.md` -> `## Named-framework internal resume example (Hono)`
-- `references/shared-patterns.md` -> `## Generated callback URL`
+- `references/shared-patterns.md` -> `## Generated callback URL (default response)`
+- `references/shared-patterns.md` -> `## Generated callback URL (manual response)`
 - `references/runtime-targets.md` -> `## Non-Vercel output block`
 - `references/aws-step-functions.md` -> `## Combined recipe: callback URL on self-hosted Hono`
 
 Reject these counterexamples:
 
-- `resume/url` + user-authored callback route when `webhook.url` is the intended resume surface
+- `resume/url/default` or `resume/url/manual` + user-authored callback route when `webhook.url` is the intended resume surface
 - `createWebhook()` paired with `resumeHook()`
 - named-framework app-boundary output mixed with plain `Request` / `Response` without a framework-agnostic override

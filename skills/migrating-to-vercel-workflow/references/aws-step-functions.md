@@ -71,19 +71,21 @@ export async function POST(request: Request) {
 }
 ```
 
-### Generated callback URL
+### Generated callback URL (default `202 Accepted`)
 
-Use this when the external system needs a callback URL or the migrated flow should receive a raw `Request`.
+Use this when the external system needs a callback URL and the default `202 Accepted` response is fine.
 
 ```ts
-import { createWebhook, type RequestWithResponse } from 'workflow';
+import { createWebhook } from 'workflow';
+
+type ApprovalPayload = { approved: boolean };
 
 export async function approvalWorkflow(orderId: string) {
   'use workflow';
-  using approval = createWebhook({ respondWith: 'manual' });
+  using approval = createWebhook();
   await sendApprovalRequest(orderId, approval.url);
   const request = await approval;
-  const body = await readApproval(request);
+  const body = (await request.json()) as ApprovalPayload;
   return {
     orderId,
     status: body.approved ? ('approved' as const) : ('rejected' as const),
@@ -95,20 +97,56 @@ async function sendApprovalRequest(
   callbackUrl: string,
 ): Promise<void> {
   'use step';
-  await fetch('https://example.com/approvals', {
+  await fetch(process.env.APPROVAL_API_URL!, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId, callbackUrl }),
+  });
+}
+```
+
+### Generated callback URL (manual response)
+
+Use this when the external system needs a callback URL and the migrated flow must send a custom HTTP response.
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+type ApprovalPayload = { approved: boolean };
+
+export async function approvalWorkflow(orderId: string) {
+  'use workflow';
+  using approval = createWebhook({ respondWith: 'manual' });
+  await sendApprovalRequest(orderId, approval.url);
+  const request = await approval;
+  const body = (await request.json()) as ApprovalPayload;
+  await acknowledgeApproval(request, body.approved);
+  return {
+    orderId,
+    status: body.approved ? ('approved' as const) : ('rejected' as const),
+  };
+}
+
+async function sendApprovalRequest(
+  orderId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+  await fetch(process.env.APPROVAL_API_URL!, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderId, callbackUrl }),
   });
 }
 
-async function readApproval(
+async function acknowledgeApproval(
   request: RequestWithResponse,
-): Promise<{ approved: boolean }> {
+  approved: boolean,
+): Promise<void> {
   'use step';
-  const body = (await request.json()) as { approved: boolean };
-  await request.respondWith(Response.json({ ok: true }));
-  return body;
+  await request.respondWith(
+    Response.json({ ok: true, approved }),
+  );
 }
 ```
 
@@ -122,18 +160,21 @@ Use this when all of the following are true:
 - the external system needs a callback URL
 - the target is self-hosted or otherwise non-Vercel
 - the prompt names Hono
+- the prompt does not require a custom callback response
 
 Workflow code:
 
 ```ts
-import { createWebhook, type RequestWithResponse } from 'workflow';
+import { createWebhook } from 'workflow';
+
+type ApprovalPayload = { approved: boolean };
 
 export async function refundWorkflow(refundId: string) {
   'use workflow';
-  using approval = createWebhook({ respondWith: 'manual' });
+  using approval = createWebhook();
   await sendApprovalRequest(refundId, approval.url);
   const request = await approval;
-  const payload = await readApproval(request);
+  const payload = (await request.json()) as ApprovalPayload;
   return {
     refundId,
     status: payload.approved ? ('approved' as const) : ('rejected' as const),
@@ -145,20 +186,11 @@ async function sendApprovalRequest(
   callbackUrl: string,
 ): Promise<void> {
   'use step';
-  await fetch('https://example.com/approvals', {
+  await fetch(process.env.APPROVAL_API_URL!, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refundId, callbackUrl }),
   });
-}
-
-async function readApproval(
-  request: RequestWithResponse,
-): Promise<{ approved: boolean }> {
-  'use step';
-  const payload = (await request.json()) as { approved: boolean };
-  await request.respondWith(Response.json({ ok: true }));
-  return payload;
 }
 ```
 
@@ -202,4 +234,11 @@ Must not appear:
 
 ```ts
 resumeHook(...)
+respondWith: 'manual'
+RequestWithResponse
 ```
+
+Sample prompt and expected shape:
+
+- Input: `Migrate this Step Functions flow to Vercel Workflow for Hono on self-hosted Postgres. The vendor needs a callback URL. Default 202 is fine.`
+- Expected route keys: `resume/url/default`, `runtime/self-hosted`, `boundary/named-framework`

@@ -95,21 +95,30 @@ export async function POST(request: Request) {
 }
 ```
 
-## Generated callback URL
+## Generated callback URL (default response)
 
-Use this when the external system needs a callback URL. Do not pass `token:` to `createWebhook()`.
+Use this when the external system needs a callback URL and the default `202 Accepted` response is fine.
 
 ```ts
-import { createWebhook, type RequestWithResponse } from 'workflow';
+import { createWebhook } from 'workflow';
+
+type VerificationCallback = {
+  approved: boolean;
+  reviewer?: string;
+};
 
 export async function verificationWorkflow(documentId: string) {
   'use workflow';
 
-  using webhook = createWebhook({ respondWith: 'manual' });
+  using webhook = createWebhook();
 
   await submitForVerification(documentId, webhook.url);
   const request = await webhook;
-  return await handleVerificationCallback(request);
+  const payload = (await request.json()) as VerificationCallback;
+
+  return payload.approved
+    ? { status: 'verified' as const, reviewer: payload.reviewer }
+    : { status: 'rejected' as const, reviewer: payload.reviewer };
 }
 
 async function submitForVerification(
@@ -118,28 +127,77 @@ async function submitForVerification(
 ): Promise<void> {
   'use step';
 
-  await fetch('https://vendor.example.com/verify', {
+  await fetch(process.env.VENDOR_VERIFY_URL!, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ documentId, callbackUrl }),
+  });
+}
+```
+
+## Generated callback URL (manual response)
+
+Use this when the external system needs a callback URL and the migration must send a custom HTTP response.
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+type VerificationCallback = {
+  approved: boolean;
+  reviewer?: string;
+};
+
+export async function verificationWorkflow(documentId: string) {
+  'use workflow';
+
+  using webhook = createWebhook({ respondWith: 'manual' });
+
+  await submitForVerification(documentId, webhook.url);
+  const request = await webhook;
+  const payload = (await request.json()) as VerificationCallback;
+
+  await acknowledgeVerification(request, payload.approved);
+
+  return payload.approved
+    ? { status: 'verified' as const, reviewer: payload.reviewer }
+    : { status: 'rejected' as const, reviewer: payload.reviewer };
+}
+
+async function submitForVerification(
+  documentId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+
+  await fetch(process.env.VENDOR_VERIFY_URL!, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ documentId, callbackUrl }),
   });
 }
 
-async function handleVerificationCallback(
+async function acknowledgeVerification(
   request: RequestWithResponse,
-): Promise<{ status: 'verified' | 'rejected'; reviewer?: string }> {
+  approved: boolean,
+): Promise<void> {
   'use step';
 
-  const body = (await request.json()) as {
-    approved: boolean;
-    reviewer?: string;
-  };
-  await request.respondWith(Response.json({ ok: true }));
-  return body.approved
-    ? { status: 'verified', reviewer: body.reviewer }
-    : { status: 'rejected', reviewer: body.reviewer };
+  await request.respondWith(
+    Response.json({ ok: true, approved }),
+  );
 }
 ```
+
+Rules:
+
+- Prefer the default-response version when the prompt only asks for a callback URL.
+- Only use manual-response mode when the prompt requires a custom response body, status, or headers.
+- Reading webhook request data may happen in workflow or step context. `request.respondWith()` is the step-only operation.
+
+Expected behavior:
+
+- Sample input: `Vendor needs a callback URL.` → Expected pattern: `createWebhook()` with no `RequestWithResponse`.
+- Sample input: `Vendor needs a callback URL and a custom JSON ack body.` → Expected pattern: `createWebhook({ respondWith: 'manual' })` plus step-level `request.respondWith()`.
 
 ## Hook with timeout
 
