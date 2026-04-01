@@ -2,7 +2,7 @@
 title: "Why Your Workflow That Sleeps for a Week Costs Almost Nothing"
 description: A developer-facing deep dive into Workflow DevKit's cost model — how queue-driven execution, zero-cost suspension, and delayed re-enqueue eliminate always-on workers and make workflow compute proportional to work performed, not wall-clock time.
 type: conceptual
-summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, zero-cost suspension, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When a workflow encounters a step or hook, the handler records the pending operation and exits. Completed steps wake the workflow by persisting step_completed and re-enqueueing the run. For timed waits, the queue delivers the next message after the specified delay. No process exists between invocations.
+summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, zero-cost suspension for external work, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When orchestration hits a step, the handler persists step_created, queues the step, and exits. When orchestration hits a hook, the handler persists durable hook state and exits until external delivery records hook_received. Completed steps wake the workflow by persisting step_completed and re-enqueueing the run. For timed waits, the queue schedules the next delivery after the next delay interval; on Vercel, long waits are chained across multiple delayed messages. No process exists between invocations.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -25,8 +25,10 @@ This article explains how that works: the queue-driven execution model, the susp
 The cost model isn't a feature you configure. It's a direct consequence of how the runtime works:
 
 1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
-2. **Zero-cost suspension for pending work** — when a workflow encounters a step or hook, the handler records the pending operation as an event, queues the out-of-band work, and exits. Nothing stays in memory between decision points.
-3. **Delayed re-enqueue for timed waits** — when a workflow suspends on `sleep()`, the handler records a `wait_created` event, returns `timeoutSeconds`, and the queue delivers the next message after that delay. The workflow doesn't exist during the gap.
+2. **Zero-cost suspension for external work** — when orchestration hits a step, the handler persists `step_created`, queues the step, and exits. When orchestration hits a hook, the runtime records hook state durably and exits. The workflow stays suspended until external delivery records `hook_received`. Nothing stays resident between decision points.
+3. **Delayed re-enqueue for timed waits** — when orchestration hits `sleep()`, the handler persists `wait_created`, returns `timeoutSeconds`, and lets the queue schedule the next wake-up. On Vercel, waits longer than 23 hours are implemented as a chain of delayed messages.
+
+A workflow in Workflow DevKit does not stay alive while it waits. Step, hook, and wait suspension all persist durable state, but they re-enter differently. Steps resume when the step handler writes `step_completed` and explicitly re-enqueues the workflow. Waits resume when the handler returns `timeoutSeconds` and the queue schedules the next delivery. The immediate `timeoutSeconds: 0` edge case is `hook_conflict`, which forces a replay so the hook promise fails deterministically on the next invocation.
 
 These three properties compose into something powerful: a workflow that sleeps for a week consumes compute only during the brief moments when it replays state and dispatches or collects results.
 
@@ -99,8 +101,12 @@ if (WorkflowSuspension.is(err)) {
 Inside `handleSuspension`, each pending item is processed:
 
 - **Steps** get a `step_created` event persisted and a queue message dispatched
-- **Hooks** get a `hook_created` event and wait for external delivery
+- **Hooks** get a `hook_created` event — the workflow stays suspended until external delivery records `hook_received`
 - **Waits** get a `wait_created` event with a `resumeAt` timestamp
+
+<Callout type="info">
+Hooks are durable suspension points, not queued jobs. The create phase records `hook_created`; the receive phase records `hook_received`. Unlike a step, hook creation does not itself queue executable work.
+</Callout>
 
 Then the handler calculates the minimum timeout from any pending waits:
 
@@ -127,7 +133,7 @@ return {};
 
 **The handler returns. The compute is freed.** No process sleeps. No connection is held. The event log contains the complete state of the workflow. When the next message arrives — whether from a step completion or a delayed re-enqueue — a fresh invocation loads the log and replays from the beginning.
 
-A workflow in Workflow DevKit does not stay alive while it waits. When orchestration hits a step or hook, the handler records the pending operation and exits. When orchestration hits `sleep()`, it records `wait_created`, returns `timeoutSeconds`, and lets the queue schedule the next wake-up. Completed steps resume the run through a different path: the step handler writes `step_completed` and explicitly re-enqueues the workflow. The important edge case is hook conflict, which uses `timeoutSeconds: 0` for an immediate replay so the workflow can fail deterministically on the next pass.
+Step, hook, and wait suspension all persist durable state, but they re-enter differently. Steps resume when the step handler writes `step_completed` and explicitly re-enqueues the workflow. Waits resume when the handler returns `timeoutSeconds` and the queue schedules the next delivery. The edge case is `hook_conflict`, which forces an immediate replay with `timeoutSeconds: 0`:
 
 ```ts
 // packages/core/src/runtime/suspension-handler.ts
@@ -202,11 +208,25 @@ When a step finishes executing, the step handler re-enqueues the workflow:
 
 ```ts
 // From packages/core/src/runtime/step-handler.ts
-await queueMessage(world, getWorkflowQueueName(workflowName), {
-  runId: workflowRunId,
-  traceCarrier,
-  requestedAt: new Date(),
-});
+if (EntityConflictError.is(err)) {
+  runtimeLogger.debug(
+    'Step in terminal state, re-enqueuing workflow',
+    {
+      stepName,
+      stepId,
+      workflowRunId,
+      error: err.message,
+    }
+  );
+
+  await queueMessage(world, getWorkflowQueueName(workflowName), {
+    runId: workflowRunId,
+    traceCarrier: await serializeTraceCarrier(),
+    requestedAt: new Date(),
+  });
+
+  return;
+}
 ```
 
 This is the mechanism that drives the workflow forward. There's no persistent orchestrator process watching for step completions. Each step completion is a discrete event that triggers exactly one workflow re-invocation. The workflow replays through all completed steps (returning cached results in milliseconds), then continues execution until it either completes or suspends at the next pending operation.

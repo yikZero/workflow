@@ -2,7 +2,7 @@
 title: Cost Model and Fluid Compute
 description: How Workflow DevKit eliminates always-on workers by using queue-driven execution, zero-cost suspension, and delayed re-enqueue to run workflow logic only when there is work to do.
 type: conceptual
-summary: A technical reference tracing the runtime control flow that makes workflow execution pay-per-use — from run creation through queue dispatch, suspension, out-of-band step execution, delayed re-enqueue, and completion.
+summary: A technical reference tracing the runtime control flow that makes workflow execution pay-per-use — from run creation through queue dispatch, suspension, step execution, delayed re-enqueue, and completion.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -18,13 +18,15 @@ Traditional long-running background jobs keep a process alive for the entire dur
 
 ## Overview
 
-The cost model is a direct consequence of three runtime mechanics:
+The cost model comes from three distinct re-entry paths in the runtime:
 
-1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. When there is no message, there is no compute.
-2. **Zero-cost suspension for pending work** — when a workflow encounters a step or hook, the handler records the pending operation as an event, queues the out-of-band work, and exits. Nothing stays in memory between decision points.
-3. **Delayed re-enqueue for timed waits** — when a workflow suspends on `sleep()`, the handler records a `wait_created` event, returns `timeoutSeconds`, and the queue delivers the next message after that delay.
+1. **Queue-driven invocation** — `start()` persists `run_created`, queues the workflow message, and returns a `Run` handle immediately.
+2. **External-work suspension** — when orchestration hits a step, the handler persists `step_created`, queues the step, and exits. When orchestration hits a hook, the runtime records hook state durably and exits. The workflow stays suspended until external delivery records `hook_received`.
+3. **Timed re-entry** — waits persist `wait_created` and resume through `timeoutSeconds`.
 
-Step completions and timed waits wake the workflow through different paths: steps resume the run by persisting `step_completed` and re-enqueueing the workflow, while waits resume the run by delayed queue delivery based on `timeoutSeconds`.
+<Callout type="info">
+`timeoutSeconds` is not the generic suspension mechanism. In the current runtime, waits return a positive `timeoutSeconds`, and `hook_conflict` returns `timeoutSeconds: 0` for an immediate replay. Step completion resumes the workflow because the step handler writes `step_completed` and explicitly re-queues the workflow.
+</Callout>
 
 These three properties mean a workflow that sleeps for a week consumes compute only during the brief moments when it replays state and dispatches or collects results — not for the seven days in between.
 
@@ -41,7 +43,7 @@ flowchart TD
     E --> F["Event log loaded, VM replays workflow code"]
     F --> G{"Next pending operation?"}
     G -->|"step / hook"| H["step_created / hook_created events persisted"]
-    H --> I["Step messages queued out-of-band"]
+    H --> I["Step messages queued"]
     I --> J["Handler returns — compute released"]
     J --> K["Step handler or external delivery completes"]
     K --> L["step_completed / hook_received event persisted"]
@@ -128,8 +130,12 @@ if (WorkflowSuspension.is(err)) {
 Inside `handleSuspension`, each pending item is recorded as an event and dispatched:
 
 - **Steps** get a `step_created` event and a queue message to the step handler
-- **Hooks** get a `hook_created` event and wait for external data
+- **Hooks** get a `hook_created` event — the workflow stays suspended until external delivery records `hook_received`
 - **Waits** get a `wait_created` event with a `resumeAt` timestamp
+
+<Callout type="info">
+Hooks are durable suspension points, not queued jobs. The create phase records `hook_created`; the receive phase records `hook_received`. Unlike a step, hook creation does not itself queue executable work.
+</Callout>
 
 The handler then calculates the minimum timeout from any pending waits:
 
@@ -217,12 +223,25 @@ The local queue keeps the message in-process and uses a `setTimeout` to delay th
 When a step finishes — whether successfully or with a terminal failure — the step handler re-enqueues the workflow so it can replay with the new result:
 
 ```ts title="packages/core/src/runtime/step-handler.ts" lineNumbers
-// Queue the workflow continuation with the concurrently-resolved trace carrier
-await queueMessage(world, getWorkflowQueueName(workflowName), {
-  runId: workflowRunId,
-  traceCarrier,
-  requestedAt: new Date(),
-});
+if (EntityConflictError.is(err)) {
+  runtimeLogger.debug(
+    'Step in terminal state, re-enqueuing workflow',
+    {
+      stepName,
+      stepId,
+      workflowRunId,
+      error: err.message,
+    }
+  );
+
+  await queueMessage(world, getWorkflowQueueName(workflowName), {
+    runId: workflowRunId,
+    traceCarrier: await serializeTraceCarrier(),
+    requestedAt: new Date(),
+  });
+
+  return;
+}
 ```
 
 This is the mechanism that drives the workflow forward without a persistent orchestrator process. Each step completion is a discrete event that triggers exactly one workflow re-invocation.
@@ -260,3 +279,42 @@ The queue-driven execution model means workflow compute is consumed only during 
 <Callout type="info">
 The cost characteristics described here are a consequence of the queue and suspension mechanics, not a separately configurable feature. Any deployment target that provides queue-based message delivery with delay support (such as Vercel Queue Service in production, or the local filesystem queue in development) inherits these properties automatically.
 </Callout>
+
+<Callout type="info">
+Workflow execution is event-driven. The `Run.returnValue` convenience getter is separate client-side behavior and currently polls run state once per second.
+</Callout>
+
+```ts title="packages/core/src/runtime/run.ts" lineNumbers
+private async pollReturnValue(): Promise<TResult> {
+  while (true) {
+    try {
+      const run = await this.world.runs.get(this.runId);
+
+      if (run.status === 'completed') {
+        const encryptionKey = await this.getEncryptionKey();
+        return await hydrateWorkflowReturnValue(
+          run.output,
+          this.runId,
+          encryptionKey
+        );
+      }
+
+      if (run.status === 'cancelled') {
+        throw new WorkflowRunCancelledError(this.runId);
+      }
+
+      if (run.status === 'failed') {
+        throw new WorkflowRunFailedError(this.runId, run.error);
+      }
+
+      throw new WorkflowRunNotCompletedError(this.runId, run.status);
+    } catch (error) {
+      if (WorkflowRunNotCompletedError.is(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+```
