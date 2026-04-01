@@ -23,7 +23,7 @@ Use `createWebhook()` when:
 - the migration needs raw `Request` / `Response` handling
 - deterministic tokens are not required
 
-Default deterministic-resume pattern:
+## Deterministic server-side resume
 
 ```ts
 import { createHook } from 'workflow';
@@ -53,7 +53,9 @@ export async function POST(request: Request) {
 }
 ```
 
-## Webhook callback URL with manual response
+## Generated callback URL
+
+Use this when the external system needs a callback URL. Do not pass `token:` to `createWebhook()`.
 
 ```ts
 import { createWebhook, type RequestWithResponse } from 'workflow';

@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.1'
+  version: '0.1.2'
 ---
 
 # Migrating to Vercel Workflow
@@ -39,86 +39,25 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Use `getStepMetadata().stepId` as the idempotency key for external writes.
 - Use `getWritable()` in workflow context to obtain the stream, but interact with it (write, close) only inside `"use step"` functions.
 - Prefer rollback stacks for multi-step compensation.
-- When the target framework is unspecified, keep route examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only handler signatures.
+- If the prompt explicitly asks for framework-agnostic app-boundary code, keep route examples on plain `Request` / `Response` even when a framework like Hono is named. Otherwise, if the target framework is unspecified, keep examples framework-agnostic. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
 
 ## Resume surface selection
 
-Choose one resume surface and say why inside `## App Boundary / Resume Endpoints`.
+Choose one resume surface and explain the choice inside `## App Boundary / Resume Endpoints`.
 
-### Deterministic server-side resume -> `createHook()` + `resumeHook()`
+- `createHook()` + `resumeHook()`
+  - Use for Signals, `step.waitForEvent()`, or `.waitForTaskToken`.
+  - Use when the app resumes the workflow from server-side code with a deterministic business token.
+- `createWebhook()`
+  - Use when the external system needs a callback URL.
+  - Use when the migrated flow should receive a raw `Request`.
+  - With `respondWith: 'manual'`, call `request.respondWith()` inside a `"use step"` function.
+  - Never pass `token:` to `createWebhook()`.
 
-Use this when the source used Signals, `step.waitForEvent()`, or `.waitForTaskToken`, and your app can resume the workflow from server-side code.
+Canonical examples live in:
 
-```ts
-import { createHook } from 'workflow';
-import { resumeHook } from 'workflow/api';
-
-export async function approvalWorkflow(orderId: string) {
-  'use workflow';
-
-  using approval = createHook<{ approved: boolean }>({
-    token: `order:${orderId}:approval`,
-  });
-
-  return await approval;
-}
-
-export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    orderId: string;
-    approved: boolean;
-  };
-
-  await resumeHook(`order:${body.orderId}:approval`, {
-    approved: body.approved,
-  });
-
-  return Response.json({ ok: true });
-}
-```
-
-### Generated callback URL -> `createWebhook()`
-
-Use this when the external system needs a callback URL and the migrated flow should work with raw `Request` / `Response`.
-
-```ts
-import { createWebhook, type RequestWithResponse } from 'workflow';
-
-export async function vendorCallbackWorkflow(documentId: string) {
-  'use workflow';
-
-  using webhook = createWebhook({ respondWith: 'manual' });
-
-  await submitDocument(documentId, webhook.url);
-  const request = await webhook;
-  return await readVendorCallback(request);
-}
-
-async function submitDocument(
-  documentId: string,
-  callbackUrl: string,
-): Promise<void> {
-  'use step';
-
-  await fetch('https://vendor.example.com/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ documentId, callbackUrl }),
-  });
-}
-
-async function readVendorCallback(
-  request: RequestWithResponse,
-): Promise<{ status: 'verified' | 'rejected' }> {
-  'use step';
-
-  const body = (await request.json()) as { approved: boolean };
-  await request.respondWith(Response.json({ ok: true }));
-  return { status: body.approved ? 'verified' : 'rejected' };
-}
-```
-
-Do not put `token:` on `createWebhook()`.
+- `references/shared-patterns.md` -> `## Deterministic server-side resume`
+- `references/shared-patterns.md` -> `## Generated callback URL`
 
 **Sample input:** `Migrate a third-party document verification callback flow to Vercel Workflow. The vendor needs a callback URL.`
 
@@ -159,6 +98,8 @@ Fail the draft if any of these are true:
 - [ ] Child workflows call `start()` / `getRun()` directly from workflow context
 - [ ] External writes omit idempotency keys
 - [ ] Hooks/webhooks are missing where the source used signals, waitForEvent, or task tokens
+- [ ] A callback-URL flow uses `createHook()` + `resumeHook()` instead of `createWebhook()`
+- [ ] `createWebhook()` is given a custom `token` or paired with `resumeHook()`
 
 ## Sample prompt
 

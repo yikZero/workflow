@@ -76,12 +76,14 @@ export async function startWorkflowWorld(): Promise<void> {
 }
 ```
 
-**Sample input:** `We are migrating a Temporal workflow to Vercel Workflow on Hono with self-hosted Postgres.`
+**Sample input:** `We are migrating a Temporal workflow to Vercel Workflow, but the app runs on Hono with self-hosted Postgres. Keep the migration examples framework-agnostic and do not assume Vercel-managed execution.`
 
-**Expected output:** The migration explicitly says the workflow/step code can stay the same, includes `World extends Storage, Queue, Streamer`, shows `startWorkflowWorld(): Promise<void>`, and keeps the route example on plain `Request`/`Response` rather than Next.js-only syntax.
+**Expected output:** The migration explicitly says the workflow/step code can stay the same, includes `World extends Storage, Queue, Streamer`, shows `startWorkflowWorld(): Promise<void>`, and keeps the route example on plain `Request` / `Response` because the prompt explicitly asks for framework-agnostic app-boundary code.
 
 ## Framework rule
 
-If the target framework is named, shape app-boundary examples to that framework.
+Apply these in order:
 
-If the target framework is **not** named, keep examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
+1. If the prompt explicitly asks for framework-agnostic app-boundary examples, use plain `Request` / `Response` even when a framework like Hono is named.
+2. Otherwise, if the target framework is named, shape app-boundary examples to that framework.
+3. Otherwise, keep examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
