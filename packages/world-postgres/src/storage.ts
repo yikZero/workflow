@@ -4,8 +4,8 @@ import {
   RunExpiredError,
   RunNotSupportedError,
   TooEarlyError,
-  WorkflowWorldError,
   WorkflowRunNotFoundError,
+  WorkflowWorldError,
 } from '@workflow/errors';
 import type {
   Event,
@@ -1255,9 +1255,6 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
           ? { eventData: storedEventData }
           : {}),
       };
-      if (data.eventType === 'run_started') {
-        delete (result as any).eventData;
-      }
       const parsed = EventSchema.parse(result);
       const resolveData = params?.resolveData ?? 'all';
 
