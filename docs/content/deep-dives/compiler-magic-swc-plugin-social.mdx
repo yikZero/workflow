@@ -38,6 +38,8 @@ Each function gets a stable ID derived from the file path and function name — 
 
 After body replacement, a dead code elimination pass strips imports that only the replaced bodies referenced. A step that imported a database driver? That import disappears from the workflow bundle — keeping the sandboxed VM clean. Build-time validation catches non-async directives, misspelled hints, and conflicting annotations before deployment, not at 2 AM in production.
 
+The queue message that triggers a step is just a lightweight pointer — it carries `workflowRunId` and `stepId`, but not the step's input data. The step worker starts by recording `step_started`, hydrates its inputs from the persisted `step_created` event in the event log, and then runs the function. That is why step bodies disappear from the workflow bundle: orchestration can replay safely, side effects cannot. The workflow VM makes `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` deterministic by seeding them from run metadata — so every replay sees exactly the same values.
+
 ## Why It Matters
 
 No manual file separation. No hand-maintained ID registries. No server-side imports leaking into client bundles. You write ordinary JavaScript, add two directive strings, and the compiler handles the three-way split that makes durable execution possible. One file in, three bundles out.

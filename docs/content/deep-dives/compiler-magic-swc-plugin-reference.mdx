@@ -182,6 +182,98 @@ The plugin validates directive usage during compilation and emits errors for inv
 
 Most invalid patterns are caught as build-time errors before deployment.
 
+## Runtime Integration
+
+The three bundles are consumed by different parts of the Workflow DevKit infrastructure at runtime.
+
+### Step bundle runtime
+
+The step bundle is loaded by the step execution handler when a queue message arrives. The handler parses the queue payload — which carries `workflowName`, `workflowRunId`, `workflowStartedAt`, `stepId`, and trace metadata — then emits a `step_started` event, hydrates the step's input from the persisted `step_created` event (not from the queue message), executes the function, and persists the result as a `step_completed` event. The queue message is a lightweight trigger; the event log is what makes execution durable.
+
+```ts title="packages/core/src/runtime/suspension-handler.ts — queue payload shape"
+await queueMessage(
+  world,
+  `__wkf_step_${queueItem.stepName}`,
+  {
+    workflowName,
+    workflowRunId: runId,
+    workflowStartedAt,
+    stepId: queueItem.correlationId,
+    traceCarrier,
+    requestedAt: new Date(),
+  },
+  {
+    idempotencyKey: queueItem.correlationId,
+  }
+);
+```
+
+```ts title="packages/core/src/runtime/step-handler.ts — step execution lifecycle"
+const {
+  workflowName,
+  workflowRunId,
+  workflowStartedAt,
+  stepId,
+  traceCarrier: traceContext,
+  requestedAt,
+} = StepInvokePayloadSchema.parse(message_);
+
+const startResult = await world.events.create(
+  workflowRunId,
+  {
+    eventType: 'step_started',
+    specVersion: SPEC_VERSION_CURRENT,
+    correlationId: stepId,
+  },
+  { requestId }
+);
+
+const hydratedInput = await hydrateStepArguments(
+  step.input,
+  workflowRunId,
+  encryptionKey,
+  ops
+);
+```
+
+### Workflow bundle runtime
+
+The workflow bundle is loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives so replay sees the same values every time. Step bodies are excluded from the workflow bundle because replay must never rerun side effects such as API calls, database writes, and file I/O.
+
+```ts title="packages/core/src/workflow.ts — VM context creation"
+const {
+  context,
+  globalThis: vmGlobalThis,
+  updateTimestamp,
+} = createContext({
+  seed: `${workflowRun.runId}:${workflowRun.workflowName}:${+startedAt}`,
+  fixedTimestamp: +startedAt,
+});
+
+vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
+vmGlobalThis.fetch = () => {
+  throw new vmGlobalThis.Error(
+    `Global "fetch" is unavailable in workflow functions. Use the "fetch" step function from "workflow" to make HTTP requests.`
+  );
+};
+```
+
+```ts title="packages/core/src/vm/index.ts — deterministic patches"
+g.Math.random = rng;
+g.Date.now = () => fixedTimestamp;
+
+if (prop === 'getRandomValues') {
+  return getRandomValues;
+}
+if (prop === 'randomUUID') {
+  return randomUUID;
+}
+```
+
+### Client bundle runtime
+
+The client bundle is imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` throws a helpful message instead of silently bypassing durable execution.
+
 ## Why This Matters
 
 The three-mode transformation is what enables writing workflows as ordinary JavaScript functions while gaining durable execution:

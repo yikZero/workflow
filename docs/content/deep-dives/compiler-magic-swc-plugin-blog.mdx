@@ -277,7 +277,7 @@ await queueMessage(
 );
 ```
 
-**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives — making all workflow code replay-safe. Step bodies are excluded from the workflow bundle not because they need "real" randomness, but because they perform side effects (API calls, database writes, file I/O) that must not re-execute during replay.
+**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives — making all workflow code replay-safe. Step bodies are excluded from the workflow bundle because they perform side effects — API calls, database writes, file I/O — that must not re-execute during replay.
 
 **Client bundle** → imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` in your application code throws a helpful message instead of silently bypassing durable execution.
 
