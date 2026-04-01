@@ -12,7 +12,7 @@ related:
   - /deep-dives/durable-streaming-reference
 ---
 
-You write one file with two directives. The compiler produces three bundles. That's the trick behind Workflow DevKit's programming model.
+You write one file with two directives. The compiler produces three bundles. That's the trick behind Workflow DevKit's programming model — and it eliminates an entire category of infrastructure code you'd otherwise write by hand.
 
 ## The Split
 
@@ -32,12 +32,12 @@ export async function handleSignup(email: string) {
 }
 ```
 
-**Step mode** preserves step bodies and registers them for execution. **Workflow mode** replaces step bodies with `WORKFLOW_USE_STEP` proxy calls — so `await createUser(email)` checks the event log for a cached result or suspends. **Client mode** attaches `workflowId` properties while preventing direct execution.
+**Step mode** preserves step bodies intact and registers them via `registerStepFunction()` so the step execution runtime can look them up when a queue message arrives. **Workflow mode** replaces step bodies with `WORKFLOW_USE_STEP` proxy calls — so `await createUser(email)` checks the event log for a cached result or suspends the workflow if the step hasn't run yet. **Client mode** attaches `workflowId` properties while preventing direct execution with a helpful error message.
 
-Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build.
+Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build. This stability is what makes durable execution work across deploys: a workflow that suspended before a deploy resumes with new code, and the step IDs still match.
 
-A dead code elimination pass strips imports that only the replaced bodies used. Build-time validation catches non-async directives, misspelled hints, and conflicting annotations before deployment.
+After body replacement, a dead code elimination pass strips imports that only the replaced bodies referenced. A step that imported a database driver? That import disappears from the workflow bundle — keeping the sandboxed VM clean. Build-time validation catches non-async directives, misspelled hints, and conflicting annotations before deployment, not at 2 AM in production.
 
 ## Why It Matters
 
-No manual file separation. No hand-maintained ID registries. No server-side imports leaking into client bundles. You write ordinary JavaScript, add two strings, and the compiler handles the three-way split that makes durable execution possible.
+No manual file separation. No hand-maintained ID registries. No server-side imports leaking into client bundles. You write ordinary JavaScript, add two directive strings, and the compiler handles the three-way split that makes durable execution possible. One file in, three bundles out.

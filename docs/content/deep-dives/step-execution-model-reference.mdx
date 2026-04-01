@@ -115,25 +115,27 @@ export async function handleUserSignup(email: string) {
 }
 ```
 
-The workflow-mode output replaces the step body:
+The workflow-mode output replaces the step function entirely with a variable assignment:
 
 ```ts title="Workflow mode output" lineNumbers
-export async function createUser(email: string) {
-  // Step body replaced — calls the runtime's useStep proxy
-  return globalThis[Symbol.for("WORKFLOW_USE_STEP")](
-    "step//workflows/user.js//createUser"
-  )(email);
-}
+// Step function replaced — WORKFLOW_USE_STEP returns a callable function
+export var createUser = globalThis[Symbol.for("WORKFLOW_USE_STEP")](
+  "step//./workflows/user//createUser"
+);
 
+// Workflow body stays intact — it's deterministic orchestration
 export async function handleUserSignup(email: string) {
-  // Workflow body stays intact — it's deterministic orchestration
   const user = await createUser(email);
   return { userId: user.id };
 }
-handleUserSignup.workflowId = "workflow//workflows/user.js//handleUserSignup";
+handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup";
+globalThis.__private_workflows.set(
+  "workflow//./workflows/user//handleUserSignup",
+  handleUserSignup
+);
 ```
 
-At runtime, the `WORKFLOW_USE_STEP` symbol is bound to the `useStep` function created in `packages/core/src/workflow.ts`:
+`WORKFLOW_USE_STEP` returns a function, so `await createUser(email)` still works as expected. At runtime, the `WORKFLOW_USE_STEP` symbol is bound to the `useStep` function created in `packages/core/src/workflow.ts`:
 
 ```ts title="packages/core/src/workflow.ts (simplified)" lineNumbers
 const useStep = createUseStep(workflowContext);

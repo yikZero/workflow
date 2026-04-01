@@ -1,8 +1,8 @@
 ---
-title: "Your Workflow Code Runs Twice. Your Business Logic Doesn't."
-description: A concise explainer on how Workflow DevKit splits code into replayable orchestration and once-only side effects using two directives.
+title: "Await Still Reads Linearly — Because Suspension Is Hidden Behind Replay"
+description: A concise explainer on how Workflow DevKit lets you write sequential async/await code that survives crashes, restarts, and scale-to-zero — without changing how you read or write it.
 type: conceptual
-summary: Workflow DevKit uses "use workflow" and "use step" directives to separate deterministic orchestration from side-effecting business logic. Orchestration replays from an event log with seeded randomness and fixed timestamps. Steps execute once and their results are cached — replay returns cached values without re-running your code.
+summary: Workflow DevKit splits code into replayable orchestration and once-only side effects. The key insight is that your async/await code reads exactly the same as normal JavaScript — suspension and replay happen transparently behind the await boundary, so you never see the machinery that makes execution durable.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -13,35 +13,36 @@ related:
   - /deep-dives/durable-streaming-reference
 ---
 
-What if your orchestration code could crash, restart on a completely different machine, and pick up exactly where it left off — without re-sending that email or re-charging that credit card?
-
-That's what Workflow DevKit's step execution model does, and it works because of a single split.
-
-## Two Directives, Two Worlds
-
-You mark functions with `"use workflow"` (orchestration) or `"use step"` (side effects). The compiler transforms them into separate execution contexts. Workflow functions run in a sandboxed VM where `Math.random()` and `Date.now()` are seeded and deterministic. Step functions run with full Node.js access — but their results get persisted to an event log.
+Here's a workflow that charges a card, reserves inventory, and sends a confirmation email:
 
 ```ts
-export async function chargeCard(amount: number) {
-  "use step";
-  return await stripe.charges.create({ amount });
-}
-
 export async function processOrder(orderId: string) {
   "use workflow";
   const charge = await chargeCard(9900);
-  // On replay, chargeCard returns the cached result
-  // — Stripe is never called twice
-  return { orderId, chargeId: charge.id };
+  const reservation = await reserveInventory(orderId);
+  await sendConfirmation(charge.id, reservation.id);
+  return { orderId, status: "confirmed" };
 }
 ```
 
-When the workflow reaches a step that hasn't completed, it **suspends** — throwing a `WorkflowSuspension` that collects all pending operations. Nothing stays in memory. The step runs in the background, its result is persisted, and the workflow is re-enqueued.
+It reads like normal async JavaScript. Three awaits, top to bottom, one after another. But this code survives process crashes, cold starts, and scale-to-zero events — without you writing a single line of recovery logic.
 
-On replay, the runtime feeds the event log back through the workflow. When it hits `await chargeCard(9900)`, the cached `step_completed` result is returned instantly. The orchestration re-runs. The side effect doesn't.
+## The Trick: Suspension Is Invisible
 
-## Why It Matters
+When this workflow hits `await chargeCard(9900)` for the first time, there's no cached result yet. The runtime **suspends** — it throws a `WorkflowSuspension`, queues the step for background execution, and returns. Nothing stays in memory.
 
-This split means your workflows survive crashes, cold starts, and scale-to-zero — with zero re-execution of business logic. A workflow with 50 completed steps replays in milliseconds. You pay for orchestration compute, not idle time waiting on external systems.
+The step runs separately with full Node.js access, charges the card via Stripe, and persists the result to an append-only event log. Then the workflow is re-enqueued.
 
-Two directives. One architectural insight. Durable execution from ordinary JavaScript.
+On replay, the runtime recreates a deterministic VM sandbox — same seeded `Math.random()`, same frozen `Date.now()`, same `crypto.randomUUID()` sequence — and re-executes the workflow from the top. When it hits `await chargeCard(9900)` again, the `EventsConsumer` finds the cached `step_completed` result in the log and returns it instantly. No network call. No re-charge.
+
+The workflow continues to `await reserveInventory(orderId)`. If that step hasn't completed yet, the same suspension cycle repeats. If it has, the cached result comes back immediately.
+
+From the developer's perspective, execution flows top-to-bottom through each `await`, exactly as written. The suspension, queuing, replay, and cache lookup all happen behind the `await` boundary. You never see it. You never code around it.
+
+## Why This Matters
+
+Other durable execution frameworks ask you to restructure code into state machines, generator functions, or callback chains. Workflow DevKit doesn't. The `"use workflow"` and `"use step"` directives are the only API — the compiler and runtime handle the rest.
+
+Your orchestration code replays deterministically. Your side-effecting steps execute exactly once. And your `await` still reads linearly, because suspension is hidden behind replay.
+
+That's the entire model: write sequential JavaScript, get durable execution for free.

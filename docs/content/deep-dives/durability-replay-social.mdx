@@ -1,8 +1,8 @@
 ---
-title: "The Event Log Is the State"
+title: "The Event Log Is the State. Replay Just Recomputes the Stack Frame."
 description: A concise explainer on how Workflow DevKit uses an append-only event log and deterministic replay to reconstruct workflow state after crashes — no heap snapshots, no serialized checkpoints.
 type: conceptual
-summary: Workflow DevKit doesn't checkpoint your workflow's memory. It persists every step result as an immutable event in an append-only log. When the workflow resumes after a crash or cold start, the runtime replays the log — cached results return instantly, side effects never re-execute.
+summary: Workflow DevKit doesn't checkpoint your workflow's memory. It persists every step result as an immutable event in an append-only log. When the workflow resumes, the runtime replays the log — the event log is the complete state, and replay just recomputes the call stack to arrive at the right suspension point.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -14,45 +14,22 @@ related:
 
 Your workflow charged a credit card, then the process died. How does it pick up without charging again?
 
-Most durable execution systems snapshot the heap — serialize the in-flight state, persist it, and restore it on restart. That works until you deploy new code and the snapshot format doesn't match. Workflow DevKit skips snapshots entirely. The event log *is* the state.
+Most durable execution systems snapshot the heap — serialize local variables, the call stack, pending promises — and persist that blob. When the process restarts, they deserialize the snapshot and resume. This works until you deploy new code and the snapshot format doesn't match. Now you need migration logic, versioned serialization, or a painful manual recovery.
 
-## One Log, No Snapshots
+Workflow DevKit skips snapshots entirely. The event log *is* the state.
 
-Every transition — step completion, webhook arrival, sleep elapsed — is an immutable event appended to a log. The current state of any workflow is derived by replaying those events in order.
+## No Snapshots, Just Events
 
-```ts
-// Every step result is persisted as an event
-// From packages/world/src/events.ts
-const StepCompletedEventSchema = BaseEventSchema.extend({
-  eventType: z.literal('step_completed'),
-  correlationId: z.string(),
-  eventData: z.object({
-    result: SerializedDataSchema,
-  }),
-});
-```
+Every transition — `step_completed`, `hook_received`, `wait_completed` — is an immutable event appended to a log. Events are ordered by ULID-based IDs that embed millisecond timestamps, so sorting by event ID produces chronological order without a separate sequence number. The `validateUlidTimestamp` function rejects any client-generated ID that drifts more than 5 minutes from server time, preventing clock-skew attacks on the log's ordering.
 
-When the workflow resumes, the runtime creates a fresh VM sandbox with the same deterministic seed — same `Math.random()` sequence, same `Date.now()` progression — and re-executes the workflow code from the beginning. The `EventsConsumer` feeds persisted events to the workflow in order. Each step call checks the log: if a `step_completed` event exists, the cached result is returned instantly. If not, the workflow suspends and the step runs in the background.
+When the workflow resumes after a crash, deploy, or cold start, the runtime doesn't try to deserialize a heap. It loads the event log, creates a fresh VM sandbox with the same deterministic seed — same `Math.random()`, same `Date.now()`, same `crypto.randomUUID()` — and re-executes the workflow code from the beginning.
 
-```ts
-// From packages/core/src/events-consumer.ts
-if (
-  handled === EventConsumerResult.Consumed ||
-  handled === EventConsumerResult.Finished
-) {
-  this.eventIndex++;
-  if (handled === EventConsumerResult.Finished) {
-    this.callbacks.splice(i, 1);
-  }
-  process.nextTick(this.consume);
-  return;
-}
-```
+The `EventsConsumer` feeds events to the workflow in order. Each step call checks: is there a `step_completed` for this step? If yes, return the cached result instantly. If no, suspend and queue the step for background execution.
 
-Orchestration re-runs in milliseconds. Side effects execute exactly once. There's no serialization format to version, no snapshot migration when you deploy, and every state transition is an auditable, immutable record.
+The workflow re-runs its orchestration logic — the `"use workflow"` function — but it never re-runs a step. Local variables, branching decisions, and promise chains are all recomputed from the event log. The stack frame is ephemeral; the log is permanent.
 
 ## Why It Matters
 
-The event log eliminates three problems that plague snapshot-based systems: format versioning across deploys, opaque state for debugging, and the risk of duplicate step execution from stale checkpoints. With event sourcing, you get durability, auditability, and exactly-once semantics from a single append-only sequence.
+There's no serialization format to version across deploys. There's no opaque binary snapshot to debug when things go wrong. Every state transition is an auditable, immutable record with a timestamp and typed payload. And terminal state enforcement at the storage layer guarantees exactly-once step execution — even if duplicate messages arrive from the queue.
 
-No heap snapshots. No serialization bugs. The log is the truth.
+The event log is the state. Replay just recomputes the stack frame. That's the entire durability model.

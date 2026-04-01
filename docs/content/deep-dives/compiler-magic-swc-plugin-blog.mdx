@@ -256,9 +256,28 @@ The compiler is the mechanism that makes the programming model feel like writing
 
 The three bundles are consumed by different parts of the Workflow DevKit infrastructure:
 
-**Step bundle** → loaded by the step execution handler when a queue message arrives. The handler looks up the step ID in the registry (populated by `registerStepFunction()` calls), invokes the function with the serialized arguments from the event, and persists the result as a `step_completed` event.
+**Step bundle** → loaded by the step execution handler when a queue message arrives. The handler parses the queue payload — which carries `workflowName`, `workflowRunId`, `workflowStartedAt`, `stepId`, and trace metadata — then emits a `step_started` event, hydrates the step's input from the persisted `step_created` event (not from the queue message), executes the function, and persists the result as a `step_completed` event. The queue message is a lightweight trigger; the event log is what makes execution durable.
 
-**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment also patches `Math.random()`, `Date.now()`, and `crypto` with deterministic alternatives — which is why step bodies can't exist here. A step that calls `crypto.randomUUID()` needs real randomness, not seeded randomness.
+```ts
+// From packages/core/src/runtime/suspension-handler.ts — queue payload shape
+await queueMessage(
+  world,
+  `__wkf_step_${queueItem.stepName}`,
+  {
+    workflowName,
+    workflowRunId: runId,
+    workflowStartedAt,
+    stepId: queueItem.correlationId,
+    traceCarrier,
+    requestedAt: new Date(),
+  },
+  {
+    idempotencyKey: queueItem.correlationId,
+  }
+);
+```
+
+**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives — making all workflow code replay-safe. Step bodies are excluded from the workflow bundle not because they need "real" randomness, but because they perform side effects (API calls, database writes, file I/O) that must not re-execute during replay.
 
 **Client bundle** → imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` in your application code throws a helpful message instead of silently bypassing durable execution.
 

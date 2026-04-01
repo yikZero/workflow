@@ -46,27 +46,29 @@ This is the entire API surface for the split. You don't need to learn a state ma
 
 The SWC compiler plugin runs three transform passes over every workflow file. The one that matters most for understanding the execution model is the **workflow mode** transform.
 
-In workflow mode, step function bodies are replaced with proxy calls through a well-known symbol:
+In workflow mode, step function bodies are replaced with proxy calls through a well-known symbol. The entire function declaration is replaced with a variable assignment:
 
 ```ts
-// Workflow mode output — step body is gone
-export async function createUser(email: string) {
-  return globalThis[Symbol.for("WORKFLOW_USE_STEP")](
-    "step//workflows/user.js//createUser"
-  )(email);
-}
+// Workflow mode output — step function replaced entirely
+export var createUser = globalThis[Symbol.for("WORKFLOW_USE_STEP")](
+  "step//./workflows/user//createUser"
+);
 
 export async function handleUserSignup(email: string) {
   // Workflow body stays intact
   const user = await createUser(email);
   return { userId: user.id };
 }
-handleUserSignup.workflowId = "workflow//workflows/user.js//handleUserSignup";
+handleUserSignup.workflowId = "workflow//./workflows/user//handleUserSignup";
+globalThis.__private_workflows.set(
+  "workflow//./workflows/user//handleUserSignup",
+  handleUserSignup
+);
 ```
 
-The step ID (`"step//workflows/user.js//createUser"`) is derived from the file path and function name at build time — it's stable across deployments and deterministic across replays.
+`WORKFLOW_USE_STEP` returns a function — so `await createUser(email)` still works. The step ID (`"step//./workflows/user//createUser"`) is derived from the file path and function name at build time — it's stable across deployments and deterministic across replays.
 
-At runtime, `WORKFLOW_USE_STEP` is bound to the `useStep` function from the core runtime:
+At runtime, the `WORKFLOW_USE_STEP` symbol is bound to the `useStep` function from the core runtime:
 
 ```ts
 // From packages/core/src/workflow.ts
@@ -74,7 +76,7 @@ const useStep = createUseStep(workflowContext);
 vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
 ```
 
-When workflow code calls `await createUser(email)`, it's actually calling through this proxy, which checks the event log for a cached result or suspends execution if the step hasn't run yet.
+When workflow code calls `await createUser(email)`, it's calling the function returned by the proxy, which checks the event log for a cached result or suspends execution if the step hasn't run yet.
 
 ## Inside the Sandbox
 
