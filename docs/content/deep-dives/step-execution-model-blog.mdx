@@ -38,7 +38,7 @@ export async function handleUserSignup(email: string) {
 
 `"use workflow"` marks a function as a **deterministic orchestrator**. It decides what steps to run and in what order, but it cannot perform side effects directly — no API calls, no database writes, no file system access.
 
-`"use step"` marks a function as a **side-effecting operation**. It has full Node.js runtime access: network, disk, environment variables, the works. Its return value is persisted to an append-only event log and cached for replay.
+`"use step"` marks a function as a **side-effecting operation**. It has full Node.js runtime access: network, disk, environment variables, the works. Its return value is persisted to an append-only **Event log** and cached for replay.
 
 This is the entire API surface for the split. You don't need to learn a state machine DSL or decorate classes with metadata. You write functions, add a directive string, and the compiler handles the rest.
 
@@ -46,7 +46,7 @@ This is the entire API surface for the split. You don't need to learn a state ma
 
 The SWC compiler plugin runs three transform passes over every workflow file. The one that matters most for understanding the execution model is the **workflow mode** transform.
 
-In workflow mode, step function bodies are replaced with proxy calls through a well-known symbol. The entire function declaration is replaced with a variable assignment:
+In workflow mode, step function bodies are replaced with proxy calls through a well-known symbol — this is what produces the **Workflow bundle**. The entire function declaration is replaced with a variable assignment:
 
 ```ts
 // Workflow mode output — step function replaced entirely
@@ -76,7 +76,7 @@ const useStep = createUseStep(workflowContext);
 vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
 ```
 
-When workflow code calls `await createUser(email)`, it's calling the function returned by the proxy, which checks the event log for a cached result or suspends execution if the step hasn't run yet.
+When workflow code calls `await createUser(email)`, it's calling the function returned by the proxy, which checks the **Event log** for a cached result or suspends execution if the step hasn't run yet.
 
 ## Inside the Sandbox
 
@@ -149,7 +149,7 @@ Both use the same seeded RNG, so UUIDs generated inside workflow functions are d
 
 Here's where the model gets interesting. When a workflow reaches a step that hasn't completed yet, it doesn't block or poll. It **suspends**.
 
-The `useStep` proxy created by `createUseStep()` in `packages/core/src/step.ts` subscribes to the `EventsConsumer` for each step call. When the consumer reaches the end of the log without finding a matching `step_completed` event, it triggers a suspension:
+The `useStep` proxy created by `createUseStep()` in `packages/core/src/step.ts` subscribes to the `EventsConsumer` for each step call. When the consumer reaches the end of the **Event log** without finding a matching `step_completed` event, it triggers a suspension:
 
 ```ts
 // From packages/core/src/step.ts
@@ -186,16 +186,16 @@ try {
 The suspension handler in `packages/core/src/runtime/suspension-handler.ts` then processes the pending queue in a specific order:
 
 1. **Hooks first** — webhook receivers are created before steps to prevent race conditions
-2. **Steps and waits in parallel** — each step gets a `step_created` event persisted and a message queued for background execution
+2. **Steps and waits in parallel** — each step gets a `step_created` event persisted and a **Queue message** sent for background execution
 3. **Timeout calculation** — if any waits exist, the minimum `resumeAt` time determines when the workflow re-enqueues
 
-After suspension handling completes, the workflow handler returns. Nothing stays in memory. The event log is the complete state.
+After suspension handling completes, the workflow handler returns. Nothing stays in memory. The **Event log** is the complete state. The **Queue message** is a trigger, not durable state — it carries the run ID and trace context so the step handler knows which step to execute.
 
 ## Replay: Orchestration Re-runs, Side Effects Don't
 
-When a step completes in the background, the workflow is re-enqueued. It starts from the beginning — same code, same seed, same starting timestamp — and replays through the event log.
+When a step completes in the background, the step handler writes `step_completed` to the **Event log** and sends a **Queue message** to re-enqueue the workflow. It starts from the beginning — same code, same seed, same starting timestamp — and replays through the **Event log**.
 
-This is where the split pays off. The `EventsConsumer` feeds events to subscribers in order. When the `useStep` proxy encounters a `step_completed` event for the current step, it returns the cached result immediately:
+This is where the split pays off. The `EventsConsumer` feeds events to subscribers in order. Workflow state is reconstructed by replaying code against the **Event log**. When the `useStep` proxy encounters a `step_completed` event for the current step, it returns the cached result immediately:
 
 ```ts
 // From packages/core/src/step.ts
@@ -222,10 +222,10 @@ if (event.eventType === 'step_completed') {
 }
 ```
 
-The promise queue ensures results are delivered in event log order, even if deserialization takes variable time. The workflow code sees exactly the same values it would have seen on the first execution — same step results, same `Date.now()` values, same `Math.random()` sequence.
+The promise queue ensures results are delivered in **Event log** order, even if deserialization takes variable time. The workflow code sees exactly the same values it would have seen on the first execution — same step results, same `Date.now()` values, same `Math.random()` sequence.
 
 <Callout>
-Replay re-runs the orchestration logic — the workflow function — but it never re-runs the side effects. Step functions that call APIs, write to databases, or send emails execute exactly once. On replay, the workflow receives their cached results from the event log.
+Replay re-runs the orchestration logic — the workflow function — but it never re-runs the side effects. Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects. Step functions that call APIs, write to databases, or send emails execute exactly once. On replay, the workflow receives their cached results from the **Event log**.
 </Callout>
 
 ## The Lifecycle: A Complete Picture
@@ -262,8 +262,8 @@ Consider a traditional always-on worker processing a multi-step order pipeline �
 - Error handling is defensive: you wrap every step in try/catch, manage partial failure states, and hope your checkpoint logic covers every edge case.
 
 **Workflow DevKit's suspend/resume model:**
-- The workflow handler runs only during replay and suspension — typically milliseconds per invocation. Between steps, nothing is in memory. The event log is the complete state.
-- Crashes are invisible to the developer. If the process dies after charging the card, the `step_completed` event for the charge is already in the log. On re-enqueue, the workflow replays through that cached result and suspends at the next uncompleted step — no double-charge, no manual recovery code.
+- The workflow handler runs only during replay and suspension — typically milliseconds per invocation. Between steps, nothing is in memory. The **Event log** is the complete state.
+- Crashes are invisible to the developer. If the process dies after charging the card, the `step_completed` event for the charge is already in the **Event log**. On re-enqueue, the workflow replays through that cached result and suspends at the next uncompleted step — no double-charge, no manual recovery code.
 - Steps execute as individual queued messages that can run on any available compute. A workflow with 100 concurrent steps doesn't need 100 workers — the queue distributes work across whatever capacity is available.
 - Error handling is built into the model: `RetryableError` triggers automatic retries with backoff; `FatalError` terminates the step permanently. The orchestration code doesn't need try/catch around step calls unless you want to handle failures as part of the workflow logic.
 
@@ -289,6 +289,6 @@ The boundary between the two contexts is the only thing you need to think about.
 
 ## Conclusion
 
-The step execution model is the foundation that makes Workflow DevKit's other properties possible. Durability comes from the event log. Replay comes from deterministic orchestration. Cost efficiency comes from suspension. And all of it traces back to a single architectural decision: split the code into what orchestrates and what does work, then make the orchestration half perfectly reproducible.
+The step execution model is the foundation that makes Workflow DevKit's other properties possible. Durability comes from the **Event log**. Replay comes from deterministic orchestration. Cost efficiency comes from suspension. And all of it traces back to a single architectural decision: split the code into what orchestrates and what does work, then make the orchestration half perfectly reproducible.
 
 Two directives. One split. That's the entire model.

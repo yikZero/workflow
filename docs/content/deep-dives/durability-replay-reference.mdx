@@ -20,9 +20,9 @@ Durability in the Workflow DevKit means that no workflow progress is ever lost. 
 
 The Workflow DevKit's durability model is built on three pillars:
 
-1. **Event sourcing** — All state mutations are stored as an append-only sequence of typed events. Entity state (runs, steps, hooks, waits) is derived from events, never stored independently of them.
+1. **Event sourcing** — All state mutations are stored as an append-only sequence of typed events in the **Event log**. Entity state (runs, steps, hooks, waits) is derived from events, never stored independently of them.
 2. **ULID-based ordering** — Event IDs use ULIDs (Universally Unique Lexicographically Sortable Identifiers), embedding a millisecond timestamp in the first 48 bits. Sorting by event ID produces chronological order without a separate sequence number.
-3. **Deterministic replay** — The `EventsConsumer` feeds persisted events to registered callbacks in order. Each callback either consumes the event (advancing the cursor) or passes it to the next callback. The workflow VM re-executes orchestration code, but every step call returns its cached result from the log instead of re-executing.
+3. **Deterministic replay** — The `EventsConsumer` feeds persisted events to registered callbacks in order. Each callback either consumes the event (advancing the cursor) or passes it to the next callback. The **Workflow bundle** re-executes orchestration code in the VM, but every step call returns its cached result from the **Event log** instead of re-executing. A **Queue message** is a trigger, not durable state — the **Event log** is the source of truth for replay.
 
 ## Lifecycle
 
@@ -59,7 +59,7 @@ flowchart TD
 
 ### Event types and entity lifecycles
 
-The event log is a flat, append-only sequence of typed events defined in `packages/world/src/events.ts`. Each event belongs to one of four entity categories — run, step, hook, or wait — and transitions the entity through a defined state machine:
+The **Event log** is a flat, append-only sequence of typed events defined in `packages/world/src/events.ts`. Each event belongs to one of four entity categories — run, step, hook, or wait — and transitions the entity through a defined state machine:
 
 | Entity | Events | Terminal States |
 |--------|--------|-----------------|
@@ -204,16 +204,16 @@ When a workflow is re-invoked (after suspension, a deploy, or a cold start), the
 1. **Event log loaded** — The world backend returns all events for the run, ordered by event ID.
 2. **VM context created** — `createContext()` builds a fresh sandbox with the same seed (derived from run ID, workflow name, and start timestamp). This produces the same seeded RNG and the same initial `fixedTimestamp`.
 3. **Timestamp subscriber registered** — A passive `EventsConsumer` callback updates the VM's `fixedTimestamp` from each event's `createdAt`. As events are consumed during replay, `Date.now()` inside the workflow advances to match the original execution timeline.
-4. **Workflow code re-executed** — The workflow function runs from the beginning. Each step call hits the `WORKFLOW_USE_STEP` proxy, which consults the `EventsConsumer`. For completed steps, the consumer returns the cached `step_completed` result instantly. For steps not yet in the log, the workflow suspends.
+4. **Workflow code re-executed** — The **Workflow bundle** runs from the beginning. Each step call hits the `WORKFLOW_USE_STEP` proxy, which consults the `EventsConsumer`. For completed steps, the consumer returns the cached `step_completed` result instantly. Step input is hydrated from the persisted `step_created` event, not from the **Queue message**. For steps not yet in the log, the workflow suspends.
 5. **Promise queue drained** — Async operations (deserialization, decryption of step results) are chained onto a shared promise queue. The `EventsConsumer` waits for the queue to drain before checking for orphan events, preventing false positives from async gaps.
 
-The result: the workflow arrives at exactly the point where it last suspended, with all local variables holding the same values, all branching decisions following the same paths, and `Date.now()` reflecting the time of the most recent event — not wall-clock time.
+The result: workflow state is reconstructed by replaying code against the **Event log**. The workflow arrives at exactly the point where it last suspended, with all local variables holding the same values, all branching decisions following the same paths, and `Date.now()` reflecting the time of the most recent event — not wall-clock time.
 
 ## Why This Matters
 
 The event-sourced replay model eliminates three classes of problems that plague durable workflow systems:
 
-1. **No state serialization format** — The workflow doesn't checkpoint its JavaScript heap. Instead, the event log contains step results, and the deterministic VM reconstructs everything else. This means there's no versioning problem when workflow code changes between deploys — new code replays against the same events.
+1. **No state serialization format** — The workflow doesn't checkpoint its JavaScript heap. Instead, the **Event log** contains step results, and the deterministic VM reconstructs everything else. Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects. This means there's no versioning problem when workflow code changes between deploys — new code replays against the same events.
 
 2. **Complete auditability** — Every state transition is an immutable event with a timestamp, correlation ID, and typed payload. Debugging a failed workflow means reading a flat list of events, not reconstructing opaque snapshots.
 

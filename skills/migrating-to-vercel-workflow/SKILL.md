@@ -108,6 +108,10 @@ Selection rules:
 2. If the target is self-hosted or non-Vercel, also pick `runtime/self-hosted`.
 3. Pick exactly one boundary key when the prompt explicitly requests framework-agnostic output or names a framework.
 4. A combined prompt can require multiple keys, for example: `resume/url + runtime/self-hosted + boundary/named-framework`.
+5. If the prompt under-specifies the resume surface, use these defaults and make the assumption explicit in `## Open Questions`:
+   - Temporal Signals and Inngest `step.waitForEvent()` -> `resume/internal`
+   - AWS `.waitForTaskToken` without a deterministic server-side resume endpoint -> `resume/url`
+   - If the prompt later states that the app resumes from server-side code with a stable business token, override to `resume/internal`
 
 Before drafting `## Migrated Code`, write the selected route keys in `## Migration Plan`.
 
@@ -205,6 +209,10 @@ Return the migration in this structure:
 
 Fail the draft if any of these are true:
 
+- [ ] `## Migration Plan` omits `Route keys`
+- [ ] `## Migration Plan` omits `Why these route keys`
+- [ ] `## Migration Plan` lists route keys that do not match the prompt
+- [ ] `## Migration Plan` lists required code obligations that do not match the selected route keys
 - [ ] Source-framework primitives remain in the migrated code
 - [ ] Side effects remain in workflow context
 - [ ] `sleep()` appears inside a step
@@ -218,9 +226,15 @@ Fail the draft if any of these are true:
 
 Additional fail conditions:
 
+- `resume/internal` output omits `resumeHook()` in app-boundary code
+- `resume/internal` output omits a deterministic business token
+- `resume/internal` output emits `createWebhook()` or `webhook.url`
+- `resume/url` output does not pass `webhook.url` to the external system
+- `resume/url` output handles callback parsing outside a `"use step"` function
+- `resume/url` output omits `RequestWithResponse` or `await request.respondWith(...)` after selecting `createWebhook({ respondWith: 'manual' })`
 - `resume/url` output invents a user-authored callback route or `resumeWebhook()` wrapper when `webhook.url` is the intended resume surface
 - `createWebhook()` is paired with `resumeHook()`
-- self-hosted output omits `World extends Storage, Queue, Streamer` or `startWorkflowWorld()`
+- self-hosted output omits `World extends Storage, Queue, Streamer`, `startWorkflowWorld()`, or the explicit note that the workflow and step code can stay the same while the app still needs a custom `World`
 - named-framework output mixes framework syntax with plain `Request` / `Response` app-boundary code without a framework-agnostic override
 
 For concrete passing code, load:

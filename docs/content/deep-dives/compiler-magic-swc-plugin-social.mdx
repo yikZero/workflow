@@ -19,26 +19,30 @@ You write one file with two directives. The compiler produces three bundles. Tha
 Mark functions with `"use step"` (side effects) or `"use workflow"` (orchestration). The SWC plugin generates three outputs from the same source:
 
 ```ts
-// Your source code
-export async function createUser(email: string) {
-  "use step";
-  return { id: crypto.randomUUID(), email };
+export async function handleUserSignup(email: string) {
+  'use workflow';
+  const user = await createUser(email);
+  await sendWelcomeEmail(user);
+  await sleep('5s');
+  const webhook = createWebhook();
+  await sendOnboardingEmail(user, webhook.url);
+  await webhook;
+  console.log('Webhook Resolved');
+  return { userId: user.id, status: 'onboarded' };
 }
 
-export async function handleSignup(email: string) {
-  "use workflow";
-  const user = await createUser(email);
-  return { userId: user.id };
+async function createUser(email: string) {
+  'use step';
+  console.log(`Creating a new user with email: ${email}`);
+  return { id: crypto.randomUUID(), email };
 }
 ```
 
-**Step mode** preserves step bodies intact and registers them via `registerStepFunction()` so the step execution runtime can look them up when a queue message arrives. **Workflow mode** replaces step bodies with `WORKFLOW_USE_STEP` proxy calls — so `await createUser(email)` checks the event log for a cached result or suspends the workflow if the step hasn't run yet. **Client mode** attaches `workflowId` properties while preventing direct execution with a helpful error message.
+The compiler produces three bundles from this file. The **Step bundle** preserves `createUser`'s body and registers it via `registerStepFunction()`. The **Workflow bundle** replaces `createUser`'s body with a `WORKFLOW_USE_STEP` proxy call — so `await createUser(email)` checks the Event log for a cached `step_completed` result or suspends the workflow if the step hasn't run yet. The **Client bundle** attaches `workflowId` to `handleUserSignup` so `start()` knows which workflow to queue.
 
-Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build. This stability is what makes durable execution work across deploys: a workflow that suspended before a deploy resumes with new code, and the step IDs still match.
+Each function gets a stable ID derived from the file path and function name — like `step//./workflows/user//createUser`. Same ID in all three modes. Rename the function, and the ID changes everywhere in the next build.
 
-After body replacement, a dead code elimination pass strips imports that only the replaced bodies referenced. A step that imported a database driver? That import disappears from the workflow bundle — keeping the sandboxed VM clean. Build-time validation catches non-async directives, misspelled hints, and conflicting annotations before deployment, not at 2 AM in production.
-
-The queue message that triggers a step is just a lightweight pointer — it carries `workflowRunId` and `stepId`, but not the step's input data. The step worker starts by recording `step_started`, hydrates its inputs from the persisted `step_created` event in the event log, and then runs the function. That is why step bodies disappear from the workflow bundle: orchestration can replay safely, side effects cannot. The workflow VM makes `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` deterministic by seeding them from run metadata — so every replay sees exactly the same values.
+Here's the key insight: step bodies are excluded from the Workflow bundle because replay must never re-run side effects. When a step hasn't completed yet, the proxy throws a `WorkflowSuspension`. The suspension handler writes a `step_created` event to the Event log (persisting the input) and sends a Queue message to trigger execution. The step handler runs the real function, writes `step_completed`, and re-queues the workflow. On replay, the proxy finds the cached result and returns it immediately. Workflow state is reconstructed by replaying code against the Event log — the VM's deterministic `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` ensure every replay sees identical values.
 
 ## Why It Matters
 

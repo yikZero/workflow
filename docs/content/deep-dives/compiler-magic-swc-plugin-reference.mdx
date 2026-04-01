@@ -184,13 +184,150 @@ Most invalid patterns are caught as build-time errors before deployment.
 
 ## Runtime Integration
 
-The three bundles are consumed by different parts of the Workflow DevKit infrastructure at runtime.
+The three bundles are consumed by different parts of the Workflow DevKit infrastructure at runtime. Each bundle plugs into a specific stage of the execution lifecycle — the **Client bundle** initiates a run, the **Workflow bundle** orchestrates it inside a deterministic VM, and the **Step bundle** performs real side effects.
+
+### Client bundle runtime
+
+The **Client bundle** is imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function whose body throws an error and whose `workflowId` property identifies the workflow.
+
+At runtime, `start(handleUserSignup)` reads that `workflowId` property, creates a `run_created` event in the **Event log**, and sends a **Queue message** to the workflow queue. The error-throwing body ensures that a stray `await handleUserSignup(email)` throws a helpful message instead of silently bypassing durable execution.
+
+```ts title="packages/core/src/runtime/start.ts — reading workflowId and queuing"
+return await waitedUntil(() => {
+  // @ts-expect-error this field is added by our client transform
+  const workflowName = workflow?.workflowId;
+
+  if (!workflowName) {
+    throw new WorkflowRuntimeError(
+      `'start' received an invalid workflow function. Ensure the Workflow Development Kit is configured correctly and the function includes a 'use workflow' directive.`,
+      { slug: 'start-invalid-workflow-function' }
+    );
+  }
+```
+
+```ts title="packages/core/src/runtime/start.ts — queuing the workflow"
+await world.queue(
+  getWorkflowQueueName(workflowName),
+  {
+    runId,
+    traceCarrier,
+  } satisfies WorkflowInvokePayload,
+  {
+    deploymentId,
+  }
+);
+```
+
+The **Queue message** is a trigger, not durable state — it carries the `runId` and trace context so the workflow handler knows which run to replay. All durable state lives in the **Event log**.
+
+### Workflow bundle runtime
+
+The **Workflow bundle** is loaded into a sandboxed Node.js VM when the workflow handler processes the queue message. The runtime creates a deterministic execution context seeded from run metadata, then injects the `WORKFLOW_USE_STEP` symbol so compiler-generated proxy calls resolve at runtime:
+
+```ts title="packages/core/src/workflow.ts — VM context setup"
+const {
+  context,
+  globalThis: vmGlobalThis,
+  updateTimestamp,
+} = createContext({
+  seed: `${workflowRun.runId}:${workflowRun.workflowName}:${+startedAt}`,
+  fixedTimestamp: +startedAt,
+});
+
+const useStep = createUseStep(workflowContext);
+// @ts-expect-error — `@types/node` says symbol is not valid, but it does work
+vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
+// @ts-expect-error — `@types/node` says symbol is not valid, but it does work
+vmGlobalThis[WORKFLOW_GET_STREAM_ID] = (namespace?: string) =>
+  getWorkflowRunStreamId(workflowRun.runId, namespace);
+```
+
+The VM patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives so every replay sees exactly the same values:
+
+```ts title="packages/core/src/vm/index.ts — deterministic patches"
+g.Math.random = rng;
+
+const Date_ = g.Date;
+(g as any).Date = function Date(
+  ...args: Parameters<(typeof globalThis)['Date']>[]
+) {
+  if (args.length === 0) {
+    return new Date_(fixedTimestamp);
+  }
+  // @ts-expect-error — Args is `Date` constructor arguments
+  return new Date_(...args);
+};
+(g as any).Date.prototype = Date_.prototype;
+Object.setPrototypeOf(g.Date, Date_);
+g.Date.now = () => fixedTimestamp;
+```
+
+```ts title="packages/core/src/vm/index.ts — deterministic crypto"
+if (prop === 'getRandomValues') {
+  return getRandomValues;
+}
+if (prop === 'randomUUID') {
+  return randomUUID;
+}
+```
+
+Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects. When the workflow calls `await createUser(email)`, the `WORKFLOW_USE_STEP` proxy subscribes to the `EventsConsumer`. If a matching `step_completed` event exists in the **Event log**, it returns the cached result. If not, it queues the step for execution and throws a `WorkflowSuspension` to exit the VM:
+
+```ts title="packages/core/src/step.ts — WORKFLOW_USE_STEP proxy behavior"
+const correlationId = `step_${ctx.generateUlid()}`;
+
+const queueItem: StepInvocationQueueItem = {
+  type: 'step',
+  correlationId,
+  stepName,
+  args,
+};
+
+ctx.invocationsQueue.set(correlationId, queueItem);
+
+ctx.eventsConsumer.subscribe((event) => {
+  if (!event) {
+    // End of events — step hasn't completed yet.
+    // Trigger suspension so the workflow handler can queue the step.
+    scheduleWhenIdle(ctx, () => {
+      ctx.onWorkflowError(
+        new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+      );
+    });
+    return EventConsumerResult.NotConsumed;
+  }
+
+  if (event.eventType === 'step_completed') {
+    ctx.invocationsQueue.delete(event.correlationId);
+
+    ctx.pendingDeliveries++;
+    ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+      try {
+        const hydratedResult = await hydrateStepReturnValue(
+          event.eventData.result,
+          ctx.runId,
+          ctx.encryptionKey,
+          ctx.globalThis
+        );
+        resolve(hydratedResult as Result);
+      } catch (error) {
+        reject(error);
+      } finally {
+        ctx.pendingDeliveries--;
+      }
+    });
+    return EventConsumerResult.Finished;
+  }
+
+  return EventConsumerResult.NotConsumed;
+});
+```
 
 ### Step bundle runtime
 
-The step bundle is loaded by the step execution handler when a queue message arrives. The handler parses the queue payload — which carries `workflowName`, `workflowRunId`, `workflowStartedAt`, `stepId`, and trace metadata — then emits a `step_started` event, hydrates the step's input from the persisted `step_created` event (not from the queue message), executes the function, and persists the result as a `step_completed` event. The queue message is a lightweight trigger; the event log is what makes execution durable.
+The **Step bundle** is loaded by the step execution handler when a **Queue message** arrives. The suspension handler writes a `step_created` event to the **Event log** (persisting the step's input) and then sends a lightweight queue message to trigger execution:
 
-```ts title="packages/core/src/runtime/suspension-handler.ts — queue payload shape"
+```ts title="packages/core/src/runtime/suspension-handler.ts — queue the step"
 await queueMessage(
   world,
   `__wkf_step_${queueItem.stepName}`,
@@ -204,75 +341,105 @@ await queueMessage(
   },
   {
     idempotencyKey: queueItem.correlationId,
+    headers: {
+      ...extractTraceHeaders(traceCarrier),
+    },
   }
 );
 ```
 
-```ts title="packages/core/src/runtime/step-handler.ts — step execution lifecycle"
-const {
-  workflowName,
-  workflowRunId,
-  workflowStartedAt,
-  stepId,
-  traceCarrier: traceContext,
-  requestedAt,
-} = StepInvokePayloadSchema.parse(message_);
+The step handler parses the queue payload, emits a `step_started` event, then hydrates the step's input from the persisted `step_created` event — not from the queue message. The step function executes with full Node.js runtime access, and the result is persisted as a `step_completed` event. Finally, the handler re-queues the workflow so it can replay with the new result:
 
-const startResult = await world.events.create(
-  workflowRunId,
-  {
-    eventType: 'step_started',
-    specVersion: SPEC_VERSION_CURRENT,
-    correlationId: stepId,
-  },
-  { requestId }
-);
+```ts title="packages/core/src/runtime/step-handler.ts — complete and re-queue"
+// Run step_completed and trace serialization concurrently
+let stepCompleted409 = false;
+const [, traceCarrier] = await Promise.all([
+  world.events
+    .create(
+      workflowRunId,
+      {
+        eventType: 'step_completed',
+        specVersion: SPEC_VERSION_CURRENT,
+        correlationId: stepId,
+        eventData: {
+          result: result as Uint8Array,
+        },
+      },
+      { requestId }
+    )
+    .catch((err: unknown) => {
+      if (EntityConflictError.is(err)) {
+        runtimeLogger.info(
+          'Tried completing step, but step has already finished.',
+          {
+            workflowRunId,
+            stepId,
+            stepName,
+            message: err.message,
+          }
+        );
+        stepCompleted409 = true;
+        return;
+      }
+      throw err;
+    }),
+  serializeTraceCarrier(),
+]);
 
-const hydratedInput = await hydrateStepArguments(
-  step.input,
-  workflowRunId,
-  encryptionKey,
-  ops
-);
-```
+if (stepCompleted409) {
+  return;
+}
 
-### Workflow bundle runtime
-
-The workflow bundle is loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives so replay sees the same values every time. Step bodies are excluded from the workflow bundle because replay must never rerun side effects such as API calls, database writes, and file I/O.
-
-```ts title="packages/core/src/workflow.ts — VM context creation"
-const {
-  context,
-  globalThis: vmGlobalThis,
-  updateTimestamp,
-} = createContext({
-  seed: `${workflowRun.runId}:${workflowRun.workflowName}:${+startedAt}`,
-  fixedTimestamp: +startedAt,
+await queueMessage(world, getWorkflowQueueName(workflowName), {
+  runId: workflowRunId,
+  traceCarrier,
+  requestedAt: new Date(),
 });
-
-vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
-vmGlobalThis.fetch = () => {
-  throw new vmGlobalThis.Error(
-    `Global "fetch" is unavailable in workflow functions. Use the "fetch" step function from "workflow" to make HTTP requests.`
-  );
-};
 ```
 
-```ts title="packages/core/src/vm/index.ts — deterministic patches"
-g.Math.random = rng;
-g.Date.now = () => fixedTimestamp;
+A finished step wakes the workflow back up by writing `step_completed` to the **Event log** and sending a **Queue message** to the workflow queue. On the next invocation, the workflow replays from the beginning — but this time the `WORKFLOW_USE_STEP` proxy finds the `step_completed` event and returns the cached result instead of suspending. Workflow state is reconstructed by replaying code against the event log.
 
-if (prop === 'getRandomValues') {
-  return getRandomValues;
-}
-if (prop === 'randomUUID') {
-  return randomUUID;
-}
+### One call, end to end
+
+The following diagram traces a single `await createUser(email)` call through the entire system:
+
+```mermaid
+sequenceDiagram
+    participant App as Application Code
+    participant Client as Client Bundle
+    participant WQ as Workflow Queue
+    participant VM as Workflow VM
+    participant EL as Event Log
+    participant SQ as Step Queue
+    participant Step as Step Handler
+
+    App->>Client: start(handleUserSignup, [email])
+    Client->>EL: write run_created event
+    Client->>WQ: queue message (runId)
+
+    WQ->>VM: invoke workflow handler
+    VM->>VM: replay workflow code in sandbox
+    VM->>VM: await createUser(email) → WORKFLOW_USE_STEP proxy
+    VM->>EL: check for step_completed
+    Note over VM,EL: No matching event found
+    VM->>VM: throw WorkflowSuspension
+
+    VM->>EL: write step_created (with input)
+    VM->>SQ: queue message (stepId)
+
+    SQ->>Step: invoke step handler
+    Step->>EL: read step_created (hydrate input)
+    Step->>Step: execute createUser(email) with full Node.js
+    Step->>EL: write step_completed (with result)
+    Step->>WQ: re-queue workflow
+
+    WQ->>VM: invoke workflow handler (replay)
+    VM->>VM: replay workflow code in sandbox
+    VM->>VM: await createUser(email) → WORKFLOW_USE_STEP proxy
+    VM->>EL: check for step_completed
+    Note over VM,EL: Event found — return cached result
+    VM->>VM: continue to next step
 ```
-
-### Client bundle runtime
-
-The client bundle is imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` throws a helpful message instead of silently bypassing durable execution.
 
 ## Why This Matters
 

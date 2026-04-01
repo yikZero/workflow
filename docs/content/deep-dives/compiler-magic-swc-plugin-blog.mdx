@@ -18,6 +18,31 @@ Workflow DevKit takes a different approach. You write one file. You add directiv
 
 Behind those two simple strings is an SWC compiler plugin that produces three distinct JavaScript bundles from the same source, each serving a different execution context. This article walks through exactly how that transformation works, what each mode produces, and why the design decisions matter.
 
+Here's the example we'll follow throughout this article — a user signup workflow that creates a user, sends emails, waits for a webhook, and returns:
+
+```ts
+export async function handleUserSignup(email: string) {
+  'use workflow';
+
+  const user = await createUser(email);
+  await sendWelcomeEmail(user);
+  await sleep('5s');
+  const webhook = createWebhook();
+  await sendOnboardingEmail(user, webhook.url);
+  await webhook;
+  console.log('Webhook Resolved');
+  return { userId: user.id, status: 'onboarded' };
+}
+
+async function createUser(email: string) {
+  'use step';
+  console.log(`Creating a new user with email: ${email}`);
+  return { id: crypto.randomUUID(), email };
+}
+```
+
+This single file contains both the orchestration logic (`handleUserSignup`) and a side-effecting step (`createUser`). The compiler splits them apart.
+
 ## The Three Modes
 
 The plugin runs three separate passes over each workflow file:
@@ -33,22 +58,7 @@ Each mode answers a different question:
 - Workflow mode: "What code should run inside the deterministic replay VM?"
 - Client mode: "How does application code reference workflows without executing them?"
 
-Let's look at a concrete example. Here's a source file:
-
-```ts
-export async function createUser(email: string) {
-  "use step";
-  return { id: crypto.randomUUID(), email };
-}
-
-export async function handleUserSignup(email: string) {
-  "use workflow";
-  const user = await createUser(email);
-  return { userId: user.id };
-}
-```
-
-Now let's see what each mode produces.
+Let's see what each mode produces from the `handleUserSignup` source.
 
 ## Step Mode: Preserve and Register
 
@@ -100,9 +110,13 @@ globalThis.__private_workflows.set(
 
 When the workflow VM calls `await createUser(email)`, it's actually calling through the `WORKFLOW_USE_STEP` proxy. That proxy consults the `EventsConsumer`: if a matching `step_completed` event exists in the log, it returns the cached result. If not, it adds the step to the pending invocations queue and throws a `WorkflowSuspension` to exit the VM.
 
-The transformation is why workflows are deterministic. The original step body — the one that calls `crypto.randomUUID()` — is gone. In its place is a proxy that returns cached results from the event log. Same inputs, same outputs, every replay.
+The transformation is why workflows are deterministic. The original step body — the one that calls `crypto.randomUUID()` — is gone. In its place is a proxy that returns cached results from the **Event log**. Same inputs, same outputs, every replay.
 
-The `__private_workflows.set()` call registers the workflow function so the runtime can find it by ID when a queue message arrives.
+<Callout type="info">
+The **Workflow bundle** omits step bodies because replay must never re-run side effects. Deterministic randomness and fixed time already exist inside the VM; side-effect isolation is the real reason steps stay out of the **Workflow bundle**.
+</Callout>
+
+The `__private_workflows.set()` call registers the workflow function so the runtime can find it by ID when a **Queue message** arrives.
 
 ### What about the runtime side?
 
@@ -252,39 +266,52 @@ Consider a traditional approach where the developer must manually maintain the s
 
 The compiler is the mechanism that makes the programming model feel like writing normal JavaScript while providing the runtime guarantees that durable execution requires.
 
-## What Happens at Runtime
+## Follow one `await` across the system
 
-The three bundles are consumed by different parts of the Workflow DevKit infrastructure:
+To understand why the compiler splits one file into three, trace what happens when your application calls `start(handleUserSignup, ['alice@example.com'])`:
 
-**Step bundle** → loaded by the step execution handler when a queue message arrives. The handler parses the queue payload — which carries `workflowName`, `workflowRunId`, `workflowStartedAt`, `stepId`, and trace metadata — then emits a `step_started` event, hydrates the step's input from the persisted `step_created` event (not from the queue message), executes the function, and persists the result as a `step_completed` event. The queue message is a lightweight trigger; the event log is what makes execution durable.
+### 1. Source transform into three modes
+
+The SWC plugin produces the three bundles described above. The **Client bundle** keeps the `workflowId` property. The **Workflow bundle** replaces `createUser`'s body with a `WORKFLOW_USE_STEP` proxy. The **Step bundle** preserves `createUser`'s body and registers it via `registerStepFunction()`.
+
+### 2. Client stub contributes `workflowId`
+
+Your application imports the **Client bundle**. When `start()` is called, it reads `handleUserSignup.workflowId` — set by the compiler — to identify the workflow. Without this property, `start()` throws a `WorkflowRuntimeError`.
+
+### 3. `start()` queues the workflow
+
+`start()` creates a `run_created` event in the **Event log** and sends a **Queue message** containing the `runId` and trace context to the workflow queue. The **Queue message** is a trigger, not durable state — the **Event log** is the source of truth.
+
+### 4. Workflow VM installs `WORKFLOW_USE_STEP`
+
+The workflow handler loads the **Workflow bundle** into a sandboxed Node.js VM. Before executing any user code, the runtime creates a deterministic context (seeded `Math.random()`, fixed `Date.now()`, deterministic `crypto.getRandomValues()` and `crypto.randomUUID()`) and binds `WORKFLOW_USE_STEP` to the `useStep` proxy:
 
 ```ts
-// From packages/core/src/runtime/suspension-handler.ts — queue payload shape
-await queueMessage(
-  world,
-  `__wkf_step_${queueItem.stepName}`,
-  {
-    workflowName,
-    workflowRunId: runId,
-    workflowStartedAt,
-    stepId: queueItem.correlationId,
-    traceCarrier,
-    requestedAt: new Date(),
-  },
-  {
-    idempotencyKey: queueItem.correlationId,
-  }
-);
+// From packages/core/src/workflow.ts
+const useStep = createUseStep(workflowContext);
+vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
 ```
 
-**Workflow bundle** → loaded into the sandboxed VM when the workflow handler is invoked. The `WORKFLOW_USE_STEP` symbol is bound to the runtime's `useStep` proxy, and `__private_workflows` is a `Map` that the runtime reads to find the workflow function by ID. The VM environment patches `Math.random()`, `Date.now()`, `crypto.getRandomValues()`, and `crypto.randomUUID()` with deterministic, seeded alternatives — making all workflow code replay-safe. Step bodies are excluded from the workflow bundle because they perform side effects — API calls, database writes, file I/O — that must not re-execute during replay.
+### 5. Missing `step_completed` causes `WorkflowSuspension`
 
-**Client bundle** → imported by your application code. When you write `import { handleUserSignup } from './workflows/user'`, you get the client-mode output — a function with a `workflowId` property. Calling `start(handleUserSignup)` reads that property to construct the queue message. The error-throwing body ensures that a stray `await handleUserSignup(email)` in your application code throws a helpful message instead of silently bypassing durable execution.
+The workflow code runs. When it hits `await createUser(email)`, the `WORKFLOW_USE_STEP` proxy subscribes to the `EventsConsumer` and looks for a `step_completed` event with a matching correlation ID. On the first invocation, no such event exists — so the proxy adds the step to the pending invocations queue and throws a `WorkflowSuspension` to exit the VM.
+
+### 6. Suspension handler writes `step_created` and queues the step
+
+The suspension handler catches the `WorkflowSuspension`, writes a `step_created` event to the **Event log** (persisting the step's input), and sends a **Queue message** to the step queue. Step input is hydrated from the persisted `step_created` event, not from the queue message.
+
+### 7. Step handler executes real side effects and writes `step_completed`
+
+The step handler receives the **Queue message**, loads the **Step bundle**, looks up `createUser` via `registerStepFunction()`, hydrates the input from the `step_created` event in the **Event log**, and executes the function with full Node.js runtime access. The result is persisted as a `step_completed` event.
+
+### 8. Workflow is queued again and replays with cached result
+
+After writing `step_completed`, the step handler sends a **Queue message** back to the workflow queue. The workflow handler replays the code from the beginning — but this time, when `await createUser(email)` hits the `WORKFLOW_USE_STEP` proxy, the `EventsConsumer` finds the `step_completed` event and returns the cached result. Workflow state is reconstructed by replaying code against the **Event log**. Execution continues to the next step.
 
 The three bundles are placed in predictable locations by the framework integration:
-- Step: `.well-known/workflow/v1/step`
-- Workflow: `.well-known/workflow/v1/flow`
-- Client: your normal import paths
+- **Step bundle**: `.well-known/workflow/v1/step`
+- **Workflow bundle**: `.well-known/workflow/v1/flow`
+- **Client bundle**: your normal import paths
 
 This convention means the runtime can discover and load bundles without any explicit registration or configuration beyond the directives themselves.
 

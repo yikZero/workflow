@@ -31,9 +31,9 @@ It reads like normal async JavaScript. Three awaits, top to bottom, one after an
 
 When this workflow hits `await chargeCard(9900)` for the first time, there's no cached result yet. The runtime **suspends** — it throws a `WorkflowSuspension`, queues the step for background execution, and returns. Nothing stays in memory.
 
-The step runs separately with full Node.js access, charges the card via Stripe, and persists the result to an append-only event log. Then the workflow is re-enqueued.
+The step runs separately with full Node.js access via the **Step bundle**, charges the card via Stripe, and persists the result to an append-only **Event log**. Then a **Queue message** re-enqueues the workflow.
 
-On replay, the runtime recreates a deterministic VM sandbox — same seeded `Math.random()`, same frozen `Date.now()`, same `crypto.randomUUID()` sequence — and re-executes the workflow from the top. When it hits `await chargeCard(9900)` again, the `EventsConsumer` finds the cached `step_completed` result in the log and returns it instantly. No network call. No re-charge.
+On replay, the runtime recreates a deterministic VM sandbox — same seeded `Math.random()`, same frozen `Date.now()`, same `crypto.randomUUID()` sequence — and re-executes the **Workflow bundle** from the top. When it hits `await chargeCard(9900)` again, the `EventsConsumer` finds the cached `step_completed` result in the **Event log** and returns it instantly. No network call. No re-charge. Workflow state is reconstructed by replaying code against the **Event log**.
 
 The workflow continues to `await reserveInventory(orderId)`. If that step hasn't completed yet, the same suspension cycle repeats. If it has, the cached result comes back immediately.
 

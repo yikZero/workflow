@@ -16,9 +16,9 @@ Your workflow charged a credit card, reserved inventory, and sent a confirmation
 
 In a traditional system, the answer is complicated. You'd need to figure out what already happened — maybe by querying a database, checking an external service, or reading from a checkpoint file. If your checkpoint was stale or your serialization format changed between deploys, you'd be debugging state reconstruction bugs at 2 AM.
 
-Workflow DevKit takes a fundamentally different approach. There's no checkpoint. There's no serialized heap snapshot. Instead, there's an append-only event log — and a runtime that can reconstruct any workflow's state by replaying that log from the beginning.
+Workflow DevKit takes a fundamentally different approach. There's no checkpoint. There's no serialized heap snapshot. Instead, there's an append-only **Event log** — and a runtime that can reconstruct any workflow's state by replaying that log from the beginning.
 
-This article explains exactly how that works: the event log structure, the ordering guarantees, the replay engine, and why this model eliminates entire categories of durability bugs.
+This article explains exactly how that works: the **Event log** structure, the ordering guarantees, the replay engine, and why this model eliminates entire categories of durability bugs.
 
 ## The Event Log Is the State
 
@@ -140,7 +140,7 @@ const ulid = monotonicFactory(() => vmGlobalThis.Math.random());
 
 ## The Replay Engine: EventsConsumer
 
-When a workflow needs to resume — after a cold start, a step completion, or a sleep elapsing — the runtime doesn't try to deserialize a snapshot. It loads the event log and replays the workflow code from the beginning. The `EventsConsumer` class in `packages/core/src/events-consumer.ts` is the mechanism that makes this work.
+When a workflow needs to resume — after a cold start, a step completion, or a sleep elapsing — the runtime doesn't try to deserialize a snapshot. It loads the **Event log** and replays the **Workflow bundle** from the beginning. The `EventsConsumer` class in `packages/core/src/events-consumer.ts` is the mechanism that makes this work. Workflow state is reconstructed by replaying code against the **Event log**, not by resuming in-memory state.
 
 The consumer holds the full event array and a cursor (`eventIndex`) that starts at zero and advances as events are matched to callbacks:
 
@@ -307,7 +307,7 @@ const {
 });
 ```
 
-Same run ID, same workflow name, same start timestamp — same seed. Same seed — same `Math.random()` sequence, same initial `Date.now()`. The workflow code re-executes identically, and every step call returns its cached result from the event log.
+Same run ID, same workflow name, same start timestamp — same seed. Same seed — same `Math.random()` sequence, same initial `Date.now()`. The **Workflow bundle** re-executes identically, and every step call returns its cached result from the **Event log**. Step input is hydrated from the persisted `step_created` event, not from the **Queue message**.
 
 The `getAllWorkflowRunEvents` function in `packages/core/src/runtime/helpers.ts` paginates through all events, always in ascending sort order:
 
@@ -383,9 +383,9 @@ Every arrow in this diagram corresponds to an immutable event in the log. The wo
 
 The durability model is the foundation that makes the rest of the Workflow DevKit architecture possible:
 
-- **Cost efficiency** — Between steps, nothing is in memory. The event log is the complete state. A workflow waiting 3 days for a webhook costs zero compute during those 3 days.
-- **Durable streaming** — Stream state is persisted alongside the event log, surviving restarts and replays.
-- **Deployment safety** — New code deploys don't invalidate in-flight workflows. The event log doesn't change; the new code replays against the same events.
-- **Debuggability** — A failed workflow's event log is a complete, ordered record of everything that happened. No guesswork.
+- **Cost efficiency** — Between steps, nothing is in memory. The **Event log** is the complete state. A **Queue message** is a trigger, not durable state. A workflow waiting 3 days for a webhook costs zero compute during those 3 days.
+- **Durable streaming** — Stream state is persisted alongside the **Event log**, surviving restarts and replays.
+- **Deployment safety** — New code deploys don't invalidate in-flight workflows. The **Event log** doesn't change; the new **Workflow bundle** replays against the same events.
+- **Debuggability** — A failed workflow's **Event log** is a complete, ordered record of everything that happened. No guesswork.
 
-The event log is the state. Everything else is derived.
+The **Event log** is the state. Everything else is derived.

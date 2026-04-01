@@ -22,9 +22,9 @@ The step execution model is the mechanism that makes durable workflows possible.
 Workflow DevKit separates code into two execution contexts using JavaScript directives:
 
 - **Workflow functions** (`"use workflow"`) — deterministic orchestrators that run inside a sandboxed Node.js VM. They coordinate which steps to run and in what order, but cannot perform side effects directly.
-- **Step functions** (`"use step"`) — side-effecting operations with full Node.js runtime access. They run outside the VM, and their results are persisted to the event log.
+- **Step functions** (`"use step"`) — side-effecting operations with full Node.js runtime access. They run outside the VM via the **Step bundle**, and their results are persisted to the **Event log**.
 
-The compiler transforms a single source file into separate bundles for each context. At runtime, the workflow VM calls steps through a symbol-based proxy (`WORKFLOW_USE_STEP`) that either returns a cached result from the event log or suspends the workflow and enqueues the step for background execution.
+The compiler transforms a single source file into three bundles — **Client bundle** (ID-bearing stub used by `start()`), **Workflow bundle** (deterministic orchestration code loaded into the VM), and **Step bundle** (real side-effecting code executed by the step handler). At runtime, the workflow VM calls steps through a symbol-based proxy (`WORKFLOW_USE_STEP`) that either returns a cached result from the **Event log** or suspends the workflow and sends a **Queue message** to enqueue the step for background execution.
 
 ## Lifecycle
 
@@ -144,7 +144,7 @@ const useStep = createUseStep(workflowContext);
 vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
 ```
 
-When the workflow calls `await createUser(email)`, the proxy checks the `EventsConsumer` for a matching `step_completed` event. If found, it returns the cached result. If not found, it adds the step to the invocations queue and eventually throws a `WorkflowSuspension`.
+When the workflow calls `await createUser(email)`, the proxy checks the `EventsConsumer` for a matching `step_completed` event in the **Event log**. If found, it returns the cached result. If not found, it adds the step to the invocations queue and eventually throws a `WorkflowSuspension`. Step bodies are excluded from the **Workflow bundle** because replay must never re-run side effects.
 
 ### Suspension and step dispatch
 
@@ -168,7 +168,7 @@ try {
 The suspension handler in `packages/core/src/runtime/suspension-handler.ts` then processes the pending queue:
 
 1. **Hooks first** — created before steps to prevent race conditions with webhook receivers
-2. **Steps and waits in parallel** — each step gets a `step_created` event and a queued message for background execution
+2. **Steps and waits in parallel** — each step gets a `step_created` event in the **Event log** and a **Queue message** sent for background execution. Step input is hydrated from the persisted `step_created` event, not from the **Queue message**
 3. **Timeout calculation** — if any waits exist, the minimum `resumeAt` time determines when the workflow should be re-enqueued
 
 ### Replay with timestamp advancement
@@ -185,14 +185,14 @@ workflowContext.eventsConsumer.subscribe((event) => {
 });
 ```
 
-This means `Date.now()` inside the workflow returns the timestamp of the most recently consumed event — not wall-clock time. The workflow experiences time progressing through the event log, making temporal logic consistent across replays.
+This means `Date.now()` inside the workflow returns the timestamp of the most recently consumed event — not wall-clock time. The workflow experiences time progressing through the **Event log**, making temporal logic consistent across replays. Workflow state is reconstructed by replaying code against the **Event log**.
 
 ## Why This Matters
 
 The split execution model delivers three properties that enable durable workflows on stateless compute:
 
-1. **Zero re-execution cost** — Step results are cached in the event log. Replay never re-runs a step; it reads the cached result and continues. A workflow with 50 completed steps replays in milliseconds.
+1. **Zero re-execution cost** — Step results are cached in the **Event log**. Replay never re-runs a step; it reads the cached result and continues. A workflow with 50 completed steps replays in milliseconds.
 
 2. **Deterministic orchestration** — The sandboxed VM guarantees that workflow code produces the same decisions given the same event history. This makes replay safe: the workflow will always arrive at the same suspension point or completion.
 
-3. **Stateless suspension** — When a workflow suspends, nothing stays in memory. The event log is the complete state. The workflow can resume on any machine, in any process, at any time — and produce the same result.
+3. **Stateless suspension** — When a workflow suspends, nothing stays in memory. The **Event log** is the complete state. A **Queue message** is a trigger, not durable state. The workflow can resume on any machine, in any process, at any time — and produce the same result.
