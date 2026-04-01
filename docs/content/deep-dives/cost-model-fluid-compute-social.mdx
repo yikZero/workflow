@@ -20,7 +20,7 @@ Wall-clock time is free because compute exists only at decision points.
 
 A workflow has **decision points** — dispatching steps, collecting results, advancing — and **gaps** between them. Traditional orchestrators keep a process alive during gaps. Workflow DevKit doesn't.
 
-When the workflow hits a step, it records the pending operation as an event, queues the step for out-of-band execution, and exits. When it hits a `sleep()`, it records a wait event, returns a `timeoutSeconds` delay to the queue, and exits. Either way, the compute is freed. No process sleeps, no connection is held.
+Step? The handler persists `step_created`, runs it out-of-band, then wakes the workflow when `step_completed` lands and the step handler re-enqueues the run. Sleep? The handler persists `wait_created`, returns `timeoutSeconds`, and lets the queue deliver the next message later. Either way, the compute is freed. No process sleeps, no connection is held. Rare edge case: hook conflicts force an immediate replay with `timeoutSeconds: 0`.
 
 ## The Three Mechanics
 

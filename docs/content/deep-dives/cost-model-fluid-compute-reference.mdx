@@ -149,6 +149,10 @@ const minTimeoutSeconds = waitItems.reduce<number | null>(
 
 // ...
 
+if (hasHookConflict) {
+  return { timeoutSeconds: 0 };
+}
+
 if (minTimeoutSeconds !== null) {
   return { timeoutSeconds: minTimeoutSeconds };
 }
@@ -156,7 +160,7 @@ if (minTimeoutSeconds !== null) {
 return {};
 ```
 
-Only waits contribute `timeoutSeconds` here. A step-driven suspension normally returns `{}` from `handleSuspension`; the later wake-up happens when the step handler persists `step_completed` and explicitly re-enqueues the workflow.
+Timed waits are the normal source of delayed workflow wake-ups here. A step-driven suspension usually returns `{}` from `handleSuspension`; the later wake-up happens when the step handler persists `step_completed` and explicitly re-enqueues the workflow. One edge case exists: hook conflicts force an immediate replay via `timeoutSeconds: 0` so the next invocation can surface `hook_conflict` deterministically.
 
 When `timeoutSeconds` is returned, the queue infrastructure uses it to schedule the next delivery. **The handler exits and the compute is freed.** No process sleeps or polls during the delay.
 

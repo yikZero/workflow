@@ -2,7 +2,7 @@
 title: "Why Your Workflow That Sleeps for a Week Costs Almost Nothing"
 description: A developer-facing deep dive into Workflow DevKit's cost model — how queue-driven execution, zero-cost suspension, and delayed re-enqueue eliminate always-on workers and make workflow compute proportional to work performed, not wall-clock time.
 type: conceptual
-summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, zero-cost suspension, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When a workflow encounters a step or sleep, it records pending operations and exits. For timed waits, the queue delivers the next message after the specified delay. No process exists between invocations.
+summary: Workflow DevKit's cost model is a consequence of three runtime mechanics — queue-driven invocation, zero-cost suspension, and delayed re-enqueue. Workflow handlers are invoked by queue messages, not long-lived processes. When a workflow encounters a step or hook, the handler records the pending operation and exits. Completed steps wake the workflow by persisting step_completed and re-enqueueing the run. For timed waits, the queue delivers the next message after the specified delay. No process exists between invocations.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -25,8 +25,8 @@ This article explains how that works: the queue-driven execution model, the susp
 The cost model isn't a feature you configure. It's a direct consequence of how the runtime works:
 
 1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
-2. **Zero-cost suspension** — when a workflow encounters a step, hook, or sleep, it records the pending operations as events, returns, and exits. No thread, connection, or process is held open.
-3. **Delayed re-enqueue** — for timed waits, the queue infrastructure delivers the next message after the specified delay. The workflow doesn't exist during the gap.
+2. **Zero-cost suspension for pending work** — when a workflow encounters a step or hook, the handler records the pending operation as an event, queues the out-of-band work, and exits. Nothing stays in memory between decision points.
+3. **Delayed re-enqueue for timed waits** — when a workflow suspends on `sleep()`, the handler records a `wait_created` event, returns `timeoutSeconds`, and the queue delivers the next message after that delay. The workflow doesn't exist during the gap.
 
 These three properties compose into something powerful: a workflow that sleeps for a week consumes compute only during the brief moments when it replays state and dispatches or collects results.
 
@@ -126,6 +126,28 @@ return {};
 ```
 
 **The handler returns. The compute is freed.** No process sleeps. No connection is held. The event log contains the complete state of the workflow. When the next message arrives — whether from a step completion or a delayed re-enqueue — a fresh invocation loads the log and replays from the beginning.
+
+A workflow in Workflow DevKit does not stay alive while it waits. When orchestration hits a step or hook, the handler records the pending operation and exits. When orchestration hits `sleep()`, it records `wait_created`, returns `timeoutSeconds`, and lets the queue schedule the next wake-up. Completed steps resume the run through a different path: the step handler writes `step_completed` and explicitly re-enqueues the workflow. The important edge case is hook conflict, which uses `timeoutSeconds: 0` for an immediate replay so the workflow can fail deterministically on the next pass.
+
+```ts
+// packages/core/src/runtime/suspension-handler.ts
+if (hasHookConflict) {
+  return { timeoutSeconds: 0 };
+}
+if (minTimeoutSeconds !== null) {
+  return { timeoutSeconds: minTimeoutSeconds };
+}
+return {};
+```
+
+```ts
+// packages/core/src/runtime/step-handler.ts
+await queueMessage(world, getWorkflowQueueName(workflowName), {
+  runId: workflowRunId,
+  traceCarrier,
+  requestedAt: new Date(),
+});
+```
 
 ## Delayed Re-Enqueue: Making Time Free
 
