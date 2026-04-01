@@ -23,7 +23,12 @@
 
 ## Add
 
-- Hook resume endpoint when the source used Signals — `createHook()` in workflow, `resumeHook()` in an API route
+- Resume surface when the source used Signals or approval-style pauses:
+  - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
+  - Use `createWebhook()` when the migrated flow should receive a raw `Request` through a generated callback URL.
+  - Choose exactly one surface. Do not pair `createWebhook()` with `resumeHook()`.
+  - See `references/shared-patterns.md` -> `## Deterministic server-side resume`
+  - See `references/shared-patterns.md` -> `## Generated callback URL`
 - `Promise.race()` with `sleep()` when the source Signal had a timeout or deadline
 - Idempotency keys on external writes via `getStepMetadata().stepId`
 - Rollback stack for compensation-heavy flows (replaces nested try/catch around each Activity)

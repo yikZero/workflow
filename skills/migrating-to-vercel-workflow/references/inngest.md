@@ -25,7 +25,12 @@
 ## Add
 
 - `Promise.race()` with `sleep()` when the source used timeout-based waits on `step.waitForEvent()`
-- Hook resume endpoint — `createHook()` in workflow, `resumeHook()` in an API route
+- Resume surface for `step.waitForEvent()` migrations:
+  - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
+  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`.
+  - Choose exactly one surface. Do not pair `createWebhook()` with `resumeHook()`.
+  - See `references/shared-patterns.md` -> `## Deterministic server-side resume`
+  - See `references/shared-patterns.md` -> `## Generated callback URL`
 - Durable progress writes with `getWritable()` (replaces `step.realtime.publish()`)
 - Idempotency keys on external writes via `getStepMetadata().stepId`
 - Rollback stack for compensation-heavy flows (replaces per-step try/catch compensation)

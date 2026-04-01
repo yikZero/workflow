@@ -33,13 +33,18 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Put orchestration in `"use workflow"` functions.
 - Put side effects, SDK calls, DB calls, HTTP calls, and stream I/O in `"use step"` functions.
 - Use `sleep()` only in workflow context.
-- Prefer `createHook()` + `resumeHook()` for Signals, `step.waitForEvent()`, and `.waitForTaskToken` migrations.
-- Use `createWebhook()` only when the migrated system should expose a generated callback URL and work with raw `Request` / `Response` objects.
+- For Signals, `step.waitForEvent()`, and `.waitForTaskToken`, choose exactly one resume surface:
+  - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
+  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`.
+- Never pair `createWebhook()` with `resumeHook()`, and never pass `token:` to `createWebhook()`.
 - Wrap `start()` and `getRun()` inside `"use step"` functions for child runs.
 - Use `getStepMetadata().stepId` as the idempotency key for external writes.
 - Use `getWritable()` in workflow context to obtain the stream, but interact with it (write, close) only inside `"use step"` functions.
 - Prefer rollback stacks for multi-step compensation.
-- If the prompt explicitly asks for framework-agnostic app-boundary code, keep route examples on plain `Request` / `Response` even when a framework like Hono is named. Otherwise, if the target framework is unspecified, keep examples framework-agnostic. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
+- Choose app-boundary syntax in this order:
+  1. If the prompt explicitly asks for framework-agnostic app-boundary code, use plain `Request` / `Response` even when a framework like Hono is named.
+  2. Otherwise, if the target framework is named, shape app-boundary examples to that framework.
+  3. Otherwise, keep examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
 
 ## Resume surface selection
 
@@ -100,6 +105,9 @@ Fail the draft if any of these are true:
 - [ ] Hooks/webhooks are missing where the source used signals, waitForEvent, or task tokens
 - [ ] A callback-URL flow uses `createHook()` + `resumeHook()` instead of `createWebhook()`
 - [ ] `createWebhook()` is given a custom `token` or paired with `resumeHook()`
+- [ ] A self-hosted or non-Vercel target omits the `World` requirement or startup bootstrap
+- [ ] App-boundary examples ignore an explicitly requested framework-agnostic requirement or a named target framework
+- [ ] The migration claims Vercel-managed execution for a self-hosted or non-Vercel target
 
 ## Sample prompt
 
