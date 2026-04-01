@@ -55,6 +55,22 @@ The returned `Webhook` object has:
 
 When using `createWebhook({ respondWith: 'manual' })`, the resolved request type is `RequestWithResponse`, which extends the standard `Request` interface with a `respondWith(response: Response): Promise<void>` method for sending custom responses back to the caller.
 
+<Callout type="info">
+Use the simplest option that satisfies the prompt:
+
+- `createWebhook()` — generated callback URL, and the default `202 Accepted` response is fine
+- `createWebhook({ respondWith: 'manual' })` — generated callback URL, but you must send a custom body, status, or headers
+- `createHook()` + `resumeHook()` — the app resumes from server-side code with a deterministic business token instead of a generated callback URL
+</Callout>
+
+<details>
+<summary>Common wrong turns</summary>
+
+- Do not use `respondWith: 'manual'` just because the flow has a callback URL.
+- Do not use `RequestWithResponse` unless you chose manual mode.
+- Do not invent a custom callback route when `webhook.url` is the intended callback surface.
+</details>
+
 ## Examples
 
 ### Basic Usage

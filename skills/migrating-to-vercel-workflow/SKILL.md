@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.7'
+  version: '0.1.8'
 ---
 
 # Migrating to Vercel Workflow
@@ -34,10 +34,10 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Put side effects, SDK calls, DB calls, HTTP calls, and stream I/O in `"use step"` functions.
 - Use `sleep()` only in workflow context.
 - For Signals, `step.waitForEvent()`, and `.waitForTaskToken`, choose exactly one resume surface:
-  - Use `createHook()` + `resumeHook()` when the app resumes the workflow from server-side code with a deterministic business token.
-  - Use `createWebhook()` when the external system needs a generated callback URL or the migrated flow should receive a raw `Request`, and the default `202 Accepted` response is fine.
-  - Use `createWebhook({ respondWith: 'manual' })` only when the prompt explicitly requires a custom response body, status, or headers.
-  - If a callback-URL prompt does not specify response semantics, default to plain `createWebhook()` and make the assumption explicit in `## Open Questions`.
+  - `resume/internal` -> `createHook()` + `resumeHook()` when the app resumes from server-side code with a deterministic business token.
+  - `resume/url/default` -> `createWebhook()` when the external system needs a generated callback URL and the default `202 Accepted` response is fine.
+  - `resume/url/manual` -> `createWebhook({ respondWith: 'manual' })` only when the prompt explicitly requires a custom response body, status, or headers.
+  - If a callback-URL prompt does not specify response semantics, default to `resume/url/default` and make the assumption explicit in `## Open Questions`.
 - Never pair `createWebhook()` with `resumeHook()`, and never pass `token:` to `createWebhook()`.
 - Wrap `start()` and `getRun()` inside `"use step"` functions for child runs.
 - Use `getStepMetadata().stepId` as the idempotency key for external writes.
@@ -47,6 +47,11 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
   1. If the prompt explicitly asks for framework-agnostic app-boundary code, use plain `Request` / `Response` even when a framework like Hono is named.
   2. Otherwise, if the target framework is named, shape app-boundary examples to that framework.
   3. Otherwise, keep examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only route signatures unless Next.js is explicitly named.
+
+> Fast memory aid:
+> - Callback URL + default ack -> `createWebhook()`
+> - Callback URL + custom ack -> `createWebhook({ respondWith: 'manual' })`
+> - Deterministic server-side resume -> `createHook()` + `resumeHook()`
 
 ## Resume surface selection
 
@@ -75,9 +80,9 @@ Select up to one key from each axis below.
 
 | Situation | Route keys | App-boundary output | Never show |
 | --- | --- | --- | --- |
-| App resumes the workflow from server-side code with a deterministic business token | `resume/internal` | `createHook()` in workflow + `resumeHook()` in app-boundary code | `createWebhook()`, `webhook.url` |
-| External vendor needs a generated callback URL and the default `202 Accepted` response is fine | `resume/url/default` | `createWebhook()`, pass `webhook.url` | `resumeHook()`, `token:` on `createWebhook()`, invented callback route, manual-response boilerplate |
-| External vendor needs a generated callback URL and the prompt requires a custom response body, status, or headers | `resume/url/manual` | `createWebhook({ respondWith: 'manual' })`, pass `webhook.url`, use `RequestWithResponse`, call `request.respondWith()` in a step | `resumeHook()`, `token:` on `createWebhook()`, invented callback route |
+| App resumes the workflow from server-side code with a deterministic business token | `resume/internal` | `createHook()` in workflow + `resumeHook()` in app-boundary code | `createWebhook()` |
+| External vendor needs a generated callback URL and the default `202 Accepted` response is fine | `resume/url/default` | `createWebhook()`, pass `webhook.url` | `resumeHook()` |
+| External vendor needs a generated callback URL and the prompt requires a custom response body, status, or headers | `resume/url/manual` | `createWebhook({ respondWith: 'manual' })`, pass `webhook.url`, use `RequestWithResponse`, call `request.respondWith()` in a step | `resumeHook()` |
 | Prompt explicitly names Hono, Express, Fastify, NestJS, or Next.js | `boundary/named-framework` | every user-authored route snippet uses that framework's syntax | mixing plain `Request` / `Response` into user-authored routes |
 | Prompt explicitly asks for framework-agnostic output | `boundary/framework-agnostic` | plain `Request` / `Response` even if a framework is named elsewhere | framework-specific route syntax |
 | Target is self-hosted or non-Vercel | `runtime/self-hosted` | `World extends Storage, Queue, Streamer`, `startWorkflowWorld()`, explicit non-Vercel explanation | claims of Vercel-managed execution |
