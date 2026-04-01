@@ -2,7 +2,7 @@
 title: "Streaming Data That Survives a Crash — How Workflow DevKit Makes Streams Durable"
 description: A developer-facing deep dive into Workflow DevKit's durable streaming architecture — how streams survive function suspensions and crashes through world-backed persistence, namespaced IDs, buffered flushes, and lock-aware completion semantics.
 type: conceptual
-summary: Workflow DevKit persists streaming data through world-backed storage so that streams outlive the functions that create them. Chunks are batched in a 10 ms window and flushed to the backend — local filesystem in development, HTTP in production. A lock-polling mechanism detects when the writer is done without requiring explicit stream closure, and namespaced stream IDs allow a single run to own multiple independent streams.
+summary: Workflow DevKit persists streaming data through world-backed storage so that streams outlive the functions that create them. Chunks are batched in a 10 ms window and flushed to the configured backend — filesystem locally, HTTP or Postgres in production. A lock-polling mechanism detects when the writer is done without requiring explicit stream closure, and namespaced stream IDs allow a single run to own multiple independent streams.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -121,6 +121,8 @@ export function getWorkflowRunStreamId(runId: string, namespace?: string) {
 The format is `strm_{ULID}_user_{base64url(namespace)?}`. When you call `getWritable({ namespace: 'progress' })`, the namespace is base64url-encoded and appended. This lets a single workflow run own multiple independent streams — one for LLM tokens, one for progress events, one for structured logs — without collision.
 
 The `_user` segment distinguishes user-created streams from any internal framework streams. It's a namespace for namespaces.
+
+On the reader side, the same namespace flows through `run.getReadable({ namespace })` — which calls `getWorkflowRunStreamId` with the run ID and namespace to reconstruct the same deterministic stream ID. Readers and writers agree on the stream identity without any external coordination.
 
 ## Buffered Writes: The 10 ms Window
 
@@ -254,9 +256,9 @@ There are two paths to completion:
 
 Both paths lead to the same result: the step's `ctx.ops` promise resolves, and the step can return its result. This dual-path design means developers can either explicitly close their stream or simply release the lock — the framework handles both correctly.
 
-## Persistence: Local vs. Production
+## Persistence: Backend-Agnostic Storage
 
-The streaming pipeline is backend-agnostic. The `Streamer` interface in `@workflow/world` defines the contract; backends implement it differently.
+The streaming pipeline is backend-agnostic. The `Streamer` interface in `@workflow/world` defines the contract; each world implementation stores chunks differently.
 
 ### Local Development (world-local)
 
@@ -270,9 +272,9 @@ The local backend in `packages/world-local/src/streamer.ts` persists each chunk 
 
 The reader uses Node.js `EventEmitter` for real-time updates — when new chunk files appear, the reader is notified immediately. It also reconciles disk state with buffered events to avoid duplicates.
 
-### Production (world-vercel)
+### Vercel Platform (world-vercel)
 
-The production backend in `packages/world-vercel/src/streamer.ts` delegates to the Vercel workflow-server over HTTP:
+The Vercel backend in `packages/world-vercel/src/streamer.ts` delegates to the Vercel workflow-server over HTTP:
 
 - **Write:** `PUT /v2/runs/{runId}/stream/{name}` with the chunk body
 - **Multi-chunk write:** Same endpoint with `X-Stream-Multi: true` header and length-prefixed binary encoding
@@ -280,7 +282,11 @@ The production backend in `packages/world-vercel/src/streamer.ts` delegates to t
 - **Read:** `GET /v2/stream/{name}` returns a streaming response body
 - **Pagination:** `GET /v2/runs/{runId}/streams/{name}/chunks` supports `limit` and `cursor`
 
-The production backend doesn't use an in-process event emitter — the workflow-server handles chunk storage and real-time delivery to readers over HTTP streaming responses.
+The Vercel backend doesn't use an in-process event emitter — the workflow-server handles chunk storage and real-time delivery to readers over HTTP streaming responses.
+
+### Postgres (world-postgres)
+
+The Postgres backend in `packages/world-postgres/src/streamer.ts` stores chunks as rows in a `streams` table via Drizzle ORM. Each chunk gets a monotonic ULID-based `chunkId` for ordering, and real-time delivery uses PostgreSQL `LISTEN`/`NOTIFY` on a `workflow_event_chunk` channel. `writeToStreamMulti` batch-inserts all chunks in a single query with pre-generated IDs to preserve ordering.
 
 ## The Complete Picture
 
@@ -291,10 +297,12 @@ flowchart TD
     C --> D["flushablePipe: readable → WorkflowServerWritableStream"]
     D --> E["Chunks buffered, flushed every 10 ms"]
     E --> F{"World backend"}
-    F -->|"Development"| G["ULID-named .bin files on disk"]
-    F -->|"Production"| H["HTTP PUT to workflow-server"]
+    F -->|"Local"| G["ULID-named .bin files on disk"]
+    F -->|"Vercel"| H["HTTP PUT to workflow-server"]
+    F -->|"Postgres"| P["Rows via Drizzle + LISTEN/NOTIFY"]
     G --> I["Reader with EventEmitter + disk reconciliation"]
     H --> J["HTTP streaming response to reader"]
+    P --> Q["Reader via pg NOTIFY events"]
     D --> K["pollWritableLock checks every 100 ms"]
     K --> L["Lock released + pending ops = 0 → step completes"]
 ```

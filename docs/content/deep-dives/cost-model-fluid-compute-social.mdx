@@ -20,18 +20,18 @@ Wall-clock time is free because compute exists only at decision points.
 
 A workflow has **decision points** — dispatching steps, collecting results, advancing — and **gaps** between them. Traditional orchestrators keep a process alive during gaps. Workflow DevKit doesn't.
 
-When the workflow hits a step or `sleep()`, it records the pending operation as an event, returns `timeoutSeconds` to the queue, and exits. The compute is freed. No process sleeps, no connection is held.
+When the workflow hits a step, it records the pending operation as an event, queues the step for out-of-band execution, and exits. When it hits a `sleep()`, it records a wait event, returns a `timeoutSeconds` delay to the queue, and exits. Either way, the compute is freed. No process sleeps, no connection is held.
 
 ## The Three Mechanics
 
 Three runtime properties compose into the cost model:
 
 1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
-2. **Zero-cost suspension** — when a workflow encounters a step, hook, or sleep, it records the pending operations as events, returns, and exits. No thread or connection is held.
-3. **Delayed re-enqueue** — for timed waits, the queue delivers the next message after the specified delay. The workflow process does not exist during the gap.
+2. **Zero-cost suspension** — when a workflow encounters a step or hook, it records the pending operations as events, queues the work out-of-band, and exits. When a step completes, the step handler writes a `step_completed` event and re-enqueues the workflow — a fresh invocation picks up where it left off. No thread or connection is held between decision points.
+3. **Delayed re-enqueue** — for timed waits like `sleep()`, the handler returns a `timeoutSeconds` delay and the queue delivers the next message after that interval. The workflow process does not exist during the gap.
 
 ```ts
-// The handler returns timeoutSeconds — then compute goes to zero
+// Only timed waits produce a timeoutSeconds — step suspension returns {}
 const minTimeoutSeconds = waitItems.reduce<number | null>(
   (min, queueItem) => {
     const resumeAtMs = queueItem.resumeAt.getTime();
@@ -44,7 +44,7 @@ const minTimeoutSeconds = waitItems.reduce<number | null>(
 );
 ```
 
-When a step completes, the step handler re-enqueues the workflow. A fresh invocation loads the event log, replays through cached results in milliseconds, and resumes at the next decision point. For timed waits, the queue delivers the next message after the delay — no polling, no sleeping process.
+Step suspension and timed waits follow different re-entry paths. When a step completes, the step handler writes a `step_completed` event and re-enqueues the workflow — no timeout involved. For timed waits like `sleep()`, the handler returns `timeoutSeconds` and the queue delivers the next message after the delay. Either way, a fresh invocation loads the event log, replays through cached results in milliseconds, and resumes at the next decision point. No polling, no sleeping process.
 
 ## Why It Matters
 

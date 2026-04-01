@@ -22,7 +22,7 @@ A durable stream connects three layers:
 
 1. **Handle creation** — workflow or step code calls `getWritable()` to obtain a `WritableStream` tied to the current run.
 2. **Serialization and buffered flush** — chunks flow through a serialization transform, are batched in a `WorkflowServerWritableStream` buffer, and flushed to the world backend on a 10 ms timer.
-3. **Persistence** — the world backend (`world-local` or `world-vercel`) stores each chunk as an individually addressable record that readers can consume from any index.
+3. **Persistence** — the world backend (`world-local`, `world-vercel`, or `world-postgres`) stores each chunk as an individually addressable record that readers can consume from any index.
 
 ### Namespaced stream IDs
 
@@ -55,8 +55,10 @@ flowchart TD
     E --> F{"World backend"}
     F -->|"world-local"| G["Chunk files written to streams/chunks/ as ULID-named .bin files"]
     F -->|"world-vercel"| H["HTTP PUT to workflow-server /v2/runs/:runId/stream/:name"]
+    F -->|"world-postgres"| P["Rows via Drizzle ORM + LISTEN/NOTIFY"]
     G --> I["Reader calls readFromStream with optional startIndex"]
     H --> I
+    P --> I
     I --> J["ReadableStream delivered to external consumer"]
     D --> K["pollWritableLock detects lock release at 100 ms intervals"]
     K --> L["State promise resolves → step completion unblocked"]
@@ -268,12 +270,20 @@ The reader (`readFromStream`) sets up event listeners **before** reading from di
 
 The production backend does not use an in-process event emitter — the workflow-server handles chunk storage and real-time delivery to readers.
 
+### Postgres persistence (world-postgres)
+
+`packages/world-postgres/src/streamer.ts` stores chunks as rows via Drizzle ORM:
+
+- **Chunk ID:** Monotonic ULID-based `chunkId` for ordering
+- **Multi-chunk batching:** `writeToStreamMulti` batch-inserts all chunks in a single query with pre-generated IDs to preserve ordering
+- **Real-time delivery:** PostgreSQL `LISTEN`/`NOTIFY` on a `workflow_event_chunk` channel
+
 ## Why This Matters
 
 Durable streaming solves the fundamental tension between serverless execution (short-lived, stateless) and streaming output (long-lived, stateful):
 
 - **Incremental results without blocking.** A step function can write progress updates, AI-generated tokens, or partial results that reach the UI immediately — even if the step later suspends and replays.
 - **Automatic completion detection.** The lock-polling mechanism means step functions don't need explicit stream lifecycle management. Write your data, release the lock (or let it go out of scope), and the framework handles the rest.
-- **Backend-agnostic persistence.** The same `getWritable()` call works identically against the local filesystem backend and the production HTTP backend. The `Streamer` interface in `@workflow/world` defines the contract; backends implement it.
+- **Backend-agnostic persistence.** The same `getWritable()` call works identically against the local filesystem backend, the Vercel HTTP backend, and the Postgres backend. The `Streamer` interface in `@workflow/world` defines the contract; backends implement it.
 - **Ordered, resumable reads.** Readers can start from any index and receive chunks in guaranteed ULID order. The local backend supports real-time subscriptions via `EventEmitter`; the production backend streams via HTTP response bodies.
 - **Batched efficiency.** The 10 ms flush window and `writeToStreamMulti` support mean high-frequency writes don't generate one HTTP request per chunk — they're coalesced automatically.
