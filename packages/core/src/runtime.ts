@@ -193,7 +193,8 @@ export function workflowEntrypoint(
 
                 let workflowStartedAt = -1;
                 let workflowRun: WorkflowRun | undefined;
-                // Pre-loaded events from run_started response (first caller optimization)
+                // Pre-loaded events from the run_started response.
+                // When present, we skip the events.list call.
                 let preloadedEvents: Event[] | undefined;
 
                 // --- Infrastructure: prepare the run state ---
@@ -250,6 +251,7 @@ export function workflowEntrypoint(
                     );
                   }
                 } catch (err) {
+                  // Run was concurrently completed/failed/cancelled
                   if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
                     // EntityConflictError: run was concurrently
                     // completed/failed/cancelled during setup.
@@ -323,7 +325,7 @@ export function workflowEntrypoint(
                 }
 
                 // Load all events into memory before running.
-                // If we got events from the run_started response,
+                // If we got pre-loaded events from the run_started response,
                 // skip the events.list round-trip to reduce TTFB.
                 const events =
                   preloadedEvents ??
