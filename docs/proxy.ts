@@ -1,3 +1,4 @@
+import { generateNotFoundMarkdown, isAIAgent } from '@vercel/agent-readability';
 import { createI18nMiddleware } from 'fumadocs-core/i18n/middleware';
 import { isMarkdownPreferred, rewritePath } from 'fumadocs-core/negotiation';
 import {
@@ -7,7 +8,6 @@ import {
 } from 'next/server';
 import { i18n } from '@/lib/geistdocs/i18n';
 import { trackMdRequest } from '@/lib/md-tracking';
-import { isAIAgent } from '@/lib/ai-agent-detection';
 
 const { rewrite: rewriteLLM } = rewritePath(
   '/docs/*path',
@@ -57,15 +57,14 @@ const proxy = (request: NextRequest, context: NextFetchEvent) => {
   }
 
   // AI agent detection — rewrite docs pages to markdown for agents
-  // so they always get structured content without needing .md URLs or Accept headers
   if (
-    (pathname === "/docs" || pathname.startsWith("/docs/")) &&
-    !pathname.includes("/llms.mdx/")
+    (pathname === '/docs' || pathname.startsWith('/docs/')) &&
+    !pathname.includes('/llms.mdx/')
   ) {
     const agentResult = isAIAgent(request);
     if (agentResult.detected && !isMarkdownPreferred(request)) {
       const result =
-        pathname === "/docs"
+        pathname === '/docs'
           ? `/${i18n.defaultLanguage}/llms.mdx`
           : rewriteLLM(pathname);
 
@@ -73,15 +72,19 @@ const proxy = (request: NextRequest, context: NextFetchEvent) => {
         context.waitUntil(
           trackMdRequest({
             path: pathname,
-            userAgent: request.headers.get("user-agent"),
-            referer: request.headers.get("referer"),
-            acceptHeader: request.headers.get("accept"),
-            requestType: "agent-rewrite",
+            userAgent: request.headers.get('user-agent'),
+            referer: request.headers.get('referer'),
+            acceptHeader: request.headers.get('accept'),
+            requestType: 'agent-rewrite',
             detectionMethod: agentResult.method,
           })
         );
         return NextResponse.rewrite(new URL(result, request.nextUrl));
       }
+      // Agent requested a non-existent docs URL — return helpful markdown
+      return new NextResponse(generateNotFoundMarkdown(pathname), {
+        headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+      });
     }
   }
 
@@ -107,7 +110,6 @@ const proxy = (request: NextRequest, context: NextFetchEvent) => {
 };
 
 export const config = {
-  // Matcher ignoring `/_next/`, `/api/`, static assets, favicon, sitemap, robots, etc.
   matcher: [
     '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|og|.*\\.tgz$|.*\\.svg$|.*\\.zip$).*)',
   ],
