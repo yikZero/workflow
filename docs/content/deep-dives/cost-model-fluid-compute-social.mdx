@@ -12,15 +12,23 @@ related:
   - /deep-dives/durable-streaming-reference
 ---
 
-A workflow that sends an email and waits 3 days for a response. In a traditional system, a worker process sits idle for 72 hours. In Workflow DevKit, nothing exists during those 72 hours.
+A workflow that sends an email and waits 3 days for a response. In a traditional system, a worker sits idle for 72 hours. In Workflow DevKit, nothing exists during those 72 hours.
 
 ## The Key Insight
 
 Wall-clock time is free because compute exists only at decision points.
 
-A workflow has two kinds of moments: **decision points** — when it dispatches steps, collects results, evaluates conditions, or advances to the next operation — and **gaps** — the time between those moments where nothing happens. Traditional orchestrators keep a process alive during the gaps. Workflow DevKit doesn't.
+A workflow has **decision points** — dispatching steps, collecting results, advancing — and **gaps** between them. Traditional orchestrators keep a process alive during gaps. Workflow DevKit doesn't.
 
-When the workflow hits a step or `sleep()`, it records the pending operation as an event, returns `timeoutSeconds` to the queue, and exits. The handler is done. The compute is freed. No process sleeps, no connection is held, no memory is allocated.
+When the workflow hits a step or `sleep()`, it records the pending operation as an event, returns `timeoutSeconds` to the queue, and exits. The compute is freed. No process sleeps, no connection is held.
+
+## The Three Mechanics
+
+Three runtime properties compose into the cost model:
+
+1. **Queue-driven invocation** — workflow handlers are invoked by queue messages, not by long-lived processes. No message, no compute.
+2. **Zero-cost suspension** — when a workflow encounters a step, hook, or sleep, it records the pending operations as events, returns, and exits. No thread or connection is held.
+3. **Delayed re-enqueue** — for timed waits, the queue delivers the next message after the specified delay. The workflow process does not exist during the gap.
 
 ```ts
 // The handler returns timeoutSeconds — then compute goes to zero
@@ -40,4 +48,6 @@ When a step completes, the step handler re-enqueues the workflow. A fresh invoca
 
 ## Why It Matters
 
-A `sleep('7d')` costs the same as `sleep('5s')` in compute — both produce a delayed queue message and release all resources. Your workflow cost is proportional to the work performed at decision points, not the wall-clock time between them. No always-on workers. No idle connections. No paying to wait.
+A `sleep('7d')` costs the same as `sleep('5s')` — both produce a delayed queue message and release all resources. Replay through cached step results takes milliseconds. Your cost is proportional to work performed, not wall-clock time. No always-on workers. No paying to wait.
+
+A week-long workflow. Milliseconds of compute. That's the model.

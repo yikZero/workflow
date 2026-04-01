@@ -18,16 +18,22 @@ Serverless functions have timeouts. Streams don't care about timeouts. That's a 
 
 Streams survive suspension because they bypass the event log but not persistence.
 
-In Workflow DevKit, the event log records step inputs, outputs, and orchestration state — it's what makes replay deterministic. Streaming data doesn't belong in that log. Replaying 10,000 LLM tokens as individual events would make every workflow re-invocation slower and slower.
+The event log records step inputs, outputs, and orchestration state — it's what makes replay deterministic. Streaming data doesn't belong there. Replaying 10,000 LLM tokens as events would make every re-invocation slower.
 
-Instead, durable streams write directly to the world backend — filesystem in development, HTTP in production — through a separate persistence path. Each chunk is flushed to storage within a 10 ms batching window via `writeToStreamMulti`. The data is durable from the moment it hits the backend, but it never pollutes the replay log.
+Instead, durable streams write directly to the world backend — filesystem in development, HTTP in production. Each chunk is flushed within a 10 ms batching window via `writeToStreamMulti`. The data is durable from the moment it hits the backend, but never pollutes the replay log.
 
-This separation is why streams survive function suspension, crashes, and scale-to-zero events without affecting replay performance.
+This separation is why streams survive suspension, crashes, and scale-to-zero without affecting replay performance.
+
+## The Stream Access Rule
+
+Real stream I/O only happens inside step functions. When you call `getWritable()` in a `"use workflow"` function, you get a lightweight handle — an object that carries a stream name but sets up no I/O pipeline. The handle crosses the workflow-to-step boundary through serialization, and the step function reconstitutes it into a real writable with the full pipeline attached.
+
+This restriction exists because workflow functions run in a sandboxed VM without network access. They orchestrate — they don't do I/O. The handle is a promise of a stream, not the stream itself.
 
 ## How It Looks in Practice
 
 ```ts
-// A single run can own multiple independent streams
+// A single run can own multiple independent streams via namespaces
 const tokens = getWritable({ namespace: 'tokens' });
 const progress = getWritable({ namespace: 'progress' });
 // IDs: strm_{ULID}_user_{base64('tokens')}, strm_{ULID}_user_{base64('progress')}
@@ -47,4 +53,6 @@ return { status: 'done' };
 
 ## Why It Matters
 
-Traditional serverless streaming loses data when functions timeout — the in-memory buffer vanishes with the process. Durable streaming makes that impossible. Chunks are persisted as they arrive, readers reconnect from any offset via `startIndex`, and the stream outlives any single function invocation. All without bloating the event log that powers replay.
+Traditional serverless streaming loses data when functions timeout — the in-memory buffer vanishes with the process. Durable streaming makes that impossible. Chunks are persisted as they arrive, readers reconnect from any offset via `startIndex`, and the stream outlives any single invocation.
+
+Your stream crashed. Your data didn't. That's the point.

@@ -83,6 +83,10 @@ export function getWritable<W = any>(
 
 The `WORKFLOW_GET_STREAM_ID` symbol is injected into the sandboxed VM's `globalThis` by the workflow runtime (`packages/core/src/workflow.ts`). The returned object looks like a `WritableStream` but is really a serializable token — the framework's serialization layer recognizes `STREAM_NAME_SYMBOL` and reconstitutes a real writable on the step side.
 
+<Callout type="info">
+Streams cannot be accessed from workflow functions. The workflow-side `getWritable()` returns only a serializable handle — no I/O pipeline is created. Real stream persistence (serialization, buffered flushes, world-backend writes) happens exclusively in step functions, where full Node.js runtime access is available. This enforces the fundamental split: workflow functions orchestrate deterministically, step functions perform side effects.
+</Callout>
+
 ### Step-side stream setup
 
 In **step code** (inside a `"use step"` function or runtime context), `getWritable()` sets up the full I/O pipeline:

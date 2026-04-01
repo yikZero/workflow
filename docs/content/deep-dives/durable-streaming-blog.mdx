@@ -50,6 +50,10 @@ This handle looks like a `WritableStream` to TypeScript, but it's really a token
 
 Why not set up real I/O in the workflow? Because workflow functions run in a sandboxed VM without network access. They orchestrate — they don't do I/O. The handle is a promise of a stream, not the stream itself.
 
+<Callout type="info">
+Real stream I/O cannot happen inside workflow functions. The `getWritable()` call in a `"use workflow"` context returns a serializable handle, not a functioning stream. The full I/O pipeline — serialization, buffered flushes, world-backend persistence — is set up only when the handle reaches a step function. This restriction exists because workflow code must be deterministic and replayable; streaming is a side effect that belongs in step functions.
+</Callout>
+
 ### The Step Side: The Full Pipeline
 
 Inside a `"use step"` function (or any step-level runtime context), `getWritable()` sets up the complete I/O pipeline:
