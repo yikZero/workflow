@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.2'
+  version: '0.1.3'
 ---
 
 # Migrating to Vercel Workflow
@@ -68,6 +68,20 @@ Canonical examples live in:
 
 **Expected output:** The migration uses `createWebhook({ respondWith: 'manual' })`, passes `webhook.url` to the vendor, handles `RequestWithResponse` in a step, and does **not** use `resumeHook()`.
 
+## Fast-path router
+
+Choose the first matching route before writing any code.
+
+| Route key | Trigger phrases in the prompt | Must emit | Must not emit |
+| --- | --- | --- | --- |
+| `resume/internal` | signal, approval API, deterministic token, server-side resume | `createHook()`, deterministic `token`, `resumeHook()` | `createWebhook()`, callback URL |
+| `resume/url` | callback URL, vendor webhook, raw `Request`, external POST back, `.waitForTaskToken` with an external caller | `createWebhook()`, `webhook.url`, `RequestWithResponse` when manual response is needed | `resumeHook()`, `token:` on `createWebhook()` |
+| `runtime/self-hosted` | self-hosted, non-Vercel, custom infra, Hono + Postgres, Express + Redis | `World extends Storage, Queue, Streamer`, `await getWorld().start?.()`, explicit note that workflow/step code can stay the same | claims of Vercel-managed execution |
+| `boundary/framework-agnostic` | "framework-agnostic" explicitly requested | plain `Request` / `Response` handlers | framework-specific route syntax |
+| `boundary/named-framework` | Next.js, Hono, Express, Fastify, NestJS explicitly named without a framework-agnostic override | app-boundary code in that framework's syntax | unrelated framework syntax or defaulting to Next.js |
+
+Before drafting `## Migrated Code`, write the chosen route keys in `## Migration Plan`.
+
 ## Source references
 
 - Temporal -> `references/temporal.md`
@@ -125,4 +139,54 @@ Expected response shape:
 ## App Boundary / Resume Endpoints
 ## Verification Checklist
 ## Open Questions
+```
+
+### Additional sample prompt
+
+```md
+Migrate this AWS Step Functions approval flow to Vercel Workflow for Hono on self-hosted Postgres.
+The external vendor needs a callback URL.
+Keep app-boundary code in Hono syntax.
+```
+
+Expected passing excerpt:
+
+```ts
+interface World extends Storage, Queue, Streamer {
+  start?(): Promise<void>;
+}
+```
+
+```ts
+import { getWorld } from 'workflow/runtime';
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
+}
+```
+
+```ts
+import { Hono } from 'hono';
+import { start } from 'workflow/api';
+import { refundWorkflow } from '../workflows/refund';
+const app = new Hono();
+app.post('/api/refunds/start', async (c) => {
+  const body = (await c.req.json()) as { refundId: string };
+  const run = await start(refundWorkflow, [body.refundId]);
+  return c.json({ runId: run.runId });
+});
+export default app;
+```
+
+Required explanation: The workflow and step code can stay the same. Because this target is self-hosted, the app still needs a `World` implementation for storage, queueing, and streaming, plus a startup path that calls `await getWorld().start?.()` when the selected world runs background workers.
+
+Must also appear in the workflow code:
+
+```ts
+using approval = createWebhook({ respondWith: 'manual' });
+```
+
+Must not appear:
+
+```ts
+resumeHook(...)
 ```

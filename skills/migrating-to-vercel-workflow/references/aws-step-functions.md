@@ -36,3 +36,80 @@
 - Idempotency keys on external writes via `getStepMetadata().stepId`
 - `getWritable()` for progress streaming (Step Functions has no built-in equivalent)
 - Step-wrapped `start()` / `getRun()` for child workflows (replaces `StartExecution`)
+
+## `.waitForTaskToken` fast paths
+
+### Deterministic server-side resume
+
+Use this when your app receives the approval in server-side code and can reconstruct a business token.
+
+```ts
+import { createHook } from 'workflow';
+import { resumeHook } from 'workflow/api';
+
+export async function approvalWorkflow(orderId: string) {
+  'use workflow';
+  using approval = createHook<{ approved: boolean }>({
+    token: `order:${orderId}:approval`,
+  });
+  const { approved } = await approval;
+  return {
+    orderId,
+    status: approved ? ('approved' as const) : ('rejected' as const),
+  };
+}
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as {
+    orderId: string;
+    approved: boolean;
+  };
+  await resumeHook(`order:${body.orderId}:approval`, {
+    approved: body.approved,
+  });
+  return Response.json({ ok: true });
+}
+```
+
+### Generated callback URL
+
+Use this when the external system needs a callback URL or the migrated flow should receive a raw `Request`.
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+export async function approvalWorkflow(orderId: string) {
+  'use workflow';
+  using approval = createWebhook({ respondWith: 'manual' });
+  await sendApprovalRequest(orderId, approval.url);
+  const request = await approval;
+  const body = await readApproval(request);
+  return {
+    orderId,
+    status: body.approved ? ('approved' as const) : ('rejected' as const),
+  };
+}
+
+async function sendApprovalRequest(
+  orderId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+  await fetch('https://example.com/approvals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId, callbackUrl }),
+  });
+}
+
+async function readApproval(
+  request: RequestWithResponse,
+): Promise<{ approved: boolean }> {
+  'use step';
+  const body = (await request.json()) as { approved: boolean };
+  await request.respondWith(Response.json({ ok: true }));
+  return body;
+}
+```
+
+Choose exactly one of these paths. Do not combine them in the same migration.
