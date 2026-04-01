@@ -1,0 +1,26 @@
+# non-vercel-runtime-branch
+
+## Prompt
+
+We are migrating a Temporal workflow to Vercel Workflow, but the app runs on Hono with self-hosted Postgres. Keep the migration examples framework-agnostic and do not assume Vercel-managed execution.
+
+## Must include
+
+- migrated workflow / step structure
+- a note that the workflow / step code can stay the same
+- `World extends Storage, Queue, Streamer`
+- app-boundary `start()` guidance without Next.js-only route syntax
+
+## Must not include
+
+- claims that no infrastructure work is needed
+- Next.js-only handler signatures
+- claims that Vercel-managed execution is automatic in this target environment
+
+## Expected excerpt
+
+```ts
+interface World extends Storage, Queue, Streamer {
+  start?(): Promise<void>;
+}
+```
