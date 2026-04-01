@@ -53,6 +53,50 @@ export async function POST(request: Request) {
 }
 ```
 
+## Webhook callback URL with manual response
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+export async function verificationWorkflow(documentId: string) {
+  'use workflow';
+
+  using webhook = createWebhook({ respondWith: 'manual' });
+
+  await submitForVerification(documentId, webhook.url);
+  const request = await webhook;
+  return await handleVerificationCallback(request);
+}
+
+async function submitForVerification(
+  documentId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+
+  await fetch('https://vendor.example.com/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ documentId, callbackUrl }),
+  });
+}
+
+async function handleVerificationCallback(
+  request: RequestWithResponse,
+): Promise<{ status: 'verified' | 'rejected'; reviewer?: string }> {
+  'use step';
+
+  const body = (await request.json()) as {
+    approved: boolean;
+    reviewer?: string;
+  };
+  await request.respondWith(Response.json({ ok: true }));
+  return body.approved
+    ? { status: 'verified', reviewer: body.reviewer }
+    : { status: 'rejected', reviewer: body.reviewer };
+}
+```
+
 ## Hook with timeout
 
 ```ts
@@ -151,33 +195,54 @@ async function writeOrder(orderId: string) {
 }
 ```
 
-## Progress streaming
+## Streaming boundary: obtain in workflow, interact in step
+
+Use:
 
 ```ts
 import { getWritable } from 'workflow';
 
-export async function streamingWorkflow() {
+export async function refundWorkflow(refundId: string) {
   'use workflow';
 
-  // Obtain stream in workflow context
-  const writable = getWritable();
-
-  // Pass to step for interaction
-  await emitProgress(writable, 'started');
-  await emitProgress(writable, 'completed');
+  const writable = getWritable<{ stage: string }>();
+  await emitStatus(writable, { stage: 'requested' });
+  await emitStatus(writable, { stage: 'completed' });
+  return { refundId, status: 'done' as const };
 }
 
-async function emitProgress(writable: WritableStream, stage: string) {
+async function emitStatus(
+  writable: WritableStream<{ stage: string }>,
+  chunk: { stage: string },
+): Promise<void> {
   'use step';
 
   const writer = writable.getWriter();
   try {
-    await writer.write(new TextEncoder().encode(stage));
+    await writer.write(chunk);
   } finally {
     writer.releaseLock();
   }
 }
 ```
+
+Avoid:
+
+```ts
+import { getWritable } from 'workflow';
+
+export async function badWorkflow() {
+  'use workflow';
+
+  const writable = getWritable<{ stage: string }>();
+  const writer = writable.getWriter(); // ❌ stream interaction in workflow context
+  await writer.write({ stage: 'requested' });
+}
+```
+
+**Sample input:** `Migrate an Inngest workflow that publishes progress and waits for approval.`
+
+**Expected output:** The migration may obtain `getWritable()` in workflow context, but every `getWriter()`, `write()`, and `close()` call remains inside a `"use step"` function.
 
 ## Rollback stack
 

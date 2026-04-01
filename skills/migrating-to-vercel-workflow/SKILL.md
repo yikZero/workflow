@@ -41,6 +41,89 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Prefer rollback stacks for multi-step compensation.
 - When the target framework is unspecified, keep route examples framework-agnostic with `Request` / `Response`. Do not default to Next.js-only handler signatures.
 
+## Resume surface selection
+
+Choose one resume surface and say why inside `## App Boundary / Resume Endpoints`.
+
+### Deterministic server-side resume -> `createHook()` + `resumeHook()`
+
+Use this when the source used Signals, `step.waitForEvent()`, or `.waitForTaskToken`, and your app can resume the workflow from server-side code.
+
+```ts
+import { createHook } from 'workflow';
+import { resumeHook } from 'workflow/api';
+
+export async function approvalWorkflow(orderId: string) {
+  'use workflow';
+
+  using approval = createHook<{ approved: boolean }>({
+    token: `order:${orderId}:approval`,
+  });
+
+  return await approval;
+}
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as {
+    orderId: string;
+    approved: boolean;
+  };
+
+  await resumeHook(`order:${body.orderId}:approval`, {
+    approved: body.approved,
+  });
+
+  return Response.json({ ok: true });
+}
+```
+
+### Generated callback URL -> `createWebhook()`
+
+Use this when the external system needs a callback URL and the migrated flow should work with raw `Request` / `Response`.
+
+```ts
+import { createWebhook, type RequestWithResponse } from 'workflow';
+
+export async function vendorCallbackWorkflow(documentId: string) {
+  'use workflow';
+
+  using webhook = createWebhook({ respondWith: 'manual' });
+
+  await submitDocument(documentId, webhook.url);
+  const request = await webhook;
+  return await readVendorCallback(request);
+}
+
+async function submitDocument(
+  documentId: string,
+  callbackUrl: string,
+): Promise<void> {
+  'use step';
+
+  await fetch('https://vendor.example.com/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ documentId, callbackUrl }),
+  });
+}
+
+async function readVendorCallback(
+  request: RequestWithResponse,
+): Promise<{ status: 'verified' | 'rejected' }> {
+  'use step';
+
+  const body = (await request.json()) as { approved: boolean };
+  await request.respondWith(Response.json({ ok: true }));
+  return { status: body.approved ? 'verified' : 'rejected' };
+}
+```
+
+Do not put `token:` on `createWebhook()`.
+
+**Sample input:** `Migrate a third-party document verification callback flow to Vercel Workflow. The vendor needs a callback URL.`
+
+**Expected output:** The migration uses `createWebhook({ respondWith: 'manual' })`, passes `webhook.url` to the vendor, handles `RequestWithResponse` in a step, and does **not** use `resumeHook()`.
+
 ## Source references
 
 - Temporal -> `references/temporal.md`

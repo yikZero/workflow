@@ -9,6 +9,17 @@ We are migrating a Temporal workflow to Vercel Workflow, but the app runs on Hon
 - migrated workflow / step structure
 - a note that the workflow / step code can stay the same
 - `World extends Storage, Queue, Streamer`
+- `await getWorld().start?.()`
+- a startup helper like:
+
+```ts
+import { getWorld } from 'workflow/runtime';
+
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
+}
+```
+
 - app-boundary `start()` guidance without Next.js-only route syntax
 
 ## Must not include
@@ -22,5 +33,13 @@ We are migrating a Temporal workflow to Vercel Workflow, but the app runs on Hon
 ```ts
 interface World extends Storage, Queue, Streamer {
   start?(): Promise<void>;
+}
+```
+
+```ts
+import { getWorld } from 'workflow/runtime';
+
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
 }
 ```

@@ -41,11 +41,44 @@ export async function startWorkflowWorld(): Promise<void> {
 }
 ```
 
-Required responsibilities:
+## Required responsibilities
 
 - **Storage** for runs, steps, hooks, waits, and the event log.
 - **Queueing** for workflow and step invocations.
 - **Streaming** for readable/writable workflow streams.
+
+## Non-Vercel output block
+
+When the target is self-hosted or otherwise non-Vercel, include this explanation almost verbatim:
+
+> The workflow and step code can stay the same. Because this target is self-hosted, the app still needs a `World` implementation for storage, queueing, and streaming, plus a startup path that calls `await getWorld().start?.()` when the selected world runs background workers.
+
+Framework-agnostic app boundary:
+
+```ts
+import { start } from 'workflow/api';
+import { onboardingWorkflow } from '../workflows/onboarding';
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as { userId: string };
+  const run = await start(onboardingWorkflow, [body.userId]);
+  return Response.json({ runId: run.runId });
+}
+```
+
+Startup bootstrap:
+
+```ts
+import { getWorld } from 'workflow/runtime';
+
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
+}
+```
+
+**Sample input:** `We are migrating a Temporal workflow to Vercel Workflow on Hono with self-hosted Postgres.`
+
+**Expected output:** The migration explicitly says the workflow/step code can stay the same, includes `World extends Storage, Queue, Streamer`, shows `startWorkflowWorld(): Promise<void>`, and keeps the route example on plain `Request`/`Response` rather than Next.js-only syntax.
 
 ## Framework rule
 
