@@ -9,6 +9,50 @@
 - External side effects -> `getStepMetadata().stepId` as idempotency key
 - Child workflows -> step-wrapped `start()` / `getRun()`
 
+## Choosing hook vs webhook
+
+Prefer `createHook()` + `resumeHook()` when:
+
+- the source system used Signals, `step.waitForEvent()`, or `.waitForTaskToken`
+- the resume point can be addressed with a deterministic business token such as `order:${orderId}:approval`
+- the app will resume the workflow from server-side code
+
+Use `createWebhook()` when:
+
+- the external system should call the generated URL directly
+- the migration needs raw `Request` / `Response` handling
+- deterministic tokens are not required
+
+Default deterministic-resume pattern:
+
+```ts
+import { createHook } from 'workflow';
+import { resumeHook } from 'workflow/api';
+
+export async function approvalWorkflow(orderId: string) {
+  'use workflow';
+
+  using approval = createHook<{ approved: boolean }>({
+    token: `order:${orderId}:approval`,
+  });
+
+  return await approval;
+}
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as {
+    orderId: string;
+    approved: boolean;
+  };
+
+  await resumeHook(`order:${body.orderId}:approval`, {
+    approved: body.approved,
+  });
+
+  return Response.json({ ok: true });
+}
+```
+
 ## Hook with timeout
 
 ```ts

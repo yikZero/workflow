@@ -17,11 +17,27 @@ Guidance:
 - The app is not deploying on Vercel.
 - The task explicitly asks for custom infrastructure.
 
+State this explicitly in the migration output:
+
+- The workflow and step code can stay the same.
+- The app still needs a `World` implementation for storage, queueing, and streaming.
+- The server startup path must call `await getWorld().start?.()` when the selected world requires background workers.
+
 Minimum interface to mention:
 
 ```ts
-interface World extends Queue, Storage, Streamer {
+interface World extends Storage, Queue, Streamer {
   start?(): Promise<void>;
+}
+```
+
+Bootstrap example for self-hosted runtimes:
+
+```ts
+import { getWorld } from 'workflow/runtime';
+
+export async function startWorkflowWorld(): Promise<void> {
+  await getWorld().start?.();
 }
 ```
 

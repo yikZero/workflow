@@ -3,7 +3,7 @@ name: migrating-to-vercel-workflow
 description: Migrates Temporal, Inngest, and AWS Step Functions workflows to Vercel Workflow. Use when porting Activities, Workers, Signals, step.run(), step.waitForEvent(), ASL JSON state machines, Task/Choice/Wait/Parallel states, task tokens, or child workflows.
 metadata:
   author: Vercel Inc.
-  version: '0.1.0'
+  version: '0.1.1'
 ---
 
 # Migrating to Vercel Workflow
@@ -18,7 +18,7 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
    - AWS Step Functions
 2. Identify the target runtime:
    - Deploying on Vercel -> keep examples focused on `start()`, `getRun()`, hooks/webhooks, and route handlers.
-   - Non-Vercel or self-hosted -> also read `references/runtime-targets.md`.
+   - Non-Vercel or self-hosted -> also read `references/runtime-targets.md` and explicitly say the workflow/step code can stay the same, but deployment still needs a `World` implementation and startup bootstrap.
 3. Extract the source constructs:
    - entrypoint
    - waits / timers
@@ -33,7 +33,8 @@ Use this skill when converting an existing orchestration system to Vercel Workfl
 - Put orchestration in `"use workflow"` functions.
 - Put side effects, SDK calls, DB calls, HTTP calls, and stream I/O in `"use step"` functions.
 - Use `sleep()` only in workflow context.
-- Use `createHook()` or `createWebhook()` for external resume points.
+- Prefer `createHook()` + `resumeHook()` for Signals, `step.waitForEvent()`, and `.waitForTaskToken` migrations.
+- Use `createWebhook()` only when the migrated system should expose a generated callback URL and work with raw `Request` / `Response` objects.
 - Wrap `start()` and `getRun()` inside `"use step"` functions for child runs.
 - Use `getStepMetadata().stepId` as the idempotency key for external writes.
 - Use `getWritable()` in workflow context to obtain the stream, but interact with it (write, close) only inside `"use step"` functions.
