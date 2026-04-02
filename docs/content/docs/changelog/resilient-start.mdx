@@ -12,18 +12,28 @@ When `world` storage is unavailable but the queue is up,
 is called before `world.queue()`. This change decouples run creation from queue
 dispatch so that runs can still be accepted when storage is degraded.
 
+Additionally, the runtime previously called `world.runs.get(runId)` before
+`run_started`, adding an extra round-trip. By always calling `run_started`
+directly, we save that round-trip and can return pre-loaded events in the
+response to skip the initial `events.list` call, reducing TTFB.
+
 ## Design
 
 ### `start()` changes (packages/core)
 
-- `world.events.create` (run_created) and `world.queue` are now called **in parallel**.
+- `world.events.create` (run_created) and `world.queue` are now called **in parallel**
+  via `Promise.allSettled`.
 - If `events.create` errors with **429 or 5xx**, we log a warning saying that run
   creation failed but the run was accepted — creation will be re-tried async by the
-  runtime when it processes the queue message.
+  runtime when it processes the queue message. The returned `Run` instance is marked
+  with `resilientStart = true`.
+- If `events.create` errors with **409** (EntityConflictError), the run already exists
+  (e.g., the queue handler's resilient start path created it first due to a cold-start
+  race). This is treated as success.
 - If `world.queue` fails, we still throw — the run truly failed and was not enqueued.
 - The queue invocation now receives all the run inputs (`input`, `deploymentId`,
-  `workflowName`, `specVersion`, `executionContext`) so the runtime can create the
-  run later if needed.
+  `workflowName`, `specVersion`, `executionContext`) via `runInput` so the runtime can
+  create the run later if needed.
 - When the runtime re-enqueues itself, it does **not** pass these inputs — only the
   first queue cycle carries them.
 
@@ -38,7 +48,16 @@ dispatch so that runs can still be accepted when storage is degraded.
     very first `world.events.list` call, reducing TTFB for the first invocation.
   - **200 without event (already running)**: the run entity is returned directly
     without creating a duplicate event. The runtime proceeds normally.
-  - **410 (already finished)**: log and exit as usual.
+  - **409 or 410 (already finished)**: log and exit as usual.
+
+### `Run.returnValue` polling (packages/core)
+
+- When `resilientStart` is true on the Run instance (run_created failed), the
+  `pollReturnValue` loop retries on `WorkflowRunNotFoundError` up to 3 times
+  (1s + 3s + 6s = 10s total) to give the queue time to deliver and the runtime
+  to create the run via `run_started`.
+- When `resilientStart` is false (normal path), 404 fails immediately — no delay
+  for the common case of a wrong run ID.
 
 ### World / workflow-server changes
 
@@ -57,16 +76,27 @@ dispatch so that runs can still be accepted when storage is degraded.
   (to support queue retry delays) and 5 minutes in the future (to prevent abuse while
   tolerating clock skew).
 
+### Queue transport changes
+
+`Uint8Array` values (the serialized workflow input in `runInput`) don't survive plain
+JSON serialization. Each world uses a transport that preserves binary data:
+
+- **world-vercel**: CBOR transport — CBOR-encodes the entire queue payload into a
+  `Buffer` and uses `BufferTransport` from `@vercel/queue`. Uint8Array survives natively.
+- **world-local**: `TypedJsonTransport` — uses the existing `jsonReplacer`/`jsonReviver`
+  from `fs.ts` that encode Uint8Array as `{ __type: 'Uint8Array', data: '<base64>' }`.
+- **world-postgres**: Inline typed JSON transport — same tagged-envelope approach as
+  world-local, inlined since world-postgres doesn't import from world-local.
+
 ## Decisions
 
 1. **Parallel not sequential**: We chose `Promise.allSettled` over sequential calls to
-   minimize latency in the happy path. The trade-off is slightly more complex error
-   handling.
+   minimize latency in the happy path.
 
 2. **Already-running returns run without event**: When `run_started` encounters an
    already-running run, all worlds return `{ run }` with `event: undefined` (no
    `events` array) instead of throwing. The runtime detects this by checking for
-   `result.event === undefined`. This avoids the extra `world.runs.get` round-trip.
+   `result.event === undefined`. This avoids an extra `world.runs.get` round-trip.
 
 3. **Events in 200 response**: We only return events on the 200 path (first caller).
    On the already-running path, we fall back to the normal `events.list` call. This is
@@ -76,69 +106,42 @@ dispatch so that runs can still be accepted when storage is degraded.
    allow 24h in the past so a run_created retry can succeed at maximum queue delay, but
    keep the future threshold at 5 minutes to prevent abuse from manipulated timestamps.
 
-## Implementation notes
+5. **Conditional 404 retry on Run.returnValue**: Only when `resilientStart = true`
+   (run_created failed). Normal runs fail fast on 404.
 
-### Error type mapping for terminal runs
+## Known concerns
 
-Previously, calling `run_started` on a terminal run threw `InvalidOperationStateError`
-(HTTP 409) on workflow-server, or `EntityConflictError` on world-local/world-postgres.
-This was changed to `EntityGoneError` (HTTP 410) / `RunExpiredError` so the runtime
-correctly distinguishes "already running" from "already finished" (exit immediately).
+### Cold-start race on Vercel (observed in CI)
 
-### run_started on already-running runs
+On Vercel, the parallel dispatch can cause the queue message to be processed before
+`run_created` completes, if `run_created` hits a cold-start lambda. Confirmed via
+Datadog: the `run_started` request hit a warm lambda (23ms) while `run_created` hit
+a cold lambda (727ms), even though `run_created` arrived at the edge 116ms earlier.
+When this happens:
 
-All worlds (workflow-server, world-local, world-postgres) now return the existing run
-entity directly — with `event: undefined` — when `run_started` is called on an
-already-running run. This avoids both a duplicate event and the extra `world.runs.get`
-call that the previous 409-based approach required. The `EventResultResolveWireSchema`
-in world-vercel was updated to make `event` optional.
+1. The runtime's resilient start path creates the run from `run_started`.
+2. The original `run_created` arrives and gets 409 (EntityConflictError).
+3. `start()` treats the 409 as success (the run exists).
 
-### world-local and world-postgres support
+This is handled correctly. The `resilientStart` flag is NOT set on the Run instance
+in this case (409 is not a retryable error), so `returnValue` fails fast on 404.
 
-Both world-local (filesystem) and world-postgres (Drizzle/SQL) now implement the full
-resilient start behavior:
+### Local Prod test flakiness (under investigation)
 
-- Creating runs from `run_started` when the run doesn't exist and eventData is provided
-- Returning `{ run }` without event on already-running
-- Throwing `RunExpiredError` on terminal runs
-- Stripping eventData from stored `run_started` events
-- Returning the `events` array on successful start
-
-### Asymmetric ULID timestamp validation
-
-Both `@workflow/world` (`validateUlidTimestamp`) and `workflow-server`
-(`Ulid.isTimestampWithinThreshold`) now accept separate past and future thresholds:
-
-- **Past**: 24 hours (`DEFAULT_TIMESTAMP_THRESHOLD_PAST_MS`)
-- **Future**: 5 minutes (`DEFAULT_TIMESTAMP_THRESHOLD_FUTURE_MS`)
-
-The old `DEFAULT_TIMESTAMP_THRESHOLD_MS` constant is deprecated but aliased to the
-past threshold for backwards compatibility.
-
-### Datadog metric
-
-The resilient start fallback path emits a Datadog distribution metric:
-`workflow_server.resilient_start.run_created_via_run_started`, tagged with
-`workflow_name`. Query with `sum:workflow_server.resilient_start.run_created_via_run_started{*}`.
-
-### Base64 encoding for queue transport
-
-`Uint8Array` values (the serialized workflow input) don't survive JSON serialization
-through the queue — they get corrupted to `{0: 72, 1: 101, ...}` objects. The `runInput`
-payload in the queue message now base64-encodes binary input in `start()` and the
-runtime decodes it back to `Uint8Array` before passing it to `world.events.create`.
-This was caught by the `spawnWorkflowFromStepWorkflow` e2e test where the child
-workflow's input was being corrupted.
-
-### RunStartedEventSchema eventData stripping
-
-The run input is passed through to `run_started`'s `eventData` but stripped before
-the event is persisted — the data belongs on the `run_created` event only. All worlds
-strip eventData from stored `run_started` events.
+On world-local, the queue's async IIFE can deliver the message before
+`events.create(run_created)` finishes writing to the shared filesystem. The
+resilient start path should handle this, but Local Prod tests show occasional
+runs stuck at `pending` (no `run_started` event). This affects ~5 out of 13
+frameworks per CI run, with different tests timing out each time. The root cause
+is not yet confirmed — the resilient start fallback should create the run, but
+something in the delivery or deserialization chain may be failing silently.
+Investigating whether this is a transport issue, concurrency exhaustion, or a
+filesystem race.
 
 ## Follow-up work
 
-- [ ] Add e2e tests covering the degraded-storage start path against a live deployment.
+- [ ] Investigate Local Prod test flakiness — why do some runs stay at `pending`
+  despite the resilient start fallback?
 - [ ] Monitor the Datadog metric in production to understand how often the fallback is hit.
 - [ ] Consider whether the `events` optimization in the 200 response should also apply
   to re-enqueue cycles (currently only first invocation).
