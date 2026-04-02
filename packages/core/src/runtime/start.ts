@@ -209,6 +209,7 @@ export async function start<TArgs extends unknown[], TResult>(
       }
 
       // Handle events.create result
+      let resilientStart = false;
       if (runCreatedResult.status === 'rejected') {
         const err = runCreatedResult.reason;
         if (EntityConflictError.is(err)) {
@@ -220,6 +221,7 @@ export async function start<TArgs extends unknown[], TResult>(
           // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
           // are retryable — the run was accepted via the queue and creation
           // will be re-tried by the runtime when it calls run_started.
+          resilientStart = true;
           runtimeLogger.warn(
             'Run creation event failed, but the run was accepted via the queue. ' +
               'The run_created event will be re-tried async by the runtime.',
@@ -259,7 +261,7 @@ export async function start<TArgs extends unknown[], TResult>(
         ...Attribute.DeploymentId(deploymentId),
       });
 
-      return new Run<TResult>(runId);
+      return new Run<TResult>(runId, { resilientStart });
     });
   });
 }
