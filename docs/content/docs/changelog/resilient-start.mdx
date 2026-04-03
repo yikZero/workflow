@@ -228,3 +228,67 @@ before getting a 404. Fixed by adding a `resilientStart` flag: only retries when
 
 The changeset was created with `"@workflow/core": minor`. Reviewer flagged this as
 violating repo rules ("all changes should be patch"). Changed after discussion.
+
+### 12. world-local resilient start used `writeJSON` (TOCTOU race)
+
+The resilient start path in `world-local/events-storage.ts` used `writeJSON` to create
+the run entity. `writeJSON` unconditionally overwrites, so a concurrent `run_created`
+from `start()` could race: if the resilient path created the run (pending), then
+`run_started` transitioned it to `running`, a late-arriving `run_created` via `writeJSON`
+would overwrite it back to `pending` — permanently stalling the run.
+
+Fixed by switching to `writeExclusive` (O_CREAT|O_EXCL), which atomically fails if the
+file already exists. When the file already exists, we re-read the run from disk instead.
+This mirrors world-postgres's `onConflictDoNothing` + re-read pattern.
+
+This is the likely root cause of the Local Prod test flakiness (runs stuck at `pending`).
+
+### 13. Non-atomic run + run_created event in world-postgres resilient path
+
+The resilient start path in `world-postgres/storage.ts` did two separate writes (run
+insert, then event insert) without a transaction. If the process crashed between them,
+the run would exist without a `run_created` event — an inconsistent event log.
+
+A `drizzle.transaction()` wrapper was attempted but dropped due to TypeScript inference
+issues with drizzle's transaction callback and the insert builder's overloads. The current
+fix keeps the two writes sequential but adds the same conflict-aware re-read pattern as
+world-local: when `onConflictDoNothing` produces no result (run already existed), the run
+is re-read so downstream logic sees the real state. The narrow crash window between the
+two writes is acceptable — if the run insert succeeds but the event insert crashes, the
+run exists and `run_started` will still proceed normally (the event log will be missing a
+`run_created` entry, but the run itself is functional).
+
+### 14. Missing `WorkflowRunStatus` span attribute after parallel refactor
+
+The `start()` span previously set `Attribute.WorkflowRunStatus(result.run.status)`, but
+this was dropped in the parallel refactor because `result.run` is only available when
+`runCreatedResult` fulfilled. The attribute is now conditionally set when the result is
+available. In the resilient start case (run_created failed), the attribute is omitted
+rather than erroring.
+
+### 15. `run_started` eventData leak in world-postgres result
+
+The `...data` spread in the result construction leaked `eventData` from `run_started`
+into the returned event object. Storage was already correct (`storedEventData` is
+`undefined` for `run_started`), but the returned result carried the input data. While
+harmless (the runtime doesn't use `result.event.eventData`), it was restored to match
+the pre-refactor behavior where eventData was explicitly stripped from the result.
+
+## Follow-up work (additional)
+
+- [ ] **CborTransport is a pass-through**: In `world-vercel/queue.ts`, the `CborTransport`
+  class implements `Transport<Buffer>` but its `serialize` method is a no-op identity
+  function — the actual CBOR encoding happens outside the transport at the call site
+  (`Buffer.from(encode({...}))`). This works correctly but violates the transport
+  abstraction: the `Transport` interface contract implies that `serialize` handles the
+  encoding, and every other transport (TypedJsonTransport in world-local, the inline
+  transport in world-postgres) does its encoding inside `serialize`. This means:
+  1. The call site must remember to pre-encode with CBOR; if it forgets, the transport
+     silently passes through unencoded data.
+  2. The `deserialize` side returns a raw `Buffer` that the caller must decode with
+     `cbor-x` separately — again, outside the transport boundary.
+  3. Reading the code, it's unclear why the transport exists at all vs. using
+     `BufferTransport` directly.
+  Consider moving the `encode()`/`decode()` calls into `CborTransport.serialize` and
+  `CborTransport.deserialize` so the transport is self-contained, matching the pattern
+  used by the other worlds.

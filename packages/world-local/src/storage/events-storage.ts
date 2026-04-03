@@ -32,6 +32,7 @@ import {
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
 import {
   deleteJSON,
+  jsonReplacer,
   listJSONFiles,
   paginatedFileSystemQuery,
   readJSONWithFallback,
@@ -145,7 +146,11 @@ export function createEventsStorage(
             runInputData.workflowName &&
             runInputData.input !== undefined
           ) {
-            // Create the run entity
+            // Atomically try to create the run entity. writeExclusive
+            // uses O_CREAT|O_EXCL so only the first writer wins,
+            // preventing a TOCTOU race where a concurrent run_created
+            // from start() could overwrite a run that was already
+            // transitioned to 'running'.
             const createdRun: WorkflowRun = {
               runId: effectiveRunId,
               deploymentId: runInputData.deploymentId,
@@ -161,33 +166,45 @@ export function createEventsStorage(
               createdAt: now,
               updatedAt: now,
             };
-            await writeJSON(
-              taggedPath(basedir, 'runs', effectiveRunId, tag),
-              createdRun
+            const runPath = taggedPath(basedir, 'runs', effectiveRunId, tag);
+            const created = await writeExclusive(
+              runPath,
+              JSON.stringify(createdRun, jsonReplacer)
             );
 
-            // Create run_created event
-            const runCreatedEventId = `evnt_${monotonicUlid()}`;
-            const runCreatedEvent: Event = {
-              eventType: 'run_created',
-              runId: effectiveRunId,
-              eventId: runCreatedEventId,
-              createdAt: now,
-              specVersion: effectiveSpecVersion,
-              eventData: {
-                deploymentId: runInputData.deploymentId,
-                workflowName: runInputData.workflowName,
-                input: runInputData.input,
-                executionContext: runInputData.executionContext,
-              },
-            };
-            const createdCompositeKey = `${effectiveRunId}-${runCreatedEventId}`;
-            await writeJSON(
-              taggedPath(basedir, 'events', createdCompositeKey, tag),
-              runCreatedEvent
-            );
-
-            currentRun = createdRun;
+            if (created) {
+              // We created the run — also write the run_created event.
+              const runCreatedEventId = `evnt_${monotonicUlid()}`;
+              const runCreatedEvent: Event = {
+                eventType: 'run_created',
+                runId: effectiveRunId,
+                eventId: runCreatedEventId,
+                createdAt: now,
+                specVersion: effectiveSpecVersion,
+                eventData: {
+                  deploymentId: runInputData.deploymentId,
+                  workflowName: runInputData.workflowName,
+                  input: runInputData.input,
+                  executionContext: runInputData.executionContext,
+                },
+              };
+              const createdCompositeKey = `${effectiveRunId}-${runCreatedEventId}`;
+              await writeJSON(
+                taggedPath(basedir, 'events', createdCompositeKey, tag),
+                runCreatedEvent
+              );
+              currentRun = createdRun;
+            } else {
+              // Run already exists (concurrent run_created won the
+              // race). Re-read it so downstream logic sees the real state.
+              currentRun = await readJSONWithFallback(
+                basedir,
+                'runs',
+                effectiveRunId,
+                WorkflowRunSchema,
+                tag
+              );
+            }
           }
         }
       }

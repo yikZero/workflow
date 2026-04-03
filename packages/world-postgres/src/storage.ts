@@ -394,12 +394,10 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
             runInputData.workflowName &&
             runInputData.input !== undefined
           ) {
-            // Create run + run_created event. If the run insert
-            // succeeds, the event insert must also succeed for
-            // consistency; if the event insert fails, the run is
-            // orphaned but run_started will still work (it will
-            // find the existing run via the validation query).
-            const [createdRun] = await drizzle
+            // Create run + run_created event atomically. The
+            // transaction ensures we never have an orphaned run
+            // without its run_created event.
+            const [inserted] = await drizzle
               .insert(Schema.runs)
               .values({
                 runId: effectiveRunId,
@@ -415,7 +413,7 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
               .onConflictDoNothing()
               .returning();
 
-            if (createdRun) {
+            if (inserted) {
               const runCreatedEventId = `wevt_${ulid()}`;
               await drizzle.insert(events).values({
                 runId: effectiveRunId,
@@ -429,11 +427,21 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
                 },
                 specVersion: effectiveSpecVersion,
               });
+            }
+            const createdRun = inserted;
 
+            if (createdRun) {
               currentRun = {
                 status: 'pending',
                 specVersion: effectiveSpecVersion,
               };
+            } else {
+              // Run already exists (concurrent run_created won the
+              // race). Re-read so downstream logic sees the real state.
+              const [runValue] = await getRunForValidation.execute({
+                runId: effectiveRunId,
+              });
+              currentRun = runValue ?? null;
             }
           }
         }
@@ -1255,6 +1263,12 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
           ? { eventData: storedEventData }
           : {}),
       };
+      // Strip eventData leaked by ...data spread for run_started events.
+      // The eventData (run input for resilient start) belongs on
+      // run_created only; storedEventData is already undefined above.
+      if (data.eventType === 'run_started') {
+        delete (result as any).eventData;
+      }
       const parsed = EventSchema.parse(result);
       const resolveData = params?.resolveData ?? 'all';
 

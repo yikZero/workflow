@@ -290,6 +290,10 @@ export async function start<TArgs extends unknown[], TResult>(
       span?.setAttributes({
         ...Attribute.WorkflowRunId(runId),
         ...Attribute.DeploymentId(deploymentId),
+        ...(runCreatedResult.status === 'fulfilled' &&
+        runCreatedResult.value.run
+          ? Attribute.WorkflowRunStatus(runCreatedResult.value.run.status)
+          : {}),
       });
 
       return new Run<TResult>(runId, { resilientStart });
