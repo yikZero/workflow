@@ -229,19 +229,29 @@ before getting a 404. Fixed by adding a `resilientStart` flag: only retries when
 The changeset was created with `"@workflow/core": minor`. Reviewer flagged this as
 violating repo rules ("all changes should be patch"). Changed after discussion.
 
-### 12. world-local resilient start used `writeJSON` (TOCTOU race)
+### 12. world-local TOCTOU race causing duplicate `run_created` events (Windows CI)
 
-The resilient start path in `world-local/events-storage.ts` used `writeJSON` to create
-the run entity. `writeJSON` unconditionally overwrites, so a concurrent `run_created`
-from `start()` could race: if the resilient path created the run (pending), then
-`run_started` transitioned it to `running`, a late-arriving `run_created` via `writeJSON`
-would overwrite it back to `pending` — permanently stalling the run.
+The resilient start path AND the normal `run_created` path in `world-local/events-storage.ts`
+both used `writeJSON` to create the run entity. `writeJSON` checks file existence with
+`fs.access()` then writes via temp+rename — a classic TOCTOU race. On the local world,
+the queue delivers via an async IIFE in the same event loop, so `events.create(run_created)`
+and `events.create(run_started)` (with resilient start) run concurrently:
 
-Fixed by switching to `writeExclusive` (O_CREAT|O_EXCL), which atomically fails if the
-file already exists. When the file already exists, we re-read the run from disk instead.
-This mirrors world-postgres's `onConflictDoNothing` + re-read pattern.
+1. Both paths call `fs.access(runPath)` → ENOENT (file doesn't exist yet)
+2. Both proceed to write → the last `fs.rename` wins
+3. Both succeed → both write their own `run_created` event with different event IDs
+4. During replay, the consumer sees two `run_created` events → "Unconsumed event" error
 
-This is the likely root cause of the Local Prod test flakiness (runs stuck at `pending`).
+This caused consistent failures in `world-testing` embedded tests on Windows CI (`hooks`,
+`supports null bytes in step results`, `retriable and fatal errors` — all timing out at
+60s with "Unconsumed event in event log" errors). Linux CI was not affected because the
+timing was different enough that the race window was rarely hit.
+
+Fixed by switching BOTH paths to `writeExclusive` (O_CREAT|O_EXCL), which is atomic at
+the OS level — exactly one writer wins, the other gets EEXIST. The normal `run_created`
+path throws `EntityConflictError` on conflict (handled by `start()` as 409). The resilient
+start path re-reads the run from disk on conflict. Either way, only one `run_created`
+event is written.
 
 ### 13. Non-atomic run + run_created event in world-postgres resilient path
 

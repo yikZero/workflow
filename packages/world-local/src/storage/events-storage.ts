@@ -407,7 +407,20 @@ export function createEventsStorage(
           createdAt: now,
           updatedAt: now,
         };
-        await writeJSON(taggedPath(basedir, 'runs', effectiveRunId, tag), run);
+        // Use writeExclusive (O_CREAT|O_EXCL) to atomically create the
+        // run entity file. This prevents a TOCTOU race with the resilient
+        // start path (run_started on non-existent run) that could result
+        // in duplicate run_created events in the event log.
+        const runPath = taggedPath(basedir, 'runs', effectiveRunId, tag);
+        const created = await writeExclusive(
+          runPath,
+          JSON.stringify(run, jsonReplacer, 2)
+        );
+        if (!created) {
+          throw new EntityConflictError(
+            `Workflow run "${effectiveRunId}" already exists`
+          );
+        }
       } else if (data.eventType === 'run_started') {
         // Reuse currentRun from validation (already read above)
         if (currentRun) {
