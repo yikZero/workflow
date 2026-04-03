@@ -15,7 +15,10 @@ import { classifyRunError } from './classify-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
-import { MAX_QUEUE_DELIVERIES, REPLAY_TIMEOUT_MS } from './runtime/constants.js';
+import {
+  MAX_QUEUE_DELIVERIES,
+  REPLAY_TIMEOUT_MS,
+} from './runtime/constants.js';
 import {
   getAllWorkflowRunEvents,
   getQueueOverhead,
@@ -68,7 +71,13 @@ export {
   type StopSleepResult,
   wakeUpRun,
 } from './runtime/runs.js';
-export { type StartOptions, start } from './runtime/start.js';
+export {
+  type StartOptions,
+  type StartOptionsBase,
+  type StartOptionsWithDeploymentId,
+  type StartOptionsWithoutDeploymentId,
+  start,
+} from './runtime/start.js';
 export { stepEntrypoint } from './runtime/step-handler.js';
 export {
   createWorld,

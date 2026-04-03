@@ -2856,6 +2856,14 @@ describe('Storage', () => {
       expect(result.run!.runId).toBe(runId);
     });
 
+    it('should accept a runId with a timestamp 10 minutes in the past', async () => {
+      // 10 minutes ago — within the 24-hour past threshold
+      const runId = makeRunId(Date.now() - 10 * 60 * 1000);
+      const result = await storage.events.create(runId, runCreatedEvent);
+      expect(result.run).toBeDefined();
+      expect(result.run!.runId).toBe(runId);
+    });
+
     it('should reject a runId with a timestamp too far in the past', async () => {
       // 25 hours ago — exceeds the 24-hour past threshold
       const runId = makeRunId(Date.now() - 25 * 60 * 60 * 1000);
