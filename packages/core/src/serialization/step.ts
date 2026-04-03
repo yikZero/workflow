@@ -6,6 +6,7 @@
  */
 
 import { WorkflowRuntimeError } from '@workflow/errors';
+import type { CodecOptions } from './codec.js';
 import { devalueCodec } from './codec-devalue.js';
 import {
   type CryptoKey,
@@ -21,10 +22,11 @@ import { SerializationFormat } from './types.js';
  */
 export async function serialize(
   value: unknown,
-  encryptionKey?: CryptoKey
+  encryptionKey?: CryptoKey,
+  options?: CodecOptions
 ): Promise<Uint8Array | unknown> {
   try {
-    const payload = devalueCodec.serialize(value, 'step');
+    const payload = devalueCodec.serialize(value, 'step', options);
     const prefixed = encodeWithFormatPrefix(
       SerializationFormat.DEVALUE_V1,
       payload
@@ -43,13 +45,14 @@ export async function serialize(
  */
 export async function deserialize(
   data: Uint8Array | unknown,
-  encryptionKey?: CryptoKey
+  encryptionKey?: CryptoKey,
+  options?: CodecOptions
 ): Promise<unknown> {
   const decrypted = await decryptData(data, encryptionKey);
 
   if (!(decrypted instanceof Uint8Array)) {
     if (devalueCodec.deserializeLegacy) {
-      return devalueCodec.deserializeLegacy(decrypted, 'step');
+      return devalueCodec.deserializeLegacy(decrypted, 'step', options);
     }
     throw new Error(
       'Cannot deserialize non-binary data without legacy support'
@@ -59,7 +62,7 @@ export async function deserialize(
   const { format, payload } = decodeFormatPrefix(decrypted);
 
   if (format === SerializationFormat.DEVALUE_V1) {
-    return devalueCodec.deserialize(payload, 'step');
+    return devalueCodec.deserialize(payload, 'step', options);
   }
 
   throw new Error(`Unsupported serialization format: ${format}`);

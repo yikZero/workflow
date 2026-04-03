@@ -11,7 +11,7 @@
  */
 
 import { parse, stringify, unflatten } from 'devalue';
-import type { Codec, SerializationMode } from './codec.js';
+import type { Codec, CodecOptions, SerializationMode } from './codec.js';
 import { getClassReducers, getClassRevivers } from './reducers/class.js';
 import { getCommonReducers, getCommonRevivers } from './reducers/common.js';
 import {
@@ -24,68 +24,77 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 // ---- Reducer/Reviver composition per mode ----
-//
-// Note: These modular mode modules (workflow.ts, step.ts, client.ts)
-// are NOT used in the current runtime's event replay flow. All
-// serialization in the current runtime goes through the dehydrate*/
-// hydrate* functions in serialization.ts, which pass a `global`
-// parameter (either the VM's sandboxed global or host globalThis)
-// through to the reducer/reviver factories for correct `instanceof`
-// checks across VM boundaries.
-//
-// The modular modules here default to `globalThis` and are designed
-// for the future snapshot runtime where serialization runs inside the
-// VM sandbox itself (where `globalThis` IS the VM's global). If the
-// modular modules ever need to be called from the host side with a
-// different `global`, the Codec interface would need to be extended
-// to accept a `global` parameter.
 
-function getReducersForMode(mode: SerializationMode): Partial<Reducers> {
+function getReducersForMode(
+  mode: SerializationMode,
+  global: Record<string, any> = globalThis,
+  extraReducers?: Record<string, (value: any) => any>
+): Record<string, (value: any) => any> {
+  let base: Partial<Reducers>;
   switch (mode) {
     case 'workflow':
       // Class/Instance MUST come before common (first-match-wins for Error subclasses)
-      return {
+      base = {
         ...getClassReducers(),
         ...getStepFunctionReducer(),
-        ...getCommonReducers(),
+        ...getCommonReducers(global),
       };
+      break;
     case 'step':
-      return {
+      base = {
         ...getClassReducers(),
-        ...getCommonReducers(),
+        ...getCommonReducers(global),
       };
+      break;
     case 'client':
-      return {
+      base = {
         ...getClassReducers(),
-        ...getCommonReducers(),
+        ...getCommonReducers(global),
       };
+      break;
   }
+  if (extraReducers) {
+    return { ...base, ...extraReducers } as Record<string, (value: any) => any>;
+  }
+  return base as Record<string, (value: any) => any>;
 }
 
-function getReviversForMode(mode: SerializationMode): Partial<Revivers> {
+function getReviversForMode(
+  mode: SerializationMode,
+  global: Record<string, any> = globalThis,
+  extraRevivers?: Record<string, (value: any) => any>
+): Record<string, (value: any) => any> {
+  let base: Partial<Revivers>;
   switch (mode) {
     case 'workflow':
-      return {
-        ...getClassRevivers(),
-        ...getStepFunctionReviver(),
-        ...getCommonRevivers(),
+      base = {
+        ...getClassRevivers(global),
+        ...getStepFunctionReviver(global),
+        ...getCommonRevivers(global),
       };
+      break;
     case 'step':
-      return {
-        ...getClassRevivers(),
-        ...getCommonRevivers(),
+      base = {
+        ...getClassRevivers(global),
+        ...getCommonRevivers(global),
       };
+      break;
     case 'client':
-      return {
-        ...getClassRevivers(),
-        ...getCommonRevivers(),
+      base = {
+        ...getClassRevivers(global),
+        ...getCommonRevivers(global),
         StepFunction: () => {
           throw new Error(
             'Step functions cannot be deserialized in client context.'
           );
         },
       };
+      break;
   }
+  if (extraRevivers) {
+    return { ...base, ...extraRevivers } as Record<string, (value: any) => any>;
+  }
+  return base as Record<string, (value: any) => any>;
 }
 
 // ---- Codec implementation ----
@@ -93,26 +102,44 @@ function getReviversForMode(mode: SerializationMode): Partial<Revivers> {
 export const devalueCodec: Codec = {
   formatPrefix: SerializationFormat.DEVALUE_V1,
 
-  serialize(value: unknown, mode: SerializationMode): Uint8Array {
-    const reducers = getReducersForMode(mode);
-    const str = stringify(
-      value,
-      reducers as Record<string, (value: any) => any>
+  serialize(
+    value: unknown,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): Uint8Array {
+    const reducers = getReducersForMode(
+      mode,
+      options?.global,
+      options?.extraReducers
     );
+    const str = stringify(value, reducers);
     return encoder.encode(str);
   },
 
-  deserialize(data: Uint8Array, mode: SerializationMode): unknown {
-    const revivers = getReviversForMode(mode);
+  deserialize(
+    data: Uint8Array,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): unknown {
+    const revivers = getReviversForMode(
+      mode,
+      options?.global,
+      options?.extraRevivers
+    );
     const str = decoder.decode(data);
-    return parse(str, revivers as Record<string, (value: any) => any>);
+    return parse(str, revivers);
   },
 
-  deserializeLegacy(data: unknown, mode: SerializationMode): unknown {
-    const revivers = getReviversForMode(mode);
-    return unflatten(
-      data as any[],
-      revivers as Record<string, (value: any) => any>
+  deserializeLegacy(
+    data: unknown,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): unknown {
+    const revivers = getReviversForMode(
+      mode,
+      options?.global,
+      options?.extraRevivers
     );
+    return unflatten(data as any[], revivers);
   },
 };

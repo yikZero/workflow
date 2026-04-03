@@ -1,5 +1,5 @@
 import { WorkflowRuntimeError } from '@workflow/errors';
-import { DevalueError, parse, stringify, unflatten } from 'devalue';
+import { DevalueError, parse, stringify } from 'devalue';
 import { monotonicFactory } from 'ulid';
 import {
   decrypt as aesGcmDecrypt,
@@ -15,6 +15,7 @@ import {
 import { runtimeLogger } from './logger.js';
 import { getStepFunction } from './private.js';
 import { getWorld } from './runtime/world.js';
+import * as clientModule from './serialization/client.js';
 import {
   decrypt,
   type EncryptionKeyParam,
@@ -39,11 +40,13 @@ import {
   getStepFunctionReducer,
   getStepFunctionReviver,
 } from './serialization/reducers/step-function.js';
+import * as stepModule from './serialization/step.js';
 import {
   type FormatPrefix,
   isFormatPrefix,
   SerializationFormat,
 } from './serialization/types.js';
+import * as workflowModule from './serialization/workflow.js';
 import { contextStorage } from './step/context-storage.js';
 import {
   BODY_INIT_SYMBOL,
@@ -1129,19 +1132,14 @@ export async function maybeDecrypt(
 // ============================================================================
 // Dehydrate / Hydrate Functions
 // ============================================================================
+// These delegate to the modular mode modules (workflow, step, client) passing
+// mode-specific stream and Request/Response reducers/revivers as extra options.
+// The v1Compat path is handled inline before delegating to the modules.
 
 /**
  * Called from the `start()` function to serialize the workflow arguments
  * into a format that can be saved to the database and then hydrated from
  * within the workflow execution environment.
- *
- * @param value - The value to serialize
- * @param runId - The workflow run ID (required for encryption context)
- * @param key - Encryption key (undefined to skip encryption)
- * @param ops - Promise array for stream operations
- * @param global - Global object for serialization context
- * @param v1Compat - Enable legacy v1 compatibility mode
- * @returns The dehydrated value as binary data (Uint8Array) with format prefix
  */
 export async function dehydrateWorkflowArguments(
   value: unknown,
@@ -1151,23 +1149,27 @@ export async function dehydrateWorkflowArguments(
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
-  try {
+  if (v1Compat) {
     const str = stringify(value, getExternalReducers(global, ops, runId, key));
-    if (v1Compat) {
-      return revive(str);
-    }
-    const payload = new TextEncoder().encode(str);
-    const serialized = encodeWithFormatPrefix(
-      SerializationFormat.DEVALUE_V1,
-      payload
-    ) as Uint8Array;
-
-    // Encrypt if world supports encryption
-    return maybeEncrypt(serialized, key);
+    return revive(str);
+  }
+  try {
+    return await clientModule.serialize(value, key, {
+      global,
+      extraReducers: getStreamAndRequestReducers(
+        getExternalReducers(global, ops, runId, key)
+      ),
+    });
   } catch (error) {
     throw new WorkflowRuntimeError(
-      formatSerializationError('workflow arguments', error),
-      { slug: 'serialization-failed', cause: error }
+      formatSerializationError(
+        'workflow arguments',
+        error instanceof WorkflowRuntimeError ? error.cause : error
+      ),
+      {
+        slug: 'serialization-failed',
+        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
+      }
     );
   }
 }
@@ -1175,13 +1177,6 @@ export async function dehydrateWorkflowArguments(
 /**
  * Called from workflow execution environment to hydrate the workflow
  * arguments from the database at the start of workflow execution.
- *
- * @param value - Binary serialized data (Uint8Array) with format prefix
- * @param _runId - Workflow run ID (reserved for future decryption context; decryption is currently driven solely by the provided key)
- * @param key - Encryption key (undefined to skip decryption)
- * @param global - Global object for deserialization context
- * @param extraRevivers - Additional revivers for custom types
- * @returns The hydrated value
  */
 export async function hydrateWorkflowArguments(
   value: Uint8Array | unknown,
@@ -1189,42 +1184,18 @@ export async function hydrateWorkflowArguments(
   key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
-) {
-  // Decrypt if needed
-  const decrypted = await maybeDecrypt(value, key);
-
-  // Legacy specVersion 1 runs stored data as plain JSON arrays (not binary).
-  // These pass through maybeDecrypt unchanged and are deserialized directly
-  // via devalue's unflatten().
-  if (!(decrypted instanceof Uint8Array)) {
-    return unflatten(decrypted as any[], {
-      ...getWorkflowRevivers(global),
+): Promise<any> {
+  return workflowModule.deserialize(await maybeDecrypt(value, key), {
+    global,
+    extraRevivers: {
+      ...getStreamAndRequestRevivers(getWorkflowRevivers(global)),
       ...extraRevivers,
-    });
-  }
-
-  const { format, payload } = decodeFormatPrefix(decrypted);
-
-  if (format === SerializationFormat.DEVALUE_V1) {
-    const str = new TextDecoder().decode(payload);
-    const obj = parse(str, {
-      ...getWorkflowRevivers(global),
-      ...extraRevivers,
-    });
-    return obj;
-  }
-
-  throw new Error(`Unsupported serialization format: ${format}`);
+    },
+  });
 }
 
 /**
  * Dehydrate workflow return value for storage.
- *
- * @param value - The value to serialize
- * @param runId - Run ID for encryption context
- * @param key - Encryption key (undefined to skip encryption)
- * @param global - Global object for serialization context
- * @returns The dehydrated value as binary data (Uint8Array) with format prefix
  */
 export async function dehydrateWorkflowReturnValue(
   value: unknown,
@@ -1233,39 +1204,32 @@ export async function dehydrateWorkflowReturnValue(
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
-  try {
+  if (v1Compat) {
     const str = stringify(value, getWorkflowReducers(global));
-    if (v1Compat) {
-      return revive(str);
-    }
-    const payload = new TextEncoder().encode(str);
-    const serialized = encodeWithFormatPrefix(
-      SerializationFormat.DEVALUE_V1,
-      payload
-    ) as Uint8Array;
-
-    // Encrypt if world supports encryption
-    return maybeEncrypt(serialized, key);
+    return revive(str);
+  }
+  try {
+    return await stepModule.serialize(value, key, {
+      global,
+      extraReducers: getStreamAndRequestReducers(getWorkflowReducers(global)),
+    });
   } catch (error) {
     throw new WorkflowRuntimeError(
-      formatSerializationError('workflow return value', error),
-      { slug: 'serialization-failed', cause: error }
+      formatSerializationError(
+        'workflow return value',
+        error instanceof WorkflowRuntimeError ? error.cause : error
+      ),
+      {
+        slug: 'serialization-failed',
+        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
+      }
     );
   }
 }
 
 /**
- * Called from the client side (i.e. the execution environment where
- * the workflow run was initiated from) to hydrate the workflow
- * return value of a completed workflow run.
- *
- * @param value - Binary serialized data (Uint8Array) with format prefix
- * @param runId - Run ID for decryption context
- * @param key - Encryption key (undefined to skip decryption)
- * @param ops - Promise array for stream operations
- * @param global - Global object for deserialization context
- * @param extraRevivers - Additional revivers for custom types
- * @returns The hydrated return value, ready to be consumed by the client
+ * Called from the client side to hydrate the workflow return value
+ * of a completed workflow run.
  */
 export async function hydrateWorkflowReturnValue(
   value: Uint8Array | unknown,
@@ -1274,45 +1238,21 @@ export async function hydrateWorkflowReturnValue(
   ops: Promise<void>[] = [],
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
-) {
-  // Decrypt if needed
-  const decrypted = await maybeDecrypt(value, key);
-
-  // Legacy specVersion 1 runs stored data as plain JSON arrays (not binary).
-  // These pass through maybeDecrypt unchanged and are deserialized directly
-  // via devalue's unflatten().
-  if (!(decrypted instanceof Uint8Array)) {
-    return unflatten(decrypted as any[], {
-      ...getExternalRevivers(global, ops, runId, key),
+): Promise<any> {
+  return clientModule.deserialize(value, key, {
+    global,
+    extraRevivers: {
+      ...getStreamAndRequestRevivers(
+        getExternalRevivers(global, ops, runId, key)
+      ),
       ...extraRevivers,
-    });
-  }
-
-  const { format, payload } = decodeFormatPrefix(decrypted);
-
-  if (format === SerializationFormat.DEVALUE_V1) {
-    const str = new TextDecoder().decode(payload);
-    const obj = parse(str, {
-      ...getExternalRevivers(global, ops, runId, key),
-      ...extraRevivers,
-    });
-    return obj;
-  }
-
-  throw new Error(`Unsupported serialization format: ${format}`);
+    },
+  });
 }
 
 /**
  * Called from the workflow handler when a step is being created.
- * Dehydrates values from within the workflow execution environment
- * into a format that can be saved to the database.
- *
- * @param value - The value to serialize
- * @param runId - Run ID for encryption context
- * @param key - Encryption key (undefined to skip encryption)
- * @param global - Global object for serialization context
- * @param v1Compat - Enable legacy v1 compatibility mode
- * @returns The dehydrated value as binary data (Uint8Array) with format prefix
+ * Dehydrates values from within the workflow execution environment.
  */
 export async function dehydrateStepArguments(
   value: unknown,
@@ -1321,23 +1261,25 @@ export async function dehydrateStepArguments(
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
-  try {
+  if (v1Compat) {
     const str = stringify(value, getWorkflowReducers(global));
-    if (v1Compat) {
-      return revive(str);
-    }
-    const payload = new TextEncoder().encode(str);
-    const serialized = encodeWithFormatPrefix(
-      SerializationFormat.DEVALUE_V1,
-      payload
-    ) as Uint8Array;
-
-    // Encrypt if world supports encryption
-    return maybeEncrypt(serialized, key);
+    return revive(str);
+  }
+  try {
+    return await stepModule.serialize(value, key, {
+      global,
+      extraReducers: getStreamAndRequestReducers(getWorkflowReducers(global)),
+    });
   } catch (error) {
     throw new WorkflowRuntimeError(
-      formatSerializationError('step arguments', error),
-      { slug: 'serialization-failed', cause: error }
+      formatSerializationError(
+        'step arguments',
+        error instanceof WorkflowRuntimeError ? error.cause : error
+      ),
+      {
+        slug: 'serialization-failed',
+        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
+      }
     );
   }
 }
@@ -1345,14 +1287,6 @@ export async function dehydrateStepArguments(
 /**
  * Called from the step handler to hydrate the arguments of a step
  * from the database at the start of the step execution.
- *
- * @param value - Binary serialized data (Uint8Array) with format prefix
- * @param runId - Run ID for decryption context
- * @param key - Encryption key (undefined to skip decryption)
- * @param ops - Promise array for stream operations
- * @param global - Global object for deserialization context
- * @param extraRevivers - Additional revivers for custom types
- * @returns The hydrated value, ready to be consumed by the step user-code function
  */
 export async function hydrateStepArguments(
   value: Uint8Array | unknown,
@@ -1361,46 +1295,19 @@ export async function hydrateStepArguments(
   ops: Promise<any>[] = [],
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
-) {
-  // Decrypt if needed
-  const decrypted = await maybeDecrypt(value, key);
-
-  // Legacy specVersion 1 runs stored data as plain JSON arrays (not binary).
-  // These pass through maybeDecrypt unchanged and are deserialized directly
-  // via devalue's unflatten().
-  if (!(decrypted instanceof Uint8Array)) {
-    return unflatten(decrypted as any[], {
-      ...getStepRevivers(global, ops, runId, key),
+): Promise<any> {
+  return stepModule.deserialize(value, key, {
+    global,
+    extraRevivers: {
+      ...getStreamAndRequestRevivers(getStepRevivers(global, ops, runId, key)),
       ...extraRevivers,
-    });
-  }
-
-  const { format, payload } = decodeFormatPrefix(decrypted);
-
-  if (format === SerializationFormat.DEVALUE_V1) {
-    const str = new TextDecoder().decode(payload);
-    const obj = parse(str, {
-      ...getStepRevivers(global, ops, runId, key),
-      ...extraRevivers,
-    });
-    return obj;
-  }
-
-  throw new Error(`Unsupported serialization format: ${format}`);
+    },
+  });
 }
 
 /**
  * Called from the step handler when a step has completed.
- * Dehydrates values from within the step execution environment
- * into a format that can be saved to the database.
- *
- * @param value - The value to serialize
- * @param runId - Run ID for encryption context
- * @param key - Encryption key (undefined to skip encryption)
- * @param ops - Promise array for stream operations
- * @param global - Global object for serialization context
- * @param v1Compat - Enable legacy v1 compatibility mode
- * @returns The dehydrated value as binary data (Uint8Array) with format prefix
+ * Dehydrates values from within the step execution environment.
  */
 export async function dehydrateStepReturnValue(
   value: unknown,
@@ -1410,37 +1317,34 @@ export async function dehydrateStepReturnValue(
   global: Record<string, any> = globalThis,
   v1Compat = false
 ): Promise<Uint8Array | unknown> {
-  try {
+  if (v1Compat) {
     const str = stringify(value, getStepReducers(global, ops, runId, key));
-    if (v1Compat) {
-      return revive(str);
-    }
-    const payload = new TextEncoder().encode(str);
-    const serialized = encodeWithFormatPrefix(
-      SerializationFormat.DEVALUE_V1,
-      payload
-    ) as Uint8Array;
-
-    // Encrypt if world supports encryption
-    return maybeEncrypt(serialized, key);
+    return revive(str);
+  }
+  try {
+    return await stepModule.serialize(value, key, {
+      global,
+      extraReducers: getStreamAndRequestReducers(
+        getStepReducers(global, ops, runId, key)
+      ),
+    });
   } catch (error) {
     throw new WorkflowRuntimeError(
-      formatSerializationError('step return value', error),
-      { slug: 'serialization-failed', cause: error }
+      formatSerializationError(
+        'step return value',
+        error instanceof WorkflowRuntimeError ? error.cause : error
+      ),
+      {
+        slug: 'serialization-failed',
+        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
+      }
     );
   }
 }
 
 /**
- * Called from the workflow handler when replaying the event log of a `step_completed` event.
- * Hydrates the return value of a step from the database.
- *
- * @param value - Binary serialized data (Uint8Array) with format prefix
- * @param runId - Run ID for decryption context
- * @param key - Encryption key (undefined to skip decryption)
- * @param global - Global object for deserialization context
- * @param extraRevivers - Additional revivers for custom types
- * @returns The hydrated return value of a step, ready to be consumed by the workflow handler
+ * Called from the workflow handler when replaying the event log
+ * of a `step_completed` event.
  */
 export async function hydrateStepReturnValue(
   value: Uint8Array | unknown,
@@ -1448,29 +1352,51 @@ export async function hydrateStepReturnValue(
   key: CryptoKey | undefined,
   global: Record<string, any> = globalThis,
   extraRevivers: Record<string, (value: any) => any> = {}
-) {
-  // Decrypt if needed
-  const decrypted = await maybeDecrypt(value, key);
-
-  // Legacy specVersion 1 runs stored data as plain JSON arrays (not binary).
-  // These pass through maybeDecrypt unchanged and are deserialized directly
-  // via devalue's unflatten().
-  if (!(decrypted instanceof Uint8Array)) {
-    return unflatten(decrypted as any[], {
-      ...getWorkflowRevivers(global),
+): Promise<any> {
+  return workflowModule.deserialize(await maybeDecrypt(value, key), {
+    global,
+    extraRevivers: {
+      ...getStreamAndRequestRevivers(getWorkflowRevivers(global)),
       ...extraRevivers,
-    });
+    },
+  });
+}
+
+// ---- Helpers to extract stream/Request/Response reducers and revivers ----
+// The mode-specific get*Reducers/get*Revivers functions return objects that
+// include both "common" entries (Date, Error, Map, etc.) and mode-specific
+// entries (ReadableStream, WritableStream, Request, Response, StepFunction).
+// The common entries are already composed by the codec. We only need to
+// pass through the mode-specific entries as extraReducers/extraRevivers.
+
+const STREAM_AND_REQUEST_KEYS = [
+  'ReadableStream',
+  'WritableStream',
+  'Request',
+  'Response',
+  'StepFunction',
+] as const;
+
+function getStreamAndRequestReducers(
+  allReducers: Record<string, any>
+): Record<string, (value: any) => any> {
+  const extra: Record<string, (value: any) => any> = {};
+  for (const key of STREAM_AND_REQUEST_KEYS) {
+    if (key in allReducers) {
+      extra[key] = allReducers[key];
+    }
   }
+  return extra;
+}
 
-  const { format, payload } = decodeFormatPrefix(decrypted);
-
-  if (format === SerializationFormat.DEVALUE_V1) {
-    const str = new TextDecoder().decode(payload);
-    return parse(str, {
-      ...getWorkflowRevivers(global),
-      ...extraRevivers,
-    });
+function getStreamAndRequestRevivers(
+  allRevivers: Record<string, any>
+): Record<string, (value: any) => any> {
+  const extra: Record<string, (value: any) => any> = {};
+  for (const key of STREAM_AND_REQUEST_KEYS) {
+    if (key in allRevivers) {
+      extra[key] = allRevivers[key];
+    }
   }
-
-  throw new Error(`Unsupported serialization format: ${format}`);
+  return extra;
 }
