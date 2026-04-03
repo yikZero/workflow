@@ -19,6 +19,51 @@ import { callThrower, stepThatThrowsFromHelper } from './helpers';
 
 //////////////////////////////////////////////////////////
 
+const withStrictMetadataCheck = async <T>(fn: () => Promise<T>) => {
+  const workflowMetadata = getWorkflowMetadata();
+  const stepMetadata = getStepMetadata();
+
+  return await fn().then((result) => ({
+    result,
+    workflowMetadata,
+    stepMetadata,
+  }));
+};
+
+export interface MetadataContextReproInput {
+  label?: string;
+}
+
+export interface MetadataContextReproResult {
+  label: string;
+  workflowRunId: string;
+  workflowStartedAt: string;
+  stepId: string;
+  attempt: number;
+  stepStartedAt: string;
+}
+
+const metadataContextReproStep = async ({
+  label = 'metadata-context-repro',
+}: MetadataContextReproInput): Promise<MetadataContextReproResult> => {
+  'use step';
+
+  const { workflowMetadata, stepMetadata } = await withStrictMetadataCheck(
+    async () => label
+  );
+
+  return {
+    label,
+    workflowRunId: workflowMetadata.workflowRunId,
+    workflowStartedAt: workflowMetadata.workflowStartedAt.toISOString(),
+    stepId: stepMetadata.stepId,
+    attempt: stepMetadata.attempt,
+    stepStartedAt: stepMetadata.stepStartedAt.toISOString(),
+  };
+};
+
+//////////////////////////////////////////////////////////
+
 export async function add(a: number, b: number) {
   'use step';
   return a + b;
@@ -26,6 +71,8 @@ export async function add(a: number, b: number) {
 
 export async function addTenWorkflow(input: number) {
   'use workflow';
+
+  await metadataContextReproStep({ label: 'addTenWorkflow' });
   const a = await add(input, 2);
   const b = await add(a, 3);
   const c = await add(b, 5);
