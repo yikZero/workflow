@@ -72,7 +72,7 @@ export async function add(a: number, b: number) {
 export async function addTenWorkflow(input: number) {
   'use workflow';
 
-  await metadataContextReproStep({ label: 'addTenWorkflow' });
+  console.log(await metadataContextReproStep({ label: 'addTenWorkflow' }));
   const a = await add(input, 2);
   const b = await add(a, 3);
   const c = await add(b, 5);
