@@ -37,7 +37,7 @@ const MessageWrapper = z.object({
  * - Simpler conceptual model: messages are triggers with delivery schedules
  *
  * For sleeps > 7 days (max delay), we use chaining:
- * 1. Schedule message with max delay (~6d 23h, leaving 1h buffer)
+ * 1. Schedule message with max delay (~6d, leaving a 24h re-enqueue margin)
  * 2. When it fires, workflow checks if sleep is complete
  * 3. If not, another delayed message is queued for remaining time
  * 4. Process repeats until the full sleep duration has elapsed
@@ -49,9 +49,10 @@ const MessageWrapper = z.object({
  * These constants can be overridden via environment variables for testing.
  */
 const SECONDS_PER_HOUR = 60 * 60;
-const MAX_QUEUE_DELAY_WINDOW_SECONDS = 7 * 24 * SECONDS_PER_HOUR;
-const DEFAULT_MAX_DELAY_SECONDS =
-  MAX_QUEUE_DELAY_WINDOW_SECONDS - SECONDS_PER_HOUR;
+export const RE_ENQUEUE_MARGIN_SECONDS = 24 * SECONDS_PER_HOUR; // 24 hours
+export const MAX_QUEUE_DELAY_WINDOW_SECONDS = 7 * 24 * SECONDS_PER_HOUR; // 7 days
+export const MAX_DELAY_SECONDS =
+  MAX_QUEUE_DELAY_WINDOW_SECONDS - RE_ENQUEUE_MARGIN_SECONDS;
 
 function getMaxDelaySeconds(): number {
   const rawMaxDelaySeconds = process.env.VERCEL_QUEUE_MAX_DELAY_SECONDS;
@@ -59,15 +60,15 @@ function getMaxDelaySeconds(): number {
     rawMaxDelaySeconds === undefined ||
     rawMaxDelaySeconds.trim().length === 0
   ) {
-    return DEFAULT_MAX_DELAY_SECONDS;
+    return MAX_DELAY_SECONDS;
   }
 
   const parsedMaxDelaySeconds = Number(rawMaxDelaySeconds);
   if (!Number.isFinite(parsedMaxDelaySeconds) || parsedMaxDelaySeconds < 0) {
-    return DEFAULT_MAX_DELAY_SECONDS;
+    return MAX_DELAY_SECONDS;
   }
 
-  return Math.min(Math.floor(parsedMaxDelaySeconds), DEFAULT_MAX_DELAY_SECONDS);
+  return Math.min(Math.floor(parsedMaxDelaySeconds), MAX_DELAY_SECONDS);
 }
 
 /**
@@ -209,7 +210,7 @@ export function createQueue(config?: APIConfig): Queue {
 
         if (typeof result?.timeoutSeconds === 'number') {
           // When timeoutSeconds is 0, skip delaySeconds entirely for immediate re-enqueue.
-          // Otherwise, clamp to the queue delay window minus a 1h buffer (6d 23h).
+          // Otherwise, clamp to the queue delay window minus a 24h buffer (6d).
           // For longer sleeps, the workflow will chain multiple delayed messages until
           // the full sleep duration has elapsed.
           const delaySeconds =

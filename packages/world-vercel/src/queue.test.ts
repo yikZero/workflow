@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const MAX_DELAY_SECONDS = 7 * 24 * 60 * 60 - 60 * 60;
-
 const {
   mockSend,
   MockDuplicateMessageError,
@@ -46,7 +44,7 @@ vi.mock('./utils.js', () => ({
   getHeaders: vi.fn().mockReturnValue(new Map()),
 }));
 
-import { createQueue } from './queue.js';
+import { createQueue, MAX_DELAY_SECONDS } from './queue.js';
 
 describe('createQueue', () => {
   beforeEach(() => {
