@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const MAX_DELAY_SECONDS = 7 * 24 * 60 * 60 - 60 * 60;
+
 const {
   mockSend,
   MockDuplicateMessageError,
@@ -404,7 +406,7 @@ describe('createQueue', () => {
       }
     });
 
-    it('should clamp delaySeconds to max 23 hours for long sleeps', async () => {
+    it('should clamp delaySeconds to 1 hour less than 7 days for long sleeps', async () => {
       mockSend.mockResolvedValue({ messageId: 'new-msg-123' });
 
       let capturedHandler: (
@@ -422,7 +424,7 @@ describe('createQueue', () => {
       try {
         const queue = createQueue();
         queue.createQueueHandler('__wkf_workflow_', async () => ({
-          timeoutSeconds: 100000,
+          timeoutSeconds: 700000,
         }));
 
         await capturedHandler!(
@@ -443,7 +445,7 @@ describe('createQueue', () => {
         expect(mockSend).toHaveBeenCalledTimes(1);
         // send(topicName, payload, options)
         const sendOpts = mockSend.mock.calls[0][2];
-        expect(sendOpts.delaySeconds).toBe(82800); // MAX_DELAY_SECONDS
+        expect(sendOpts.delaySeconds).toBe(MAX_DELAY_SECONDS);
       } finally {
         if (originalEnv !== undefined) {
           process.env.VERCEL_DEPLOYMENT_ID = originalEnv;
