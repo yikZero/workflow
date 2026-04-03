@@ -10,12 +10,12 @@ import {
   encrypt as aesGcmEncrypt,
   type CryptoKey,
 } from '../encryption.js';
-import { SerializationFormat } from './types.js';
 import {
   decodeFormatPrefix,
   encodeWithFormatPrefix,
   peekFormatPrefix,
 } from './format.js';
+import { SerializationFormat } from './types.js';
 
 export type { CryptoKey };
 
@@ -65,7 +65,8 @@ export async function decrypt(
   // If the data is encrypted but no key was provided, fail fast.
   if (format === SerializationFormat.ENCRYPTED && !key) {
     throw new Error(
-      'Encrypted payload encountered but no decryption key was provided.'
+      'Encrypted data encountered but no encryption key is available. ' +
+        'Encryption is not configured or no key was provided for this run.'
     );
   }
 
