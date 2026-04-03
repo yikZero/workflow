@@ -11,9 +11,8 @@
  */
 
 import { WorkflowRuntimeError } from '@workflow/errors';
-import { DevalueError } from 'devalue';
-import { runtimeLogger } from '../logger.js';
 import { devalueCodec } from './codec-devalue.js';
+import { formatSerializationError } from './errors.js';
 import { decodeFormatPrefix, encodeWithFormatPrefix } from './format.js';
 import { SerializationFormat } from './types.js';
 
@@ -61,20 +60,4 @@ export function deserialize(data: Uint8Array | unknown): unknown {
   }
 
   throw new Error(`Unsupported serialization format: ${format}`);
-}
-
-function formatSerializationError(context: string, error: unknown): string {
-  const verb = context.includes('return value') ? 'returning' : 'passing';
-  let message = `Failed to serialize ${context}`;
-  if (error instanceof DevalueError && error.path) {
-    message += ` at path "${error.path}"`;
-  }
-  message += `. Ensure you're ${verb} serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`;
-  if (error instanceof DevalueError && error.value !== undefined) {
-    runtimeLogger.error('Serialization failed', {
-      context,
-      problematicValue: error.value,
-    });
-  }
-  return message;
 }

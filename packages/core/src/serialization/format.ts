@@ -16,9 +16,9 @@
  */
 
 import {
-  SerializationFormat,
-  isFormatPrefix,
   type FormatPrefix,
+  isFormatPrefix,
+  SerializationFormat,
 } from './types.js';
 
 /** Length of the format prefix in bytes */
@@ -79,6 +79,14 @@ export function isEncrypted(data: Uint8Array | unknown): boolean {
 
 /**
  * Decode a format-prefixed payload.
+ *
+ * Unlike the legacy implementation which only accepted known formats
+ * (`devl`, `encr`), this function accepts any valid format prefix
+ * (`[a-z0-9]{4}`). This is intentional for forward compatibility —
+ * new codecs (e.g. `cbor`) can be added without modifying this module.
+ * Callers are responsible for checking whether they support the returned
+ * format and throwing an appropriate error if not (e.g. "Unsupported
+ * serialization format").
  *
  * @param data - The format-prefixed data
  * @returns An object with the format prefix and payload

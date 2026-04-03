@@ -5,6 +5,7 @@
  * using the format prefix system to mark encrypted data.
  */
 
+import { WorkflowRuntimeError } from '@workflow/errors';
 import {
   decrypt as aesGcmDecrypt,
   encrypt as aesGcmEncrypt,
@@ -63,8 +64,10 @@ export async function decrypt(
   const format = peekFormatPrefix(data);
 
   // If the data is encrypted but no key was provided, fail fast.
+  // Uses WorkflowRuntimeError to preserve the error contract from the
+  // legacy maybeDecrypt() implementation that callers may rely on.
   if (format === SerializationFormat.ENCRYPTED && !key) {
-    throw new Error(
+    throw new WorkflowRuntimeError(
       'Encrypted data encountered but no encryption key is available. ' +
         'Encryption is not configured or no key was provided for this run.'
     );
