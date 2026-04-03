@@ -25,17 +25,20 @@ const decoder = new TextDecoder();
 
 // ---- Reducer/Reviver composition per mode ----
 //
-// Note: Reducers and revivers are currently called without a `global`
-// parameter, defaulting to `globalThis`. This means the modular mode
-// modules (workflow.ts, step.ts, client.ts) work correctly when
-// `globalThis` IS the VM's global (which is the case inside a Node.js
-// `vm.Context` sandbox), but cannot be used for cross-VM serialization
-// where the caller passes a different `global` object.
+// Note: These modular mode modules (workflow.ts, step.ts, client.ts)
+// are NOT used in the current runtime's event replay flow. All
+// serialization in the current runtime goes through the dehydrate*/
+// hydrate* functions in serialization.ts, which pass a `global`
+// parameter (either the VM's sandboxed global or host globalThis)
+// through to the reducer/reviver factories for correct `instanceof`
+// checks across VM boundaries.
 //
-// The legacy dehydrate/hydrate functions in serialization.ts still
-// support passing a custom `global` for full cross-VM compatibility.
-// Adding `global` parameter threading to the Codec interface is
-// deferred until the snapshot runtime work requires it.
+// The modular modules here default to `globalThis` and are designed
+// for the future snapshot runtime where serialization runs inside the
+// VM sandbox itself (where `globalThis` IS the VM's global). If the
+// modular modules ever need to be called from the host side with a
+// different `global`, the Codec interface would need to be extended
+// to accept a `global` parameter.
 
 function getReducersForMode(mode: SerializationMode): Partial<Reducers> {
   switch (mode) {
