@@ -69,13 +69,25 @@ function getStepIdAliasCandidates(stepId: string): string[] {
   );
 }
 
-function getBuiltinResponseStepAlias(stepId: string): StepFunction | undefined {
-  if (!BUILTIN_STEP_NAMES.has(stepId)) {
+function getBuiltinStepAlias(stepId: string): StepFunction | undefined {
+  // Accept both bare names ('__builtin_response_text') and fully-qualified
+  // IDs ('step//workflow/internal/builtins@4.2.0//__builtin_response_text').
+  // Extract the function name from the last segment of a full step ID.
+  const fnName = stepId.startsWith('step//')
+    ? stepId.split('//').pop()!
+    : stepId;
+
+  if (!BUILTIN_STEP_NAMES.has(fnName)) {
     return undefined;
   }
 
+  // Match against registered steps: either an exact bare-name match
+  // or a suffix match for fully-qualified IDs containing //{fnName}.
   for (const [registeredStepId, stepFn] of registeredSteps.entries()) {
-    if (registeredStepId.endsWith(`//${stepId}`)) {
+    if (
+      registeredStepId === fnName ||
+      registeredStepId.endsWith(`//${fnName}`)
+    ) {
       return stepFn;
     }
   }
@@ -109,7 +121,7 @@ export function getStepFunction(stepId: string): StepFunction | undefined {
     }
   }
 
-  const builtinAliasMatch = getBuiltinResponseStepAlias(stepId);
+  const builtinAliasMatch = getBuiltinStepAlias(stepId);
   if (builtinAliasMatch) {
     return builtinAliasMatch;
   }
