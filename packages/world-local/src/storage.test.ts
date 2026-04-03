@@ -3,10 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { WorkflowWorldError } from '@workflow/errors';
 import type { Event, Storage } from '@workflow/world';
-import {
-  DEFAULT_TIMESTAMP_THRESHOLD_MS,
-  stripEventDataRefs,
-} from '@workflow/world';
+import { stripEventDataRefs } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeJSON } from './fs.js';

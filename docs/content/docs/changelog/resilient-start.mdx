@@ -39,16 +39,11 @@ response to skip the initial `events.list` call, reducing TTFB.
 
 ### `workflowEntrypoint` changes (packages/core)
 
-- We no longer call `world.runs.get` or check the run status before starting.
-- We **always** call `world.events.create` with `run_started`, now also passing the
-  run input that was sent through the queue. The response will be:
-  - **200 with event (now running)**: use the returned `Run` entity as the run. The
-    response also includes an `events` array of all events up to that point (typically
-    `run_created` and `run_started`), with data resolved. These are used to skip the
-    very first `world.events.list` call, reducing TTFB for the first invocation.
-  - **200 without event (already running)**: the run entity is returned directly
-    without creating a duplicate event. The runtime proceeds normally.
-  - **409 or 410 (already finished)**: log and exit as usual.
+- When calling `world.events.create` with `run_started`, we now also always pass the
+  run input that was sent through the queue, if available. The response will still be on off:
+  - **200 with event (now running)**: As usual, but the server could have used the run input to create the run if it didn't exist yet. The response will be opaque to the runtime.
+  - **200 without event (already running)**: As usual
+  - **409 or 410 (already finished)**: As usual
 
 ### `Run.returnValue` polling (packages/core)
 
@@ -70,11 +65,6 @@ response to skip the initial `events.list` call, reducing TTFB.
      to track when this fallback path is hit.
 - When `run_started` encounters an **already-running** run, all worlds return `{ run }`
   with `event: undefined` instead of throwing. No duplicate event is created.
-- When posting `run_started` and getting **200**, the response includes an `events`
-  property with all events up to that point (data always resolved).
-- ULID timestamp validation now uses **asymmetric thresholds**: 24 hours in the past
-  (to support queue retry delays) and 5 minutes in the future (to prevent abuse while
-  tolerating clock skew).
 
 ### Queue transport changes
 
@@ -102,11 +92,7 @@ JSON serialization. Each world uses a transport that preserves binary data:
    On the already-running path, we fall back to the normal `events.list` call. This is
    correct because only on 200 can we be certain we know the full event history.
 
-4. **Asymmetric ULID thresholds**: VQS supports delayed messages up to 24 hours. We
-   allow 24h in the past so a run_created retry can succeed at maximum queue delay, but
-   keep the future threshold at 5 minutes to prevent abuse from manipulated timestamps.
-
-5. **Conditional 404 retry on Run.returnValue**: Only when `resilientStart = true`
+4. **Conditional 404 retry on Run.returnValue**: Only when `resilientStart = true`
    (run_created failed). Normal runs fail fast on 404.
 
 ## Known concerns
@@ -145,3 +131,100 @@ filesystem race.
 - [ ] Monitor the Datadog metric in production to understand how often the fallback is hit.
 - [ ] Consider whether the `events` optimization in the 200 response should also apply
   to re-enqueue cycles (currently only first invocation).
+
+## Development retrospective
+
+Chronological log of mistakes, misunderstandings, and reverted approaches during
+development. Included for future reference when working on similar cross-cutting
+runtime changes.
+
+### 1. Uint8Array corruption through JSON queue transport
+
+The initial implementation passed `runInput.input` (a `Uint8Array`) directly through
+the queue payload. `Uint8Array` doesn't survive `JSON.stringify` — it becomes
+`{"0":72,"1":101,...}`. This corrupted the workflow input when the resilient start
+path tried to recreate the run from the queue-delivered data.
+
+Caught by the `spawnWorkflowFromStepWorkflow` e2e test and the `world-testing`
+embedded tests, which failed with "Invalid input" from devalue's `unflatten()`.
+
+Three approaches were tried before landing on the final solution:
+
+1. **Base64 encoding** (`btoa`/`atob`) — worked but fragile. The decode side used
+   `typeof runInput.input === 'string'` as a discriminant, which was flagged as
+   dangerous since non-binary inputs could also be strings.
+2. **`Array.from()`/`new Uint8Array()`** — replaced base64 with a plain number array.
+   Two problems: (a) 3x JSON size regression vs base64, and (b) `Array.isArray()`
+   false-positives on v1Compat runs where `dehydrateWorkflowArguments` returns
+   devalue's flat Array format.
+3. **CBOR + BufferTransport** (final) — world-vercel CBOR-encodes the queue payload;
+   world-local and world-postgres use a `TypedJsonTransport` with a tagged envelope.
+
+### 2. Forgot to commit world-postgres transport fix (twice)
+
+After fixing world-local and world-vercel queue transports, the same `JsonTransport`
+corruption bug existed in world-postgres. The fix was written during a session but
+never committed — lost when the working directory was reset via stash/checkout. This
+happened twice. The fix only landed on the third attempt when it was committed and
+pushed immediately. All 14 Postgres e2e jobs failed each time.
+
+### 3. Incorrect diagnosis of Vercel Prod 409 errors
+
+Multiple Vercel Prod e2e tests failed with `EntityConflictError: Workflow run with
+ID wrun_... already exists` on `run_created`. The initial assumption was that VQS
+couldn't deliver the queue message fast enough to beat the `run_created` call.
+
+Datadog logs showed otherwise: the `run_created` request arrived at Vercel's edge
+116ms before `run_started`, but `run_created` hit a cold-start lambda (727ms) while
+`run_started` hit a warm one (23ms). Cold starts can invert expected execution order.
+
+### 4. Removed EntityConflictError catch, then had to restore it
+
+The `workflowEntrypoint` error handler originally caught both `EntityConflictError`
+and `RunExpiredError`. When adding the "already-running returns run without event"
+behavior, `EntityConflictError` was removed from the catch since the new worlds
+wouldn't throw it. Reviewer flagged this: old worlds or world-vercel hitting an
+older workflow-server could still throw it. The catch was restored.
+
+### 5. Duplicate `startedAt` check
+
+After refactoring the `run_started` flow, a `workflowRun.startedAt` null check
+existed both inside the `try` block and after the `catch` block. The second was
+unreachable. Removed after review.
+
+### 6. WORKFLOW_SERVER_URL_OVERRIDE left set
+
+During development, `WORKFLOW_SERVER_URL_OVERRIDE` was set to a test URL pointing
+at the workflow-server preview deployment and accidentally committed. The Vercel
+bot flagged this. Reset to empty string.
+
+### 7. e2e test assertion was wrong
+
+The resilient start e2e test stubbed `world.events.create` and asserted
+`createCallCount >= 2`. But the stub only intercepts calls from the test runner
+process — the server uses its own world. `createCallCount` was always 1. Changed
+to `expect(createCallCount).toBe(1)`.
+
+### 8. Misattributed Local Prod timeouts as "pre-existing"
+
+Local Prod tests showed 60-second timeouts across various tests. Initially dismissed
+as CI flakes. Checking main's CI showed all Local Prod tests pass on main — the
+timeouts are caused by our changes. Should have compared against main immediately.
+
+### 9. Attempted to revert parallel dispatch
+
+After identifying Local Prod timeouts, `start()` was partially reverted back to
+sequential dispatch. The user pointed out that parallel dispatch is the core value
+proposition of the PR. The revert was undone.
+
+### 10. WorkflowRunNotFoundError retry was unconditional
+
+The initial `pollReturnValue` retry on `WorkflowRunNotFoundError` applied to all
+`Run` instances. A user calling `getRun()` with a wrong ID would wait 10 seconds
+before getting a 404. Fixed by adding a `resilientStart` flag: only retries when
+`run_created` actually failed.
+
+### 11. Changeset `minor` vs `patch`
+
+The changeset was created with `"@workflow/core": minor`. Reviewer flagged this as
+violating repo rules ("all changes should be patch"). Changed after discussion.
