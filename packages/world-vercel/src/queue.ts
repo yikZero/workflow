@@ -50,10 +50,25 @@ const MessageWrapper = z.object({
  */
 const SECONDS_PER_HOUR = 60 * 60;
 const MAX_QUEUE_DELAY_WINDOW_SECONDS = 7 * 24 * SECONDS_PER_HOUR;
-const MAX_DELAY_SECONDS = Number(
-  process.env.VERCEL_QUEUE_MAX_DELAY_SECONDS ||
-    MAX_QUEUE_DELAY_WINDOW_SECONDS - SECONDS_PER_HOUR
-);
+const DEFAULT_MAX_DELAY_SECONDS =
+  MAX_QUEUE_DELAY_WINDOW_SECONDS - SECONDS_PER_HOUR;
+
+function getMaxDelaySeconds(): number {
+  const rawMaxDelaySeconds = process.env.VERCEL_QUEUE_MAX_DELAY_SECONDS;
+  if (
+    rawMaxDelaySeconds === undefined ||
+    rawMaxDelaySeconds.trim().length === 0
+  ) {
+    return DEFAULT_MAX_DELAY_SECONDS;
+  }
+
+  const parsedMaxDelaySeconds = Number(rawMaxDelaySeconds);
+  if (!Number.isFinite(parsedMaxDelaySeconds) || parsedMaxDelaySeconds < 0) {
+    return DEFAULT_MAX_DELAY_SECONDS;
+  }
+
+  return Math.min(Math.floor(parsedMaxDelaySeconds), DEFAULT_MAX_DELAY_SECONDS);
+}
 
 /**
  * Extract known identifiers from a queue payload and return them as VQS headers.
@@ -199,7 +214,7 @@ export function createQueue(config?: APIConfig): Queue {
           // the full sleep duration has elapsed.
           const delaySeconds =
             result.timeoutSeconds > 0
-              ? Math.min(result.timeoutSeconds, MAX_DELAY_SECONDS)
+              ? Math.min(result.timeoutSeconds, getMaxDelaySeconds())
               : undefined;
 
           // Send new message BEFORE acknowledging current message.
