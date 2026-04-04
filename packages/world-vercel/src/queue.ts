@@ -15,18 +15,18 @@ import { getDispatcher } from './http-client.js';
 import { type APIConfig, getHeaders, getHttpUrl } from './utils.js';
 
 /**
- * CBOR-based queue transport. Preserves Uint8Array values natively,
- * avoiding the encode/decode problems of JSON transport for binary data
- * (workflow input is a Uint8Array in specVersion >= 2).
+ * CBOR-based queue transport. Encodes values with cbor-x on send and
+ * decodes on receive, preserving Uint8Array values natively (workflow
+ * input is a Uint8Array in specVersion >= 2).
  */
-class CborTransport implements Transport<Buffer> {
+class CborTransport implements Transport<unknown> {
   readonly contentType = 'application/cbor';
 
-  serialize(value: Buffer): Buffer {
-    return value;
+  serialize(value: unknown): Buffer {
+    return Buffer.from(encode(value));
   }
 
-  async deserialize(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
+  async deserialize(stream: ReadableStream<Uint8Array>): Promise<unknown> {
     const chunks: Uint8Array[] = [];
     const reader = stream.getReader();
     while (true) {
@@ -34,7 +34,7 @@ class CborTransport implements Transport<Buffer> {
       if (done) break;
       if (value) chunks.push(value);
     }
-    return Buffer.concat(chunks);
+    return decode(Buffer.concat(chunks));
   }
 }
 
@@ -147,19 +147,17 @@ export function createQueue(config?: APIConfig): Queue {
       deploymentId,
     });
 
-    // CBOR-encode the message wrapper. This preserves Uint8Array values
-    // (workflow input in specVersion >= 2) through the queue transport.
-    const encoded = Buffer.from(
-      encode({
-        payload,
-        queueName,
-        // Store deploymentId in the message so it can be preserved when re-enqueueing
-        deploymentId: opts?.deploymentId,
-      })
-    );
+    // The CborTransport handles CBOR encoding inside serialize(),
+    // preserving Uint8Array values (workflow input in specVersion >= 2).
+    const wrapper = {
+      payload,
+      queueName,
+      // Store deploymentId in the message so it can be preserved when re-enqueueing
+      deploymentId: opts?.deploymentId,
+    };
     const sanitizedQueueName = queueName.replace(/[^A-Za-z0-9-_]/g, '-');
     try {
-      const { messageId } = await client.send(sanitizedQueueName, encoded, {
+      const { messageId } = await client.send(sanitizedQueueName, wrapper, {
         idempotencyKey: opts?.idempotencyKey,
         delaySeconds: opts?.delaySeconds,
         headers: {
@@ -200,14 +198,10 @@ export function createQueue(config?: APIConfig): Queue {
         }
 
         const requestId = requestIdStorage.getStore();
-        // CBOR-decode the message wrapper. The transport returns a Buffer;
-        // decode it back to the original object with Uint8Array values intact.
-        const decoded =
-          message instanceof Buffer || message instanceof Uint8Array
-            ? decode(message)
-            : message;
+        // The CborTransport handles CBOR decoding inside deserialize(),
+        // so message is already a plain object with Uint8Array values intact.
         const { payload, queueName, deploymentId } =
-          MessageWrapper.parse(decoded);
+          MessageWrapper.parse(message);
 
         const result = await handler(payload, {
           queueName,

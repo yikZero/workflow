@@ -112,25 +112,36 @@ When this happens:
 This is handled correctly. The `resilientStart` flag is NOT set on the Run instance
 in this case (409 is not a retryable error), so `returnValue` fails fast on 404.
 
-### Local Prod test flakiness (under investigation)
+### Local Prod test flakiness (resolved)
 
 On world-local, the queue's async IIFE can deliver the message before
 `events.create(run_created)` finishes writing to the shared filesystem. The
-resilient start path should handle this, but Local Prod tests show occasional
-runs stuck at `pending` (no `run_started` event). This affects ~5 out of 13
-frameworks per CI run, with different tests timing out each time. The root cause
-is not yet confirmed — the resilient start fallback should create the run, but
-something in the delivery or deserialization chain may be failing silently.
-Investigating whether this is a transport issue, concurrency exhaustion, or a
-filesystem race.
+resilient start path should handle this, but Local Prod tests showed occasional
+runs stuck at `pending` (no `run_started` event), and Windows CI showed
+"Unconsumed event in event log" errors from duplicate `run_created` events.
+
+**Root cause:** A TOCTOU race between the normal `run_created` path and the
+resilient start path. Both used `writeJSON` which checks existence with
+`fs.access()` (non-atomic), so both could pass the check and write separate
+`run_created` events with different event IDs. Fixed by switching both paths to
+`writeExclusive` (O_CREAT|O_EXCL) — see retrospective items 12 and 16.
 
 ## Follow-up work
 
-- [ ] Investigate Local Prod test flakiness — why do some runs stay at `pending`
-  despite the resilient start fallback?
+- [x] ~~Investigate Local Prod test flakiness~~ — resolved via `writeExclusive`
+  for run entity creation (retrospective items 12, 16).
 - [ ] Monitor the Datadog metric in production to understand how often the fallback is hit.
-- [ ] Consider whether the `events` optimization in the 200 response should also apply
-  to re-enqueue cycles (currently only first invocation).
+- [x] ~~Events optimization for re-enqueue cycles~~ — decided against. The
+  already-running path returns early without writing an event, so preloading
+  events there would require an extra filesystem/DB query on every re-enqueue.
+  More importantly, on Vercel with at-least-once delivery, multiple lambdas can
+  process the same run concurrently — the event snapshot could be stale or
+  incomplete. The runtime's fallback to `events.list` is the correct behavior
+  for re-enqueue cycles.
+- [x] ~~CborTransport pass-through~~ — refactored. `encode()`/`decode()` now
+  live inside `CborTransport.serialize()`/`deserialize()`, matching the pattern
+  used by TypedJsonTransport (world-local) and the inline transport
+  (world-postgres). Call sites pass plain objects instead of pre-encoded buffers.
 
 ## Development retrospective
 
@@ -284,21 +295,33 @@ into the returned event object. Storage was already correct (`storedEventData` i
 harmless (the runtime doesn't use `result.event.eventData`), it was restored to match
 the pre-refactor behavior where eventData was explicitly stripped from the result.
 
+### 16. Normal `run_created` path also needed `writeExclusive` (Windows CI)
+
+The initial TOCTOU fix (item 12) only changed the resilient start path to use
+`writeExclusive`. The normal `run_created` entity write still used `writeJSON` which
+checks existence with `fs.access()` then writes via temp+rename — not atomic. On
+Windows CI, the local queue's async IIFE delivered fast enough for both paths to pass
+their existence checks simultaneously, producing two `run_created` events with different
+event IDs. The events consumer saw the duplicate as "Unconsumed event in event log,"
+causing `hooks`, `supports null bytes in step results`, and `retriable and fatal errors`
+tests to time out at 60s. Fixed by also switching the normal `run_created` entity write to
+`writeExclusive`, making both paths use the same atomic gate.
+
+### 17. CborTransport was a pass-through wrapper
+
+`world-vercel/queue.ts` had `CborTransport` implementing `Transport<Buffer>` with a
+no-op `serialize` (identity function) and a `deserialize` that reassembled chunks into
+a Buffer without decoding. The actual CBOR `encode()`/`decode()` calls happened at the
+call sites — `queue()` pre-encoded before calling `client.send()`, and the handler
+post-decoded after receiving from `client.handleCallback()`. This violated the transport
+abstraction (every other transport does its encoding inside serialize/deserialize) and
+meant the call site had to remember to pre-encode. Refactored to move `encode()`/`decode()`
+into the transport methods and changed the type from `Transport<Buffer>` to
+`Transport<unknown>`.
+
 ## Follow-up work (additional)
 
-- [ ] **CborTransport is a pass-through**: In `world-vercel/queue.ts`, the `CborTransport`
-  class implements `Transport<Buffer>` but its `serialize` method is a no-op identity
-  function — the actual CBOR encoding happens outside the transport at the call site
-  (`Buffer.from(encode({...}))`). This works correctly but violates the transport
-  abstraction: the `Transport` interface contract implies that `serialize` handles the
-  encoding, and every other transport (TypedJsonTransport in world-local, the inline
-  transport in world-postgres) does its encoding inside `serialize`. This means:
-  1. The call site must remember to pre-encode with CBOR; if it forgets, the transport
-     silently passes through unencoded data.
-  2. The `deserialize` side returns a raw `Buffer` that the caller must decode with
-     `cbor-x` separately — again, outside the transport boundary.
-  3. Reading the code, it's unclear why the transport exists at all vs. using
-     `BufferTransport` directly.
-  Consider moving the `encode()`/`decode()` calls into `CborTransport.serialize` and
-  `CborTransport.deserialize` so the transport is self-contained, matching the pattern
-  used by the other worlds.
+- [x] ~~**CborTransport is a pass-through**~~ — Resolved. Moved `encode()`/`decode()`
+  into `CborTransport.serialize()`/`CborTransport.deserialize()`. The transport is now
+  self-contained: call sites pass plain objects, and the handler receives decoded objects.
+  See retrospective item 17.
