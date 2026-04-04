@@ -31,6 +31,17 @@
       "dependsOn": ["^build"],
       "cache": false
     },
+    "typedoc": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "src/**",
+        "typedoc.json",
+        "typedoc-api.json",
+        "$TURBO_ROOT$/typedoc.json",
+        "$TURBO_ROOT$/typedoc-formatter.mjs"
+      ],
+      "outputs": ["typedoc-out/**", "typedoc-out-api/**"]
+    },
     "clean": {
       "cache": false
     }

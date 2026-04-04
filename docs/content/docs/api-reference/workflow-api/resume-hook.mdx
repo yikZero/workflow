@@ -38,23 +38,11 @@ export async function POST(request: Request) {
 
 ### Parameters
 
-<TSDoc
-definition={`
-import { resumeHook } from "workflow/api";
-export default resumeHook;`}
-showSections={["parameters"]}
-/>
+> See the full API reference for [`resumeHook`](/docs/api-reference/workflow-api/api/functions/resumeHook).
 
 ### Returns
 
-Returns a `Promise<Hook>` that resolves to:
-
-<TSDoc
-definition={`
-import type { Hook } from "@workflow/world";
-export default Hook;`}
-showSections={["returns"]}
-/>
+Returns a `Promise<Hook>` that resolves to the hook object with run and metadata information.
 
 ## Examples
 

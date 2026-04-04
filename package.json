@@ -11,6 +11,9 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "turbo": "^2.8.11",
+    "typedoc": "0.28.18",
+    "typedoc-plugin-frontmatter": "1.3.1",
+    "typedoc-plugin-markdown": "^4.11.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
@@ -38,6 +41,7 @@
     "test:docs": "pnpm --filter @workflow/docs-typecheck test:docs",
     "bench": "vitest bench packages/core/e2e/bench.bench.ts",
     "bench:local": "DEPLOYMENT_URL=http://localhost:3000 APP_NAME=nextjs-turbopack vitest bench packages/core/e2e/bench.bench.ts",
+    "typedoc": "turbo typedoc",
     "lint": "biome check",
     "format": "biome format --write",
     "changeset": "changeset",

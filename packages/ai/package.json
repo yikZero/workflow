@@ -63,6 +63,7 @@
     "build": "tsc",
     "clean": "tsc --build --clean && rm -rf docs ||:",
     "test": "vitest run",
+    "typedoc": "typedoc",
     "prepack": "mkdir -p docs && cp -r ../../docs/content/docs/ai ./docs/ && cp -r ../../docs/content/docs/api-reference/workflow-ai ./docs/",
     "postpack": "rm -rf docs"
   },

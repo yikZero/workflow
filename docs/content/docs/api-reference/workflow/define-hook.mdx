@@ -37,32 +37,11 @@ export async function nameWorkflow() {
 
 ### Parameters
 
-<TSDoc
-definition={`
-import { defineHook } from "workflow";
-export default defineHook;`}
-showSections={['parameters']}
-/>
+> See the full API reference for [`defineHook`](/docs/api-reference/workflow/api/functions/defineHook).
 
 ### Returns
 
-<TSDoc
-definition={`
-interface DefineHook<T> {
-  /**
-
-* Creates a new hook with the defined payload type.
-  */
-  create: (options?: HookOptions) => Hook<T>;
-
-  /**
-
-* Resumes a hook by sending a payload with the defined type.
-   */
-  resume: (token: string, payload: T) => Promise<HookEntity | null>;
-}
-export default DefineHook;`}
-/>
+> See the full API reference for [`TypedHook`](/docs/api-reference/workflow/api/interfaces/TypedHook).
 
 ## Examples
 

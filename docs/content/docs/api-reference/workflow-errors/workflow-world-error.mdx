@@ -37,22 +37,7 @@ try {
 
 ### Properties
 
-<TSDoc
-definition={`
-interface WorkflowWorldError {
-  /** HTTP status code from the world backend, if available. */
-  status?: number;
-  /** Machine-readable error code, if available. */
-  code?: string;
-  /** The URL that was requested, if available. */
-  url?: string;
-  /** Retry-After value in seconds, present on 429 and 425 responses. */
-  retryAfter?: number;
-  /** The error message. */
-  message: string;
-}
-export default WorkflowWorldError;`}
-/>
+> See the full API reference for [`WorkflowWorldError`](/docs/api-reference/workflow-errors/api/classes/WorkflowWorldError).
 
 ### Static Methods
 

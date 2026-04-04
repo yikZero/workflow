@@ -22,7 +22,6 @@ import * as AccordionComponents from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { getLLMText, getPageImage, source } from '@/lib/geistdocs/source';
-import { TSDoc } from '@/lib/tsdoc';
 
 // No-op component for world MDX files rendered outside /worlds/ context
 // These pages redirect to /worlds/[id] but still get statically generated
@@ -70,7 +69,6 @@ const Page = async ({ params }: PageProps<'/[lang]/docs/[[...slug]]'>) => {
             AgentTraces,
             FluidComputeCallout,
             Badge,
-            TSDoc,
             Step,
             Steps,
             ...AccordionComponents,

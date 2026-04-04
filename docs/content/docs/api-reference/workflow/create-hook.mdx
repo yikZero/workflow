@@ -29,39 +29,19 @@ export async function hookWorkflow() {
 
 ### Parameters
 
-<TSDoc
-definition={`
-import { createHook } from "workflow";
-export default createHook;`
-}
-showSections={['parameters']}
-/>
+> See the full API reference for [`createHook`](/docs/api-reference/workflow/api/functions/createHook).
 
 #### HookOptions
 
-<TSDoc
-definition={`
-import type { HookOptions } from "workflow";
-export default HookOptions;`
-}
-/>
+> See the full API reference for [`HookOptions`](/docs/api-reference/workflow/api/interfaces/HookOptions).
 
 ### Returns
 
-<TSDoc
-definition={`
-import { createHook } from "workflow";
-export default createHook;`}
-showSections={['returns']}
-/>
+> See the full API reference for [`createHook`](/docs/api-reference/workflow/api/functions/createHook).
 
 #### Hook
 
-<TSDoc
-definition={`
-import type { Hook } from "workflow";
-export default Hook;`}
-/>
+> See the full API reference for [`Hook`](/docs/api-reference/workflow/api/interfaces/Hook).
 
 The returned `Hook` object also implements `AsyncIterable<T>`, which allows you to iterate over incoming payloads using `for await...of` syntax.
 

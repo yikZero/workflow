@@ -27,23 +27,11 @@ export async function POST(request: Request) {
 
 ### Parameters
 
-<TSDoc
-definition={`
-import { getHookByToken } from "workflow/api";
-export default getHookByToken;`}
-showSections={["parameters"]}
-/>
+> See the full API reference for [`getHookByToken`](/docs/api-reference/workflow-api/api/functions/getHookByToken).
 
 ### Returns
 
-Returns a `Promise<Hook>` that resolves to:
-
-<TSDoc
-definition={`
-import type { Hook } from "@workflow/world";
-export default Hook;`}
-showSections={["returns"]}
-/>
+Returns a `Promise<Hook>` that resolves to the hook object with run and metadata information.
 
 ## Examples
 

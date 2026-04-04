@@ -21,59 +21,33 @@ const run = getRun("my-run-id");
 
 ### Parameters
 
-<TSDoc
-definition={`
-import { getRun } from "workflow/api";
-export default getRun;`}
-showSections={["parameters"]}
-/>
+> See the full API reference for [`getRun`](/docs/api-reference/workflow-api/api/functions/getRun).
 
 ### Returns
 
 Returns a `Run` object:
 
-<TSDoc
-definition={`
-import { Run } from "workflow/api";
-export default Run;`}
-showSections={["returns"]}
-/>
+> See the full API reference for [`Run`](/docs/api-reference/workflow-api/api/classes/Run).
 
 #### WorkflowReadableStream
 
 `run.getReadable()` returns a `WorkflowReadableStream` — a standard `ReadableStream` extended with a `getTailIndex()` helper:
 
-<TSDoc
-definition={`
-import type { WorkflowReadableStream } from "workflow/api";
-export default WorkflowReadableStream;`}
-/>
+> See the full API reference for [`WorkflowReadableStream`](/docs/api-reference/workflow-api/api/type-aliases/WorkflowReadableStream).
 
 `getTailIndex()` returns the index of the last known chunk (0-based), or `-1` when no chunks have been written. This is useful when building [reconnection endpoints](/docs/ai/resumable-streams) that need to inform clients where the stream starts.
 
 #### WorkflowReadableStreamOptions
 
-<TSDoc
-definition={`
-import type { WorkflowReadableStreamOptions } from "workflow/api";
-export default WorkflowReadableStreamOptions;`}
-/>
+> See the full API reference for [`WorkflowReadableStreamOptions`](/docs/api-reference/workflow-api/api/interfaces/WorkflowReadableStreamOptions).
 
 #### StopSleepOptions
 
-<TSDoc
-definition={`
-import type { StopSleepOptions } from "workflow/api";
-export default StopSleepOptions;`}
-/>
+> See the full API reference for [`StopSleepOptions`](/docs/api-reference/workflow-api/api/interfaces/StopSleepOptions).
 
 #### StopSleepResult
 
-<TSDoc
-definition={`
-import type { StopSleepResult } from "workflow/api";
-export default StopSleepResult;`}
-/>
+> See the full API reference for [`StopSleepResult`](/docs/api-reference/workflow-api/api/interfaces/StopSleepResult).
 
 ## Examples
 
