@@ -2,7 +2,6 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
-import dynamic from 'next/dynamic';
 import { notFound } from 'next/navigation';
 import type { ComponentProps } from 'react';
 import {
@@ -25,24 +24,6 @@ import { ScrollTop } from '@/components/geistdocs/scroll-top';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { getLLMText, getPageImage, source } from '@/lib/geistdocs/source';
-
-const LazyCookbookExplorer = dynamic(
-  () =>
-    import('@/components/geistdocs/cookbook-explorer').then(
-      (mod) => mod.CookbookExplorer
-    ),
-  {
-    loading: () => (
-      <div
-        role="status"
-        aria-live="polite"
-        className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground"
-      >
-        Loading cookbook explorer&hellip;
-      </div>
-    ),
-  }
-);
 
 const Page = async ({ params }: PageProps<'/[lang]/cookbook/[[...slug]]'>) => {
   const { slug, lang } = await params;
@@ -100,7 +81,6 @@ const Page = async ({ params }: PageProps<'/[lang]/cookbook/[[...slug]]'>) => {
             Steps,
             Tabs,
             Tab,
-            CookbookExplorer: () => <LazyCookbookExplorer lang={lang} />,
           })}
         />
       </DocsBody>
