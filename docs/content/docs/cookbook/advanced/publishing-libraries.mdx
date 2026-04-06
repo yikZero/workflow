@@ -1,6 +1,6 @@
 ---
 title: Publishing Libraries
-description: Structure and publish npm packages that export workflow functions for consumers to use with Workflow DevKit.
+description: Structure and publish npm packages that export workflow functions for consumers to use with Workflow SDK.
 type: guide
 summary: Learn how to build, export, and test npm packages that ship workflow and step functions — including package.json exports, re-exporting for stable workflow IDs, keeping step I/O clean, and integration testing.
 ---
@@ -96,7 +96,7 @@ export default defineConfig({
 
 ## Re-Exporting for Workflow ID Stability
 
-Workflow DevKit's compiler assigns each workflow function a stable ID based on its position in the source file that the build system processes. When a consumer imports a pre-built workflow from an npm package, the compiler never sees the original source — it only sees the compiled output. This means workflow IDs won't match between the library's development environment and the consumer's app.
+Workflow SDK's compiler assigns each workflow function a stable ID based on its position in the source file that the build system processes. When a consumer imports a pre-built workflow from an npm package, the compiler never sees the original source — it only sees the compiled output. This means workflow IDs won't match between the library's development environment and the consumer's app.
 
 The fix is a **re-export file**. The consumer creates a file in their `workflows/` directory that re-exports the library's workflows. The build system then processes this file and assigns stable IDs.
 
@@ -196,7 +196,7 @@ async function processItem(itemId: string) {
 
 ## Testing Workflow Libraries
 
-Library authors need integration tests that exercise workflows through the full Workflow DevKit runtime — not just unit tests of individual functions.
+Library authors need integration tests that exercise workflows through the full Workflow SDK runtime — not just unit tests of individual functions.
 
 ### Test Server Pattern
 
@@ -211,7 +211,7 @@ This test server acts as a stand-in consumer app. Point your test runner at it t
 
 ### Vitest Configuration
 
-Use a dedicated Vitest config for integration tests that run against the Workflow DevKit runtime:
+Use a dedicated Vitest config for integration tests that run against the Workflow SDK runtime:
 
 ```typescript lineNumbers
 // vitest.workflowdevkit.config.ts
@@ -245,7 +245,7 @@ pnpm vitest run --config vitest.workflowdevkit.config.ts
 
 ## Working With and Without Workflow Installed
 
-If your library should work both as a standalone package and inside Workflow DevKit, declare `workflow` as an optional peer dependency:
+If your library should work both as a standalone package and inside Workflow SDK, declare `workflow` as an optional peer dependency:
 
 ```json
 {

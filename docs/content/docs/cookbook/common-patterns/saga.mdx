@@ -50,11 +50,9 @@ export async function subscriptionUpgradeSaga(accountId: string, seats: number) 
     await sendConfirmation(accountId, invoiceId, entitlementId);
     return { status: "completed" };
   } catch (error) {
-    if (!(error instanceof FatalError)) throw error;
-
     // Unwind compensations in reverse order
-    while (compensations.length > 0) {
-      await compensations.pop()!();
+    for (const compensate of compensations.reverse()) {
+      await compensate();
     }
 
     return { status: "rolled_back" };

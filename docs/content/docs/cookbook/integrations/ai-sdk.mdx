@@ -10,7 +10,7 @@ related:
   - /docs/api-reference/workflow-ai/durable-agent
 ---
 
-Workflow DevKit integrates with [AI SDK](https://ai-sdk.dev) through the `@workflow/ai` package. This turns your LLM calls and tool executions into durable, retryable steps with built-in streaming and observability.
+Workflow SDK integrates with [AI SDK](https://ai-sdk.dev) through the `@workflow/ai` package. This turns your LLM calls and tool executions into durable, retryable steps with built-in streaming and observability.
 
 ## What It Enables
 
@@ -93,21 +93,27 @@ export async function researchAgent(messages: UIMessage[]) {
 
 ### Using Different Providers
 
-Switch between providers by changing the model string. No other code changes required.
+#### Vercel Gateway (string model IDs)
+
+All string model IDs route through [Vercel Gateway](https://vercel.com/docs/gateway). Switch providers by changing the model string -- no other code changes required.
 
 {/* @skip-typecheck - illustrative snippets with intentional redeclarations */}
 ```typescript
-// Vercel Gateway (recommended) -- works with all providers
+// All string model IDs route through Vercel Gateway
 const agent = new DurableAgent({ model: "anthropic/claude-sonnet-4-20250514" });
-
-// OpenAI
 const agent = new DurableAgent({ model: "openai/gpt-4o" });
-
-// Google
 const agent = new DurableAgent({ model: "google/gemini-2.5-pro" });
-
-// Amazon Bedrock
 const agent = new DurableAgent({ model: "bedrock/claude-haiku-4-5-20251001-v1" });
+```
+
+#### Direct Provider Access
+
+Import from a provider package to bypass Gateway and connect to the provider directly.
+
+```typescript
+import { openai } from "@workflow/ai/openai";
+
+const agent = new DurableAgent({ model: openai("gpt-4o") });
 ```
 
 ### Provider-Specific Options
@@ -124,9 +130,9 @@ const agent = new DurableAgent({
 });
 ```
 
-## Tool Functions as Steps
+## Tool Functions with Steps
 
-Every tool `execute` function marked with `"use step"` becomes a durable step. This means:
+Tool `execute` functions can optionally include steps by using the `"use step"` directive. When a tool is **not** a step, it runs inside the workflow context and can modify workflow state directly. When a tool **is** marked with `"use step"`, it becomes a durable step with:
 
 - **Automatic retries** -- If a tool fails (network error, API timeout), the framework retries it
 - **Event logging** -- Inputs and outputs are recorded for observability and replay
