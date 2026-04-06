@@ -125,6 +125,7 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
 
         try {
           let resolvedPath: string | false | undefined = args.path;
+          let resolvedViaEsbuild = false;
 
           // handle local imports e.g. ./hello or ../another
           if (args.path.startsWith('.')) {
@@ -150,6 +151,7 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               });
               if (esbuildResult.path && !esbuildResult.errors.length) {
                 resolvedPath = esbuildResult.path;
+                resolvedViaEsbuild = true;
               }
             }
           }
@@ -200,7 +202,7 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
             const isFilePath =
               args.path.startsWith('.') ||
               args.path.startsWith('/') ||
-              isAbsolute(resolvedPath as string);
+              (resolvedViaEsbuild && isAbsolute(resolvedPath));
 
             let externalPath: string;
             if (isFilePath) {
