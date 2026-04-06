@@ -222,7 +222,15 @@ export function createQueue(config?: APIConfig): Queue {
           // Send new message BEFORE acknowledging current message.
           // This ensures crash safety: if process dies after send but before ack,
           // we may get a duplicate invocation but won't lose the scheduled wakeup.
-          await queue(queueName, payload, { deploymentId, delaySeconds });
+          // Strip runInput — it's only needed on the first delivery for the
+          // resilient start path. Re-enqueuing it wastes queue bandwidth
+          // (runInput carries the full workflow input which can be large).
+          if ('runInput' in payload) {
+            const { runInput: _, ...rest } = payload;
+            await queue(queueName, rest, { deploymentId, delaySeconds });
+          } else {
+            await queue(queueName, payload, { deploymentId, delaySeconds });
+          }
         }
       }
     );

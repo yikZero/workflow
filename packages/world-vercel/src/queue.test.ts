@@ -405,6 +405,65 @@ describe('createQueue', () => {
       }
     });
 
+    it('should strip runInput from re-enqueued messages', async () => {
+      mockSend.mockResolvedValue({ messageId: 'new-msg-123' });
+
+      let capturedHandler: (
+        message: unknown,
+        metadata: unknown
+      ) => Promise<void>;
+      mockHandleCallback.mockImplementation((handler) => {
+        capturedHandler = handler;
+        return async () => new Response('ok');
+      });
+
+      const originalEnv = process.env.VERCEL_DEPLOYMENT_ID;
+      process.env.VERCEL_DEPLOYMENT_ID = 'dpl_test';
+
+      try {
+        const queue = createQueue();
+        queue.createQueueHandler('__wkf_workflow_', async () => ({
+          timeoutSeconds: 10,
+        }));
+
+        // First delivery includes runInput (from start())
+        await capturedHandler!(
+          {
+            payload: {
+              runId: 'run-123',
+              runInput: {
+                input: new Uint8Array([1, 2, 3]),
+                deploymentId: 'dpl_test',
+                workflowName: 'test-wf',
+                specVersion: 2,
+              },
+            },
+            queueName: '__wkf_workflow_test',
+            deploymentId: 'dpl_test',
+          },
+          {
+            messageId: 'msg-123',
+            deliveryCount: 1,
+            createdAt: new Date(),
+            topicName: '__wkf_workflow_test',
+            consumerGroup: 'test',
+          }
+        );
+
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        const wrapper = mockSend.mock.calls[0][1];
+        // runInput should be stripped from the re-enqueued payload
+        expect(wrapper.payload.runInput).toBeUndefined();
+        expect(wrapper.payload.runId).toBe('run-123');
+      } finally {
+        if (originalEnv !== undefined) {
+          process.env.VERCEL_DEPLOYMENT_ID = originalEnv;
+        } else {
+          delete process.env.VERCEL_DEPLOYMENT_ID;
+        }
+      }
+    });
+
     it('should clamp delaySeconds to max 23 hours for long sleeps', async () => {
       mockSend.mockResolvedValue({ messageId: 'new-msg-123' });
 
