@@ -139,7 +139,7 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               // it's parent has been bundled
               build.initialOptions.absWorkingDir || process.cwd(),
               args.path
-            ).catch(() => undefined);
+            ).catch(() => undefined); // swallow so esbuild fallback below can try
 
             // enhanced-resolve doesn't handle esbuild aliases or tsconfig
             // paths. Fall back to esbuild's own resolver which does.
