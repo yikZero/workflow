@@ -258,7 +258,11 @@ export function workflowEntrypoint(
                     runId,
                     {
                       eventType: 'run_started',
-                      specVersion: SPEC_VERSION_CURRENT,
+                      // Use the spec version from the original start() call
+                      // when available, so the resilient start path creates
+                      // the run with the correct version (not always current).
+                      specVersion:
+                        runInput?.specVersion ?? SPEC_VERSION_CURRENT,
                       // Pass run input from queue so the server can
                       // create the run if run_created was missed.
                       // Uint8Array values survive the queue natively
