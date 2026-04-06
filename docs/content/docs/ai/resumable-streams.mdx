@@ -224,7 +224,7 @@ If reconnection is not working as expected, open the [Workflow Web UI](/docs/obs
 npx workflow inspect runs --web
 ```
 
-Check that the run is still active and that the `startIndex` in the reconnection request matches the last chunk the client received. The Web UI shows the full step trace, including stream chunk counts.
+Check that the `startIndex` in the reconnection request matches the last chunk the client received. The Web UI shows the full step trace, including stream chunk counts. Note that the run does not need to be active to connect to a stream.
 </Callout>
 ## Related Documentation
 

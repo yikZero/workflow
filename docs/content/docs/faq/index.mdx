@@ -45,7 +45,7 @@ Workflow functions must be deterministic to support replay. Since streams bypass
 
 ### My reconnection endpoint returns an empty stream. What is wrong?
 
-Check that the `runId` in the reconnection URL matches the run you want to resume. Verify the run is still active by inspecting it in the Web UI or CLI:
+Check that the `runId` in the reconnection URL matches the run you want to resume. You can inspect the run in the Web UI or CLI (the run does not need to be active to connect to a stream):
 
 ```bash
 npx workflow inspect runs
@@ -111,7 +111,7 @@ Use [hooks](/docs/foundations/hooks). Workflow hooks pause execution and wait fo
 
 ### What happens to in-progress runs when I redeploy?
 
-This depends on the [World](/docs/deploying) you are using. With the [Vercel World](/docs/deploying/world/vercel-world), runs are backed by durable infrastructure and survive deployments. With the [Local World](/docs/deploying/world/local-world), the in-memory queue does not persist across server restarts, so in-progress runs will not resume.
+This depends on the [World](/docs/deploying) you are using. With the [Vercel World](/docs/deploying/world/vercel-world), runs continue to run on their original deployment, so deploying comes without risk. With the [Local World](/docs/deploying/world/local-world), the in-memory queue does not persist across server restarts, so in-progress runs will not resume.
 
 ### Can multiple clients read the same stream?
 
