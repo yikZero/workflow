@@ -79,7 +79,7 @@ export async function imageGenerationWorkflow(prompt: string) {
 
   // Workflow suspends here — no compute used while waiting
   const result = await Promise.race([ // [!code highlight]
-    webhook.then((req) => req.json()), // [!code highlight]
+    webhook.then(async (req) => (await req.json()) as { imageUrl: string }), // [!code highlight]
     sleep("10 minutes").then(() => ({ timedOut: true }) as const), // [!code highlight]
   ]); // [!code highlight]
 
@@ -125,14 +125,15 @@ export async function imageGenerationWorkflow(prompt: string) {
   const jobId = await submitImageJob(prompt); // [!code highlight]
 
   // Poll at the workflow level — workflow suspends between checks
+  const MAX_POLLS = 60; // 5 minutes at 5s intervals // [!code highlight]
   let result: { status: string; url?: string };
-  while (true) { // [!code highlight]
+  for (let i = 0; i < MAX_POLLS; i++) { // [!code highlight]
     await sleep("5 seconds"); // [!code highlight]
     result = await checkJobStatus(jobId); // [!code highlight]
-    if (result.url) break;
+    if (result.url) return { imageUrl: result.url };
   } // [!code highlight]
 
-  return { imageUrl: result.url };
+  throw new Error(`Image job ${jobId} timed out after polling`);
 }
 ```
 
@@ -155,6 +156,8 @@ async function extractEntities(text: string) {
     prompt: text,
   });
 
+  // For production use, prefer generateObject with a Zod schema
+  // to avoid fragile JSON.parse on raw LLM output
   return JSON.parse(entities) as string[];
 }
 
@@ -189,15 +192,17 @@ async function generateSummary(
 export async function analysisPipelineWorkflow(document: string) {
   "use workflow";
 
-  const entities = await extractEntities(document); // [!code highlight]
-  const sentiment = await analyzeSentiment(document); // [!code highlight]
+  const [entities, sentiment] = await Promise.all([ // [!code highlight]
+    extractEntities(document), // [!code highlight]
+    analyzeSentiment(document), // [!code highlight]
+  ]); // [!code highlight]
   const summary = await generateSummary(document, entities, sentiment); // [!code highlight]
 
   return { entities, sentiment, summary };
 }
 ```
 
-If the `generateSummary` step fails, only that step retries. The `extractEntities` and `analyzeSentiment` results are already persisted and replayed from the event log.
+`extractEntities` and `analyzeSentiment` are independent, so they run in parallel. `generateSummary` depends on both results and runs sequentially after. If any step fails, only that step retries — the others are persisted and replayed from the event log.
 
 ## Parallel Processing with Fan-Out
 
@@ -293,7 +298,7 @@ async function closeProgressStream() {
 export async function progressWorkflow(items: string[]) {
   "use workflow";
 
-  const results = [];
+  const results: unknown[] = [];
   for (let i = 0; i < items.length; i++) {
     const result = await processItem(items[i], i, items.length);
     results.push(result);
