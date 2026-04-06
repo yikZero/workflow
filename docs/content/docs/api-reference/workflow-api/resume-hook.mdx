@@ -21,6 +21,7 @@ It creates a `hook_received` event and re-queues the workflow so execution can c
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/internal/errors";
 
 export async function POST(request: Request) {
   const { token, data } = await request.json();
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
       runId: hook.runId,
     });
   } catch (error) {
-    if (error instanceof Error && error.name === "HookNotFoundError") {
+    if (HookNotFoundError.is(error)) {
       console.warn(JSON.stringify({
         event: "workflow.hook.not_found",
         token,
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
 <TSDoc
 definition={`
 import { resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/internal/errors";
 export default resumeHook;`}
 showSections={["parameters"]}
 />
@@ -101,6 +103,7 @@ Using `resumeHook` in a basic API route to resume a hook:
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/internal/errors";
 
 export async function POST(request: Request) {
   const { token, data } = await request.json();
@@ -113,7 +116,7 @@ export async function POST(request: Request) {
       runId: hook.runId
     });
   } catch (error) {
-    if (error instanceof Error && error.name === "HookNotFoundError") {
+    if (HookNotFoundError.is(error)) {
       return Response.json({ error: "Hook not found" }, { status: 404 });
     }
     return Response.json({ error: "Failed to resume hook" }, { status: 500 });
@@ -127,6 +130,7 @@ Defining a payload type and using `resumeHook` to resume a hook with type safety
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/internal/errors";
 
 type ApprovalPayload = {
   approved: boolean;
@@ -144,7 +148,7 @@ export async function POST(request: Request) {
 
     return Response.json({ runId: hook.runId });
   } catch (error) {
-    if (error instanceof Error && error.name === "HookNotFoundError") {
+    if (HookNotFoundError.is(error)) {
       return Response.json({ error: "Hook not found" }, { status: 404 });
     }
     return Response.json({ error: "Failed to resume hook" }, { status: 500 });
@@ -160,6 +164,7 @@ Using `resumeHook` in Next.js server actions to resume a hook:
 "use server";
 
 import { resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/internal/errors";
 
 export async function approveRequest(token: string, approved: boolean) {
   try {
@@ -190,7 +195,7 @@ export async function POST(request: Request) {
     const resumedHook = await resumeHook(hook, data); // [!code highlight]
     return Response.json({ success: true, runId: resumedHook.runId });
   } catch (error) {
-    if (error instanceof Error && error.name === "HookNotFoundError") {
+    if (HookNotFoundError.is(error)) {
       return Response.json({ error: "Hook not found" }, { status: 404 });
     }
     return Response.json({ error: "Failed to resume hook" }, { status: 500 });

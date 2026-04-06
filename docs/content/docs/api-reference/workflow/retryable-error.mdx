@@ -35,10 +35,6 @@ The difference between `Error` and `RetryableError` may not be entirely obvious,
 
 ### Constructor
 
-```typescript
-new RetryableError(message: string, options?: RetryableErrorOptions)
-```
-
 | Parameter | Type                     | Description                         |
 | --------- | ------------------------ | ----------------------------------- |
 | `message` | `string`                 | The error message                   |
@@ -59,10 +55,6 @@ new RetryableError(message: string, options?: RetryableErrorOptions)
 ### Static Methods
 
 #### `RetryableError.is(value)`
-
-```typescript
-RetryableError.is(value: unknown): value is RetryableError
-```
 
 Returns `true` if `value` is a `RetryableError` instance. Useful for checking caught errors without `instanceof`.
 

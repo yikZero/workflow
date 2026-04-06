@@ -103,6 +103,8 @@ export async function workflowWithApproval() {
 Hooks can be resumed using the same defined hook and a token. By using the same hook, you can ensure that the payload matches the defined type when resuming a hook. The `resume()` method throws an error if the hook is not found or if schema validation fails.
 
 ```typescript lineNumbers
+import { HookNotFoundError } from "workflow/internal/errors";
+
 // Use the same defined hook to resume
 export async function POST(request: Request) {
   const { token, approved, comment } = await request.json();
@@ -116,7 +118,10 @@ export async function POST(request: Request) {
 
     return Response.json({ success: true, runId: result.runId });
   } catch (error) {
-    return Response.json({ error: "Hook not found or invalid payload" }, { status: 400 });
+    if (HookNotFoundError.is(error)) { // [!code highlight]
+      return Response.json({ error: "Hook not found" }, { status: 404 }); // [!code highlight]
+    } // [!code highlight]
+    return Response.json({ error: "Resume failed" }, { status: 500 });
   }
 }
 ```

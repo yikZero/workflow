@@ -31,10 +31,6 @@ async function fallibleStep() {
 
 ### Constructor
 
-```typescript
-new FatalError(message: string)
-```
-
 | Parameter | Type     | Description       |
 | --------- | -------- | ----------------- |
 | `message` | `string` | The error message |
@@ -48,9 +44,5 @@ new FatalError(message: string)
 ### Static Methods
 
 #### `FatalError.is(value)`
-
-```typescript
-FatalError.is(value: unknown): value is FatalError
-```
 
 Returns `true` if `value` is a `FatalError` instance. Useful for checking caught errors without `instanceof`.
