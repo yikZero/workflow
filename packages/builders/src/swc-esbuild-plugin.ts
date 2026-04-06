@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { isAbsolute, relative } from 'node:path';
 import { promisify } from 'node:util';
 import enhancedResolveOrig from 'enhanced-resolve';
 import type { Plugin } from 'esbuild';
@@ -106,6 +106,8 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
       );
 
       build.onResolve({ filter: /.*/ }, async (args) => {
+        if (args.pluginData?.skipSwcPlugin) return null;
+
         if (
           !options.entriesToBundle &&
           normalizedSideEffectEntries.size === 0
@@ -136,7 +138,20 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               // it's parent has been bundled
               build.initialOptions.absWorkingDir || process.cwd(),
               args.path
-            );
+            ).catch(() => undefined);
+
+            // enhanced-resolve doesn't handle esbuild aliases or tsconfig
+            // paths. Fall back to esbuild's own resolver which does.
+            if (!resolvedPath) {
+              const esbuildResult = await build.resolve(args.path, {
+                resolveDir: args.resolveDir,
+                kind: args.kind,
+                pluginData: { skipSwcPlugin: true },
+              });
+              if (esbuildResult.path && !esbuildResult.errors.length) {
+                resolvedPath = esbuildResult.path;
+              }
+            }
           }
 
           if (!resolvedPath) return null;
@@ -183,7 +198,9 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
             }
 
             const isFilePath =
-              args.path.startsWith('.') || args.path.startsWith('/');
+              args.path.startsWith('.') ||
+              args.path.startsWith('/') ||
+              isAbsolute(resolvedPath as string);
 
             let externalPath: string;
             if (isFilePath) {

@@ -85,6 +85,43 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     expect(output).not.toContain(`/dep${inputExt}`);
   });
 
+  it('rewrites path-aliased imports to relative paths', async () => {
+    const outdir = join(testRoot, 'out');
+    const srcDir = join(testRoot, 'src');
+    const libDir = join(srcDir, 'lib');
+    const stepFile = join(srcDir, 'step.ts');
+
+    writeFile(join(libDir, 'config.ts'), 'export const config = {};');
+    writeFile(
+      stepFile,
+      `import { config } from '@/lib/config';\nconsole.log(config);`
+    );
+
+    const result = await esbuild.build({
+      entryPoints: [stepFile],
+      absWorkingDir: testRoot,
+      outdir,
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      write: false,
+      alias: { '@': srcDir },
+      plugins: [
+        createSwcPlugin({
+          mode: 'step',
+          entriesToBundle: [stepFile],
+          outdir,
+          rewriteTsExtensions: true,
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputFiles[0].text;
+    expect(output).toContain('/lib/config.js');
+    expect(output).not.toContain('@/lib/config');
+  });
+
   it.each([
     '.ts',
     '.tsx',
