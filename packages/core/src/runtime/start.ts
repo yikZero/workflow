@@ -244,10 +244,14 @@ export async function start<TArgs extends unknown[], TResult>(
       if (runCreatedResult.status === 'rejected') {
         const err = runCreatedResult.reason;
         if (EntityConflictError.is(err)) {
-          // 409: The run already exists. This can happen in extreme cases where
-          // the run creation call gets a cold start or other slowdown, and the queue
-          // + run_started call completes faster. We expect this to be <=1% of cases.
-          // In this case, we can safely return.
+          // 409: The run already exists. This can happen when the queue
+          // delivers and run_started completes before run_created (e.g.,
+          // cold-start race on Vercel). Expected to be <=1% of cases.
+          runtimeLogger.info(
+            'Run already existed when run_created was called (409). ' +
+              'This is expected when the queue delivers before run_created completes.',
+            { workflowRunId: runId }
+          );
         } else if (isRetryableStartError(err)) {
           // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
           // are retryable — the run was accepted via the queue and creation
