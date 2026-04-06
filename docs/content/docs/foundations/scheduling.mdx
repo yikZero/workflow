@@ -195,10 +195,9 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 
       await sendAlert(serviceUrl, status.latencyMs);
 
-      if (consecutiveFailures >= 10) { // [!code highlight]
-        throw new Error(`${serviceUrl} unrecoverable after 10 consecutive failures`); // [!code highlight]
-      } else if (consecutiveFailures % 3 === 0) { // [!code highlight]
+      if (consecutiveFailures >= 3) { // [!code highlight]
         await restartService(serviceUrl); // [!code highlight]
+        consecutiveFailures = 0; // [!code highlight]
       }
     } else {
       consecutiveFailures = 0;
@@ -209,7 +208,7 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 }
 ```
 
-The workflow tracks `consecutiveFailures` across iterations. Every third consecutive failure triggers a service restart (at 3, 6, and 9). A single healthy check resets the counter. If failures reach ten without any recovery, a standard error permanently stops the workflow. All of this state survives server restarts because the workflow is durable.
+The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart and resets the counter. A single healthy check also resets the counter. All of this state survives server restarts because the workflow is durable.
 
 <Callout type="info">
 `FatalError` is designed for use inside `"use step"` functions to stop step retries. At the workflow level, a standard `throw new Error(...)` produces the same workflow failure state.
