@@ -178,7 +178,7 @@ describe('Storage', () => {
         expect(run.updatedAt).toBeInstanceOf(Date);
 
         // Verify file was created
-        const filePath = path.join(testDir, 'runs', `${run.runId}.json`);
+        const filePath = path.join(testDir, 'runs', `${run.runId}.cbor`);
         const fileExists = await fs
           .access(filePath)
           .then(() => true)
@@ -390,7 +390,7 @@ describe('Storage', () => {
         const filePath = path.join(
           testDir,
           'steps',
-          `${testRunId}-step_123.json`
+          `${testRunId}-step_123.cbor`
         );
         const fileExists = await fs
           .access(filePath)
@@ -791,7 +791,7 @@ describe('Storage', () => {
         const filePath = path.join(
           testDir,
           'events',
-          `${testRunId}-${event.eventId}.json`
+          `${testRunId}-${event.eventId}.cbor`
         );
         const fileExists = await fs
           .access(filePath)
@@ -1311,7 +1311,7 @@ describe('Storage', () => {
         expect(hook.createdAt).toBeInstanceOf(Date);
 
         // Verify file was created
-        const filePath = path.join(testDir, 'hooks', 'hook_123.json');
+        const filePath = path.join(testDir, 'hooks', 'hook_123.cbor');
         const fileExists = await fs
           .access(filePath)
           .then(() => true)
@@ -2653,6 +2653,59 @@ describe('Storage', () => {
       await writeJSON(path.join(runsDir, `${runId}.json`), run);
       return run;
     }
+
+    describe('json entity migration', () => {
+      it('should read run entities from legacy .json files', async () => {
+        const run = await createRun(storage, {
+          deploymentId: 'legacy-json-read',
+          workflowName: 'legacy-json-read',
+          input: new Uint8Array([1, 2, 3]),
+        });
+
+        const cborPath = path.join(testDir, 'runs', `${run.runId}.cbor`);
+        const legacyPath = path.join(testDir, 'runs', `${run.runId}.json`);
+
+        await fs.unlink(cborPath);
+        await writeJSON(legacyPath, run, { overwrite: true });
+
+        const fetched = await storage.runs.get(run.runId);
+        expect(fetched.workflowName).toBe('legacy-json-read');
+        expect(fetched.input).toEqual(new Uint8Array([1, 2, 3]));
+      });
+
+      it('should migrate legacy .json runs to .cbor on update writes', async () => {
+        const run = await createRun(storage, {
+          deploymentId: 'legacy-json-migrate',
+          workflowName: 'legacy-json-migrate',
+          input: new Uint8Array([4, 5, 6]),
+        });
+
+        const cborPath = path.join(testDir, 'runs', `${run.runId}.cbor`);
+        const legacyPath = path.join(testDir, 'runs', `${run.runId}.json`);
+
+        await fs.unlink(cborPath);
+        await writeJSON(legacyPath, run, { overwrite: true });
+
+        await storage.events.create(run.runId, {
+          eventType: 'run_started',
+        });
+
+        const cborExists = await fs
+          .access(cborPath)
+          .then(() => true)
+          .catch(() => false);
+        const legacyExists = await fs
+          .access(legacyPath)
+          .then(() => true)
+          .catch(() => false);
+
+        expect(cborExists).toBe(true);
+        expect(legacyExists).toBe(false);
+
+        const updated = await storage.runs.get(run.runId);
+        expect(updated.status).toBe('running');
+      });
+    });
 
     describe('legacy runs (specVersion < 2 or undefined)', () => {
       it('should handle run_cancelled on legacy run with specVersion=1', async () => {

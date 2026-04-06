@@ -17,7 +17,7 @@ export type Config = {
   baseUrl?: string;
   /**
    * Optional tag to scope filesystem operations.
-   * When set, files are written as `{id}.{tag}.json` and `clear()` only deletes
+   * When set, files are written as `{id}.{tag}.cbor` and `clear()` only deletes
    * files matching this tag. Used by vitest to isolate test data in the shared
    * `.workflow-data` directory.
    */

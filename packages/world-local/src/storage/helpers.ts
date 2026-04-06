@@ -26,27 +26,28 @@ export const getObjectCreatedAt =
   (idPrefix: string) =>
   (filename: string): Date | null => {
     // Strip tag suffix before ULID extraction
-    // e.g., "wrun_ABC.vitest-0.json" → "wrun_ABC.json"
-    const cleanName = stripTag(filename.replace(/\.json$/, '')) + '.json';
+    // e.g., "wrun_ABC.vitest-0.cbor" → "wrun_ABC.cbor"
+    const cleanName =
+      stripTag(filename.replace(/\.(json|cbor)$/, '')) + '.cbor';
 
     const replaceRegex = new RegExp(`^${idPrefix}_`, 'g');
     const dashIndex = cleanName.indexOf('-');
 
     if (dashIndex === -1) {
-      // No dash - extract ULID from the filename (e.g., wrun_ULID.json, evnt_ULID.json)
-      const ulid = cleanName.replace(/\.json$/, '').replace(replaceRegex, '');
+      // No dash - extract ULID from the filename (e.g., wrun_ULID.cbor, evnt_ULID.cbor)
+      const ulid = cleanName.replace(/\.cbor$/, '').replace(replaceRegex, '');
       return ulidToDate(ulid);
     }
 
     // For composite keys like {runId}-{stepId}, extract from the appropriate part
     if (idPrefix === 'step') {
       // Steps use sequential IDs (step_0, step_1, etc.) - no timestamp in filename.
-      // Return null to skip filename-based optimization and defer to JSON-based filtering.
+      // Return null to skip filename-based optimization and defer to payload-based filtering.
       return null;
     }
 
-    // For events: wrun_ULID-evnt_ULID.json - extract from the eventId part
-    const id = cleanName.substring(dashIndex + 1).replace(/\.json$/, '');
+    // For events: wrun_ULID-evnt_ULID.cbor - extract from the eventId part
+    const id = cleanName.substring(dashIndex + 1).replace(/\.cbor$/, '');
     const ulid = id.replace(replaceRegex, '');
     return ulidToDate(ulid);
   };

@@ -60,8 +60,11 @@ async function deleteAllWaitsForRun(
     // fileIds may contain tag suffixes (e.g., "wrun_ABC-corrId.vitest-0")
     // but startsWith still matches correctly since the tag is a suffix.
     if (file.startsWith(`${runId}-`)) {
-      const waitPath = path.join(waitsDir, `${file}.json`);
-      await deleteJSON(waitPath);
+      const waitBasePath = path.join(waitsDir, file);
+      await Promise.all([
+        deleteJSON(`${waitBasePath}.cbor`),
+        deleteJSON(`${waitBasePath}.json`),
+      ]);
     }
   }
 }

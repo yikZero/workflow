@@ -14,7 +14,12 @@ import {
   vi,
 } from 'vitest';
 import { z } from 'zod';
-import { paginatedFileSystemQuery, ulidToDate, writeJSON } from './fs.js';
+import {
+  paginatedFileSystemQuery,
+  readJSON,
+  ulidToDate,
+  writeJSON,
+} from './fs.js';
 
 // Create a new monotonic ULID factory for each test to avoid state pollution
 let ulid = monotonicFactory(() => Math.random());
@@ -87,10 +92,72 @@ describe('fs utilities', () => {
     });
   });
 
+  describe('cbor entity storage', () => {
+    const BinaryEntitySchema = z.object({
+      id: z.string(),
+      payload: z.instanceof(Uint8Array),
+      createdAt: z.coerce.date(),
+    });
+
+    it('should write and read CBOR entities with Uint8Array payloads', async () => {
+      const filePath = path.join(testDir, 'entity.cbor');
+      const entity = {
+        id: 'entity-1',
+        payload: new Uint8Array([1, 2, 3]),
+        createdAt: new Date(),
+      };
+
+      await writeJSON(filePath, entity);
+
+      const readByPath = await readJSON(filePath, BinaryEntitySchema);
+      expect(readByPath).not.toBeNull();
+      expect(readByPath?.payload).toBeInstanceOf(Uint8Array);
+      expect(readByPath?.payload).toEqual(new Uint8Array([1, 2, 3]));
+
+      const readByBasePath = await readJSON(
+        path.join(testDir, 'entity'),
+        BinaryEntitySchema
+      );
+      expect(readByBasePath).not.toBeNull();
+      expect(readByBasePath?.payload).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it('should remove legacy JSON sibling when writing CBOR', async () => {
+      const cborPath = path.join(testDir, 'migrate.cbor');
+      const legacyPath = path.join(testDir, 'migrate.json');
+      const entity = {
+        id: 'entity-2',
+        payload: new Uint8Array([4, 5, 6]),
+        createdAt: new Date(),
+      };
+
+      await writeJSON(legacyPath, entity);
+      const legacyBefore = await fs
+        .access(legacyPath)
+        .then(() => true)
+        .catch(() => false);
+      expect(legacyBefore).toBe(true);
+
+      await writeJSON(cborPath, entity, { overwrite: true });
+
+      const cborExists = await fs
+        .access(cborPath)
+        .then(() => true)
+        .catch(() => false);
+      const legacyAfter = await fs
+        .access(legacyPath)
+        .then(() => true)
+        .catch(() => false);
+
+      expect(cborExists).toBe(true);
+      expect(legacyAfter).toBe(false);
+    });
+  });
+
   describe('paginatedFileSystemQuery', () => {
-    // Simple getCreatedAt function that strips .json and tries to parse as ULID
+    // Simple getCreatedAt function that strips entity extension and parses ULIDs
     const getCreatedAt = (filename: string): Date | null => {
-      const name = filename.replace('.json', '');
+      const name = filename.replace(/\.(json|cbor)$/, '');
       return ulidToDate(name);
     };
 
@@ -529,7 +596,7 @@ describe('fs utilities', () => {
 
       // Custom getCreatedAt for prefix tests that handles prefix_ULID pattern
       const getPrefixCreatedAt = (filename: string): Date | null => {
-        const name = filename.replace('.json', '');
+        const name = filename.replace(/\.(json|cbor)$/, '');
         if (name.includes('_')) {
           const parts = name.split('_');
           const lastPart = parts[parts.length - 1];

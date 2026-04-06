@@ -2,12 +2,15 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { EntityConflictError } from '@workflow/errors';
 import type { PaginatedResponse } from '@workflow/world';
+import { decode, encode } from 'cbor-x';
 import { monotonicFactory } from 'ulid';
 import { z } from 'zod';
 
 const ulid = monotonicFactory(() => Math.random());
 
 const isWindows = process.platform === 'win32';
+const ENTITY_FILE_EXTENSION = '.cbor';
+const LEGACY_ENTITY_FILE_EXTENSION = '.json';
 
 /**
  * Execute a filesystem operation with retry logic on Windows.
@@ -54,7 +57,7 @@ export function clearCreatedFilesCache(): void {
 export { ulidToDate } from '@workflow/world';
 
 /**
- * Regex matching a tag suffix on a fileId (after `.json` has been stripped).
+ * Regex matching a tag suffix on a fileId (after extension has been stripped).
  * E.g., `wrun_ABC.vitest-0` → the `.vitest-0` part.
  * Tags start with a letter and contain alphanumeric chars and hyphens.
  * Entity IDs (ULIDs, step_N, etc.) never contain dots, so the first dot
@@ -73,8 +76,8 @@ export function stripTag(fileId: string): string {
 
 /**
  * Build the file path for an entity, with optional tag embedded in the filename.
- * `taggedPath('runs', 'wrun_ABC', 'vitest-0')` → `runs/wrun_ABC.vitest-0.json`
- * `taggedPath('runs', 'wrun_ABC')` → `runs/wrun_ABC.json`
+ * `taggedPath('runs', 'wrun_ABC', 'vitest-0')` → `runs/wrun_ABC.vitest-0.cbor`
+ * `taggedPath('runs', 'wrun_ABC')` → `runs/wrun_ABC.cbor`
  */
 export function taggedPath(
   basedir: string,
@@ -82,12 +85,14 @@ export function taggedPath(
   fileId: string,
   tag?: string
 ): string {
-  const filename = tag ? `${fileId}.${tag}.json` : `${fileId}.json`;
+  const filename = tag
+    ? `${fileId}.${tag}${ENTITY_FILE_EXTENSION}`
+    : `${fileId}${ENTITY_FILE_EXTENSION}`;
   return path.join(basedir, entityDir, filename);
 }
 
 /**
- * Read a JSON entity with tagged fallback.
+ * Read an entity with tagged fallback.
  * When a tag is set, tries the tagged path first, then falls back to the
  * untagged path (so a tagged world can read entities written without a tag).
  */
@@ -99,27 +104,28 @@ export async function readJSONWithFallback<T>(
   tag?: string
 ): Promise<T | null> {
   if (tag) {
-    const result = await readJSON(
-      path.join(basedir, entityDir, `${fileId}.${tag}.json`),
-      schema
-    );
+    const taggedBasePath = path.join(basedir, entityDir, `${fileId}.${tag}`);
+    const result = await readJSON(taggedBasePath, schema);
     if (result !== null) return result;
   }
-  return readJSON(path.join(basedir, entityDir, `${fileId}.json`), schema);
+  return readJSON(path.join(basedir, entityDir, fileId), schema);
 }
 
 /**
  * List all filenames in a directory that have a specific tag.
- * Returns full filenames (e.g., `wrun_ABC.vitest-0.json`).
+ * Returns full filenames (e.g., `wrun_ABC.vitest-0.cbor`, `wrun_ABC.vitest-0.json`).
  */
 export async function listTaggedFiles(
   dirPath: string,
   tag: string
 ): Promise<string[]> {
-  const suffix = `.${tag}.json`;
+  const cborSuffix = `.${tag}${ENTITY_FILE_EXTENSION}`;
+  const jsonSuffix = `.${tag}${LEGACY_ENTITY_FILE_EXTENSION}`;
   try {
     const files = await fs.readdir(dirPath);
-    return files.filter((f) => f.endsWith(suffix));
+    return files.filter(
+      (f) => f.endsWith(cborSuffix) || f.endsWith(jsonSuffix)
+    );
   } catch (error) {
     if ((error as any).code === 'ENOENT') return [];
     throw error;
@@ -158,7 +164,8 @@ interface WriteOptions {
 }
 
 /**
- * Custom JSON replacer that encodes Uint8Array as base64 strings.
+ * Custom JSON replacer used for legacy .json files.
+ * Encodes Uint8Array as base64 strings.
  * Format: { __type: 'Uint8Array', data: '<base64>' }
  */
 export function jsonReplacer(_key: string, value: unknown): unknown {
@@ -172,7 +179,8 @@ export function jsonReplacer(_key: string, value: unknown): unknown {
 }
 
 /**
- * Custom JSON reviver that decodes base64 strings back to Uint8Array.
+ * Custom JSON reviver used for legacy .json files.
+ * Decodes base64 strings back to Uint8Array.
  */
 export function jsonReviver(_key: string, value: unknown): unknown {
   if (
@@ -186,12 +194,83 @@ export function jsonReviver(_key: string, value: unknown): unknown {
   return value;
 }
 
+function toLegacyEntityPath(filePath: string): string | null {
+  if (!filePath.endsWith(ENTITY_FILE_EXTENSION)) {
+    return null;
+  }
+  return (
+    filePath.slice(0, -ENTITY_FILE_EXTENSION.length) +
+    LEGACY_ENTITY_FILE_EXTENSION
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * cbor-x may deserialize binary values as Node.js Buffers in some environments.
+ * Convert those values to Uint8Array so world schemas and tests stay consistent.
+ */
+function normalizeDecodedBinary(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) {
+    return Uint8Array.from(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeDecodedBinary(item));
+  }
+  if (isPlainObject(value)) {
+    const normalized: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      normalized[key] = normalizeDecodedBinary(entry);
+    }
+    return normalized;
+  }
+  return value;
+}
+
 export async function writeJSON(
   filePath: string,
   data: any,
   opts?: WriteOptions
 ): Promise<void> {
-  return write(filePath, JSON.stringify(data, jsonReplacer, 2), opts);
+  if (filePath.endsWith(LEGACY_ENTITY_FILE_EXTENSION)) {
+    return write(filePath, JSON.stringify(data, jsonReplacer, 2), opts);
+  }
+
+  if (!filePath.endsWith(ENTITY_FILE_EXTENSION)) {
+    throw new Error(`Unsupported storage file extension for path: ${filePath}`);
+  }
+
+  if (!opts?.overwrite) {
+    const legacyPath = toLegacyEntityPath(filePath);
+    if (legacyPath) {
+      try {
+        await fs.access(legacyPath);
+        throw new EntityConflictError(
+          `File ${legacyPath} already exists and 'overwrite' is false`
+        );
+      } catch (error: any) {
+        if (error instanceof EntityConflictError) {
+          throw error;
+        }
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+  }
+
+  await write(filePath, Buffer.from(encode(data)), opts);
+
+  const legacyPath = toLegacyEntityPath(filePath);
+  if (legacyPath) {
+    await deleteJSON(legacyPath);
+  }
 }
 
 /**
@@ -255,7 +334,25 @@ export async function readJSON<T>(
   filePath: string,
   decoder: z.ZodType<T>
 ): Promise<T | null> {
+  if (
+    !filePath.endsWith(ENTITY_FILE_EXTENSION) &&
+    !filePath.endsWith(LEGACY_ENTITY_FILE_EXTENSION)
+  ) {
+    const cborResult = await readJSON(
+      `${filePath}${ENTITY_FILE_EXTENSION}`,
+      decoder
+    );
+    if (cborResult !== null) {
+      return cborResult;
+    }
+    return readJSON(`${filePath}${LEGACY_ENTITY_FILE_EXTENSION}`, decoder);
+  }
+
   try {
+    if (filePath.endsWith(ENTITY_FILE_EXTENSION)) {
+      const content = await fs.readFile(filePath);
+      return decoder.parse(normalizeDecodedBinary(decode(content)));
+    }
     const content = await fs.readFile(filePath, 'utf-8');
     return decoder.parse(JSON.parse(content, jsonReviver));
   } catch (error) {
@@ -299,7 +396,32 @@ export async function writeExclusive(
 }
 
 export async function listJSONFiles(dirPath: string): Promise<string[]> {
-  return listFilesByExtension(dirPath, '.json');
+  try {
+    const files = await fs.readdir(dirPath);
+    const fileIds = new Map<string, string>();
+
+    for (const file of files) {
+      if (file.endsWith(ENTITY_FILE_EXTENSION)) {
+        fileIds.set(
+          file.slice(0, -ENTITY_FILE_EXTENSION.length),
+          ENTITY_FILE_EXTENSION
+        );
+        continue;
+      }
+
+      if (file.endsWith(LEGACY_ENTITY_FILE_EXTENSION)) {
+        const fileId = file.slice(0, -LEGACY_ENTITY_FILE_EXTENSION.length);
+        if (!fileIds.has(fileId)) {
+          fileIds.set(fileId, LEGACY_ENTITY_FILE_EXTENSION);
+        }
+      }
+    }
+
+    return [...fileIds.keys()];
+  } catch (error) {
+    if ((error as any).code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 export async function listFilesByExtension(
@@ -363,7 +485,7 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
     getId,
   } = config;
 
-  // 1. Get all JSON files in directory
+  // 1. Get all entity files in directory
   const fileIds = await listJSONFiles(directory);
 
   // 2. Filter by prefix if provided
@@ -371,13 +493,13 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
     ? fileIds.filter((fileId) => fileId.startsWith(filePrefix))
     : fileIds;
 
-  // 3. ULID Optimization: Filter by cursor using filename timestamps before loading JSON
+  // 3. ULID optimization: Filter by cursor using filename timestamps before loading payloads
   const parsedCursor = parseCursor(cursor);
   let candidateFileIds = relevantFileIds;
 
   if (parsedCursor) {
     candidateFileIds = relevantFileIds.filter((fileId) => {
-      const filenameDate = getCreatedAt(`${fileId}.json`);
+      const filenameDate = getCreatedAt(`${fileId}${ENTITY_FILE_EXTENSION}`);
       if (filenameDate) {
         // Use filename timestamp for cursor filtering
         // We need to be careful here: if parsedCursor has an ID (for tie-breaking),
@@ -399,7 +521,7 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
         }
       }
       // Can't extract timestamp from filename (e.g., steps use sequential IDs).
-      // Include the file and defer to JSON-based filtering below.
+      // Include the file and defer to payload-based filtering below.
       return true;
     });
   }
@@ -408,18 +530,18 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
   const validItems: T[] = [];
 
   for (const fileId of candidateFileIds) {
-    const filePath = path.join(directory, `${fileId}.json`);
+    const filePath = path.join(directory, fileId);
     let item: T | null = null;
     try {
       item = await readJSON(filePath, schema);
     } catch (error: unknown) {
-      // We don't expect zod errors to happen, but if the JSON does get malformed,
+      // We don't expect zod errors to happen, but if a payload does get malformed,
       // we skip the item. Preferably, we'd have a way to mark items as malformed,
       // so that the UI can display them as such, with richer messaging. In the meantime,
       // we just log a warning and skip the item.
       if (error instanceof z.ZodError) {
         console.warn(
-          `Skipping item ${fileId} due to malformed JSON: ${error.message}`
+          `Skipping item ${fileId} due to malformed storage payload: ${error.message}`
         );
         continue;
       }
@@ -430,7 +552,7 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
       // Apply custom filter early if provided
       if (filter && !filter(item)) continue;
 
-      // Double-check cursor filtering with actual createdAt from JSON
+      // Double-check cursor filtering with actual createdAt from payload
       // (in case ULID timestamp differs from stored createdAt)
       if (parsedCursor) {
         const itemTime = item.createdAt.getTime();

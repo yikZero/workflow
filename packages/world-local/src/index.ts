@@ -29,7 +29,7 @@ export {
   parseVersion,
 } from './init.js';
 
-export { type DirectHandler } from './queue.js';
+export type { DirectHandler } from './queue.js';
 
 export type LocalWorld = World & {
   /** Register a direct in-process handler for a queue prefix, bypassing HTTP. */
@@ -49,7 +49,7 @@ export type LocalWorld = World & {
  * @param args.port - Port override for queue transport (default: auto-detected)
  * @param args.baseUrl - Full base URL override for queue transport (default: `http://localhost:{port}`)
  * @param args.tag - Optional tag to scope files (e.g., `vitest-0`). When set, files are written
- *   as `{id}.{tag}.json` and `clear()` only deletes files matching this tag.
+ *   as `{id}.{tag}.cbor` and `clear()` only deletes files matching this tag.
  * @throws {DataDirAccessError} If the data directory cannot be created or accessed
  * @throws {DataDirVersionError} If the data directory version is incompatible
  */

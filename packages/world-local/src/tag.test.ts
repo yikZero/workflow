@@ -56,7 +56,7 @@ describe('File tagging', () => {
       const runsDir = path.join(testDir, 'runs');
       const files = await fs.readdir(runsDir);
       expect(files).toHaveLength(1);
-      expect(files[0]).toMatch(/\.vitest-0\.json$/);
+      expect(files[0]).toMatch(/\.vitest-0\.cbor$/);
       expect(files[0]).toContain(run.runId);
     });
 
@@ -71,7 +71,7 @@ describe('File tagging', () => {
       const eventsDir = path.join(testDir, 'events');
       const files = await fs.readdir(eventsDir);
       expect(files).toHaveLength(1);
-      expect(files[0]).toMatch(/\.vitest-0\.json$/);
+      expect(files[0]).toMatch(/\.vitest-0\.cbor$/);
     });
 
     it('should write step files with tag suffix', async () => {
@@ -91,7 +91,7 @@ describe('File tagging', () => {
       const stepsDir = path.join(testDir, 'steps');
       const files = await fs.readdir(stepsDir);
       expect(files).toHaveLength(1);
-      expect(files[0]).toMatch(/\.vitest-0\.json$/);
+      expect(files[0]).toMatch(/\.vitest-0\.cbor$/);
     });
   });
 
@@ -333,16 +333,16 @@ describe('File tagging', () => {
       // Verify hook file was created with tag
       const hooksDir = path.join(testDir, 'hooks');
       const hookFiles = (await fs.readdir(hooksDir)).filter((f) =>
-        f.endsWith('.json')
+        f.endsWith('.cbor')
       );
       expect(hookFiles).toHaveLength(1);
-      expect(hookFiles[0]).toMatch(/\.vitest-0\.json$/);
+      expect(hookFiles[0]).toMatch(/\.vitest-0\.cbor$/);
 
       await world.clear();
 
       // Both the tagged hook file and the untagged constraint file should be gone
       const hookFilesAfter = (await fs.readdir(hooksDir)).filter((f) =>
-        f.endsWith('.json')
+        f.endsWith('.cbor')
       );
       expect(hookFilesAfter).toHaveLength(0);
 
@@ -399,21 +399,27 @@ describe('File tagging', () => {
       for (const dir of [runsDir, eventsDir, stepsDir]) {
         const files = await fs.readdir(dir);
         for (const file of files) {
-          expect(file).toMatch(/\.vitest-0\.json$/);
+          expect(file).toMatch(/\.vitest-0\.cbor$/);
         }
       }
     });
   });
 
   describe('listJSONFiles with tagged files', () => {
-    it('should return fileIds including tag for correct path construction', async () => {
+    it('should return fileIds for both cbor and legacy json files', async () => {
       const dir = path.join(testDir, 'runs');
       await fs.mkdir(dir, { recursive: true });
 
-      // Write tagged and untagged files
+      // Write tagged and untagged files in both cbor and json formats.
+      // listJSONFiles should dedupe by fileId and prefer cbor when both exist.
+      await fs.writeFile(path.join(dir, 'wrun_ABC.cbor'), Buffer.from([0xa0]));
       await fs.writeFile(
         path.join(dir, 'wrun_ABC.json'),
         JSON.stringify({ id: 'wrun_ABC' })
+      );
+      await fs.writeFile(
+        path.join(dir, 'wrun_DEF.vitest-0.cbor'),
+        Buffer.from([0xa0])
       );
       await fs.writeFile(
         path.join(dir, 'wrun_DEF.vitest-0.json'),
@@ -422,7 +428,7 @@ describe('File tagging', () => {
 
       const fileIds = await listJSONFiles(dir);
       expect(fileIds).toHaveLength(2);
-      // fileIds include the tag so paginatedFileSystemQuery can construct correct paths
+      // fileIds include the tag so paginatedFileSystemQuery can construct correct paths.
       expect(fileIds.sort()).toEqual(['wrun_ABC', 'wrun_DEF.vitest-0']);
     });
   });

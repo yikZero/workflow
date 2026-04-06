@@ -33,8 +33,8 @@ export function createHooksStorage(
     const files = await listJSONFiles(hooksDir);
 
     for (const file of files) {
-      const hookPath = path.join(hooksDir, `${file}.json`);
-      const hook = await readJSON(hookPath, HookSchema);
+      const hookBasePath = path.join(hooksDir, file);
+      const hook = await readJSON(hookBasePath, HookSchema);
       if (hook && hook.token === token) {
         return { ...hook, isWebhook: hook.isWebhook ?? true };
       }
@@ -91,7 +91,7 @@ export function createHooksStorage(
       },
       getCreatedAt: () => {
         // Hook files don't have ULID timestamps in filename, so return null
-        // to skip the filename-based optimization and defer to JSON-based
+        // to skip the filename-based optimization and defer to payload-based
         // cursor filtering which uses the actual createdAt from the file.
         return null;
       },
@@ -120,8 +120,8 @@ export async function deleteAllHooksForRun(
   const files = await listJSONFiles(hooksDir);
 
   for (const file of files) {
-    const hookPath = path.join(hooksDir, `${file}.json`);
-    const hook = await readJSON(hookPath, HookSchema);
+    const hookBasePath = path.join(hooksDir, file);
+    const hook = await readJSON(hookBasePath, HookSchema);
     if (hook && hook.runId === runId) {
       // Delete the token constraint file to free up the token
       const constraintPath = path.join(
@@ -130,7 +130,10 @@ export async function deleteAllHooksForRun(
         `${hashToken(hook.token)}.json`
       );
       await deleteJSON(constraintPath);
-      await deleteJSON(hookPath);
+      await Promise.all([
+        deleteJSON(`${hookBasePath}.cbor`),
+        deleteJSON(`${hookBasePath}.json`),
+      ]);
     }
   }
 }

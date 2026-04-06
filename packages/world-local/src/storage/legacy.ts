@@ -44,7 +44,7 @@ export async function handleLegacyEvent(
         completedAt: now,
         updatedAt: now,
       };
-      const runPath = path.join(basedir, 'runs', `${runId}.json`);
+      const runPath = path.join(basedir, 'runs', `${runId}.cbor`);
       await writeJSON(runPath, run, { overwrite: true });
       await deleteAllHooksForRun(basedir, runId);
       // Return without event (legacy behavior skips event storage)
@@ -70,7 +70,7 @@ export async function handleLegacyEvent(
         specVersion: SPEC_VERSION_CURRENT,
       };
       const compositeKey = `${runId}-${eventId}`;
-      const eventPath = path.join(basedir, 'events', `${compositeKey}.json`);
+      const eventPath = path.join(basedir, 'events', `${compositeKey}.cbor`);
       await writeJSON(eventPath, event);
       return { event: stripEventDataRefs(event, resolveData) };
     }
