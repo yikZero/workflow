@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, relative } from 'node:path';
+import { relative } from 'node:path';
 import { promisify } from 'node:util';
 import enhancedResolveOrig from 'enhanced-resolve';
 import type { Plugin } from 'esbuild';
@@ -124,34 +124,42 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
         }
 
         try {
-          let resolvedPath: string | false | undefined = args.path;
-          let resolvedViaEsbuild = false;
+          const specifier = args.path;
+          const specifierIsPath =
+            specifier.startsWith('.') || specifier.startsWith('/');
 
-          // handle local imports e.g. ./hello or ../another
-          if (args.path.startsWith('.')) {
-            resolvedPath = await enhancedResolve(args.resolveDir, args.path);
+          let resolvedPath: string | false | undefined;
+          // Determines whether the external path should be relativized
+          // (project-local file) or kept as a bare specifier (npm package).
+          let shouldMakeRelative = specifierIsPath;
+
+          if (specifierIsPath) {
+            resolvedPath = await enhancedResolve(args.resolveDir, specifier);
           } else {
+            // Resolve from project root so nested deps aren't externalized
             resolvedPath = await enhancedResolve(
-              // `args.resolveDir` is not used here to ensure we only
-              // externalize packages that can be resolved in the
-              // project's working directory e.g. a nested dep can't
-              // be externalized as we won't be able to resolve it once
-              // it's parent has been bundled
               build.initialOptions.absWorkingDir || process.cwd(),
-              args.path
+              specifier
             ).catch(() => undefined); // swallow so esbuild fallback below can try
 
-            // enhanced-resolve doesn't handle esbuild aliases or tsconfig
-            // paths. Fall back to esbuild's own resolver which does.
+            // Fall back to esbuild for aliases/tsconfig paths,
+            // but only accept project-local results
             if (!resolvedPath) {
-              const esbuildResult = await build.resolve(args.path, {
+              const esbuildResult = await build.resolve(specifier, {
                 resolveDir: args.resolveDir,
                 kind: args.kind,
                 pluginData: { skipSwcPlugin: true },
               });
-              if (esbuildResult.path && !esbuildResult.errors.length) {
+              const didResolve =
+                !!esbuildResult.path && !esbuildResult.errors.length;
+              const isProjectLocalFile =
+                didResolve &&
+                !esbuildResult.path
+                  .replace(/\\/g, '/')
+                  .includes('/node_modules/');
+              if (isProjectLocalFile) {
                 resolvedPath = esbuildResult.path;
-                resolvedViaEsbuild = true;
+                shouldMakeRelative = true;
               }
             }
           }
@@ -199,13 +207,8 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
                 : null;
             }
 
-            const isFilePath =
-              args.path.startsWith('.') ||
-              args.path.startsWith('/') ||
-              (resolvedViaEsbuild && isAbsolute(resolvedPath));
-
             let externalPath: string;
-            if (isFilePath) {
+            if (shouldMakeRelative) {
               externalPath = relative(
                 options.outdir || process.cwd(),
                 resolvedPath
@@ -220,7 +223,7 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
                   .replace(/\.cts$/, '.cjs');
               }
             } else {
-              externalPath = args.path;
+              externalPath = specifier;
             }
 
             return {
