@@ -48,7 +48,7 @@ Every iteration appends to the workflow's event log. For workflows that run inde
 
 ### Dispatcher Loop
 
-A long-running dispatcher loop that uses a step function to call `start()` and kick off **background child workflows** without awaiting their completion. Each child workflow runs with its own event log, so the dispatcher's log stays small.
+A long-running dispatcher loop that uses a step function to call `start()` and kick off **background child workflows** without awaiting their completion. Each child workflow runs with its own event log, so the dispatcher's log grows slowly since the heavy work runs in child workflows. For truly long-lived dispatchers, combine this with daisy-chaining to periodically reset the log.
 
 ```typescript title="workflows/cron-dispatcher.ts" lineNumbers
 import { sleep } from "workflow";
@@ -64,7 +64,7 @@ export async function cronDispatcherWorkflow() {
     // Run daily report every iteration
     await triggerDailyReport();
 
-    // Run cleanup every 7 iterations (weekly), skipping the first run
+    // Run cleanup every 7th iteration (weekly)
     iteration++;
     if (iteration % 7 === 0) { // [!code highlight]
       await triggerCleanup(); // [!code highlight]
@@ -83,7 +83,7 @@ export async function triggerDailyReport() {
 
   // stepId is stable across retries — use it if the child workflow
   // needs deduplication (e.g., as an idempotency key for external APIs)
-  const run = await start(dailyReportWorkflow, []); // [!code highlight]
+  const run = await start(dailyReportWorkflow, []); // defined below // [!code highlight]
   return run.runId;
 }
 
@@ -92,7 +92,7 @@ export async function triggerCleanup() {
 
   // stepId is stable across retries — use it if the child workflow
   // needs deduplication (e.g., as an idempotency key for external APIs)
-  const run = await start(cleanupWorkflow, []);
+  const run = await start(cleanupWorkflow, []); // defined below
   return run.runId;
 }
 
@@ -158,8 +158,9 @@ declare function sendReport(period: string): Promise<void>; // @setup
 export async function endOfMonthReportWorkflow(year: number, monthNumber: number) {
   "use workflow";
 
-  // monthNumber is 1-12; Date constructor uses 0-based months
-  // new Date(2025, 6, 1) = July 1st 2025 (month index 6 = July)
+  // Sleep until the 1st of the following month.
+  // monthNumber is 1-indexed (1 = Jan), and Date() months are 0-indexed,
+  // so passing monthNumber directly gives us the next month.
   const reportDate = new Date(year, monthNumber, 1, 0, 0, 0); // [!code highlight]
   await sleep(reportDate); // [!code highlight]
 
@@ -196,9 +197,7 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 
       if (consecutiveFailures >= 10) { // [!code highlight]
         throw new Error(`${serviceUrl} unrecoverable after 10 consecutive failures`); // [!code highlight]
-      }
-
-      if (consecutiveFailures >= 3) { // [!code highlight]
+      } else if (consecutiveFailures >= 3) { // [!code highlight]
         await restartService(serviceUrl); // [!code highlight]
         consecutiveFailures = 0; // [!code highlight]
       }
@@ -211,7 +210,7 @@ export async function healthCheckWorkflow(serviceUrl: string) {
 }
 ```
 
-The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart and resets the counter to give the service a recovery window. After ten consecutive failures, a standard error permanently stops the workflow to prevent infinite restart loops. All of this state survives server restarts because the workflow is durable.
+The workflow tracks `consecutiveFailures` across iterations. After three consecutive failures, it escalates to a service restart and resets the counter to give the service a recovery window. If failures reach ten without a single healthy check in between, a standard error permanently stops the workflow to prevent infinite restart loops. All of this state survives server restarts because the workflow is durable.
 
 <Callout type="info">
 `FatalError` is designed for use inside `"use step"` functions to stop step retries. At the workflow level, a standard `throw new Error(...)` produces the same workflow failure state.
