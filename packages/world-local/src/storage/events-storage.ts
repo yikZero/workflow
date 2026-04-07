@@ -31,6 +31,7 @@ import {
 } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
 import {
+  deleteEntity,
   deleteFile,
   listEntityFiles,
   paginatedFileSystemQuery,
@@ -60,11 +61,7 @@ async function deleteAllWaitsForRun(
     // fileIds may contain tag suffixes (e.g., "wrun_ABC-corrId.vitest-0")
     // but startsWith still matches correctly since the tag is a suffix.
     if (file.startsWith(`${runId}-`)) {
-      const waitBasePath = path.join(waitsDir, file);
-      await Promise.all([
-        deleteFile(`${waitBasePath}.cbor`),
-        deleteFile(`${waitBasePath}.json`),
-      ]);
+      await deleteEntity(path.join(waitsDir, file));
     }
   }
 }
@@ -842,7 +839,6 @@ export function createEventsStorage(
           );
         }
         // Read the hook to get its token before deleting
-        const hookPath = taggedPath(basedir, 'hooks', data.correlationId, tag);
         const existingHook = await readEntityWithFallback(
           basedir,
           'hooks',
@@ -860,7 +856,17 @@ export function createEventsStorage(
           );
           await deleteFile(disposedConstraintPath);
         }
-        await deleteFile(hookPath);
+        // Delete both tagged and untagged entity variants in both formats
+        const hookBasePath = path.join(
+          basedir,
+          'hooks',
+          tag ? `${data.correlationId}.${tag}` : data.correlationId
+        );
+        await deleteEntity(hookBasePath);
+        if (tag) {
+          // Also delete untagged variant in case it was written without a tag
+          await deleteEntity(path.join(basedir, 'hooks', data.correlationId));
+        }
       } else if (data.eventType === 'wait_created' && 'eventData' in data) {
         // wait_created: Creates wait entity with status 'waiting'
         const waitData = data.eventData as {

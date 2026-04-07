@@ -218,7 +218,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function normalizeDecodedBinary(value: unknown): unknown {
   if (Buffer.isBuffer(value)) {
-    return Uint8Array.from(value);
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
   if (Array.isArray(value)) {
     return value.map((item) => normalizeDecodedBinary(item));
@@ -375,6 +375,17 @@ export async function deleteFile(filePath: string): Promise<void> {
 }
 
 /**
+ * Delete an entity by base path (without extension), removing both
+ * `.cbor` and legacy `.json` variants.
+ */
+export async function deleteEntity(basePath: string): Promise<void> {
+  await Promise.all([
+    deleteFile(`${basePath}${ENTITY_FILE_EXTENSION}`),
+    deleteFile(`${basePath}${LEGACY_ENTITY_FILE_EXTENSION}`),
+  ]);
+}
+
+/**
  * Atomically create a file using O_CREAT | O_EXCL flags.
  * Returns true if the file was created, false if it already exists.
  * This is atomic at the OS level, safe for concurrent access.
@@ -398,15 +409,34 @@ export async function writeExclusive(
 /**
  * Like writeExclusive, but encodes entity data using the correct format
  * (CBOR for `.cbor` paths, JSON for `.json` paths) before writing.
+ * Also treats an existing legacy `.json` sibling as a conflict (returns false),
+ * and removes the legacy sibling on success to complete migration.
  */
 export async function writeEntityExclusive(
   filePath: string,
   data: any
 ): Promise<boolean> {
+  const legacyPath = toLegacyEntityPath(filePath);
+  if (legacyPath) {
+    try {
+      await fs.access(legacyPath);
+      // Legacy sibling exists — treat as conflict
+      return false;
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+
   const encoded = filePath.endsWith(ENTITY_FILE_EXTENSION)
     ? Buffer.from(encode(data))
     : JSON.stringify(data, jsonReplacer, 2);
-  return writeExclusive(filePath, encoded);
+  const created = await writeExclusive(filePath, encoded);
+
+  if (created && legacyPath) {
+    await deleteFile(legacyPath);
+  }
+
+  return created;
 }
 
 export async function listEntityFiles(dirPath: string): Promise<string[]> {

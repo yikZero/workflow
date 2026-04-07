@@ -10,6 +10,7 @@ import type {
 import { HookSchema } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
 import {
+  deleteEntity,
   deleteFile,
   listEntityFiles,
   paginatedFileSystemQuery,
@@ -130,10 +131,7 @@ export async function deleteAllHooksForRun(
         `${hashToken(hook.token)}.json`
       );
       await deleteFile(constraintPath);
-      await Promise.all([
-        deleteFile(`${hookBasePath}.cbor`),
-        deleteFile(`${hookBasePath}.json`),
-      ]);
+      await deleteEntity(hookBasePath);
     }
   }
 }
