@@ -6,7 +6,7 @@ import { applySwcTransform } from './apply-swc-transform.js';
 import {
   detectWorkflowPatterns,
   isGeneratedWorkflowFile,
-  isWorkflowSdkFile,
+  isSerdeInfrastructureFile,
 } from './transform-utils.js';
 
 const enhancedResolve = promisify(enhancedResolveOriginal);
@@ -125,9 +125,10 @@ export function createDiscoverEntriesPlugin(
           // This is critical for Windows where paths contain backslashes
           const normalizedPath = args.path.replace(/\\/g, '/');
 
-          // For @workflow SDK packages, only discover files with actual directives,
-          // not files that just match serde patterns (which are internal SDK implementation files)
-          const isSdkFile = isWorkflowSdkFile(args.path);
+          // Files that are serde infrastructure (e.g. @workflow/serde constants,
+          // @workflow/core serialization engine) should not be discovered as serde
+          // entry points -- they match serde patterns but define no serde classes.
+          const isSerdeInfra = isSerdeInfrastructureFile(args.path);
 
           if (patterns.hasUseWorkflow) {
             state.discoveredWorkflows.push(normalizedPath);
@@ -140,8 +141,8 @@ export function createDiscoverEntriesPlugin(
           // Track all serde files separately for cross-context class registration.
           // Classes need to be registered in all bundle contexts (step, workflow, client)
           // to support serialization across execution boundaries.
-          // Skip @workflow SDK packages since those are internal implementation files.
-          if (patterns.hasSerde && !isSdkFile) {
+          // Skip serde infrastructure files since those have no serde classes.
+          if (patterns.hasSerde && !isSerdeInfra) {
             if (!state.discoveredSerdeFiles.includes(normalizedPath)) {
               state.discoveredSerdeFiles.push(normalizedPath);
             }

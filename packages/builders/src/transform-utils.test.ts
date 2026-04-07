@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectWorkflowPatterns,
-  isWorkflowSdkFile,
+  isSerdeInfrastructureFile,
   useStepPattern,
   useWorkflowPattern,
   workflowSerdeComputedPropertyPattern,
@@ -334,41 +334,111 @@ describe('transform-utils patterns', () => {
     });
   });
 
-  describe('isWorkflowSdkFile', () => {
-    it('matches direct @workflow package path in node_modules', () => {
+  describe('isSerdeInfrastructureFile', () => {
+    // @workflow/serde package — defines symbol constants, no serde classes
+    it('matches @workflow/serde in node_modules', () => {
       expect(
-        isWorkflowSdkFile(
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/@workflow/serde/dist/index.js'
+        )
+      ).toBe(true);
+    });
+
+    it('matches @workflow/serde in pnpm virtual store', () => {
+      expect(
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/.pnpm/@workflow+serde@1.0.0/node_modules/@workflow/serde/dist/index.js'
+        )
+      ).toBe(true);
+    });
+
+    it('matches @workflow/serde in monorepo packages/', () => {
+      expect(
+        isSerdeInfrastructureFile('/repo/packages/serde/src/index.ts')
+      ).toBe(true);
+    });
+
+    // @workflow/core serialization module — runtime engine, no serde classes
+    it('matches @workflow/core serialization.js in node_modules', () => {
+      expect(
+        isSerdeInfrastructureFile(
           '/tmp/app/node_modules/@workflow/core/dist/serialization.js'
         )
       ).toBe(true);
     });
 
-    it('matches direct workflow package path in node_modules', () => {
+    it('matches @workflow/core serialization.ts in monorepo packages/', () => {
       expect(
-        isWorkflowSdkFile('/tmp/app/node_modules/workflow/dist/runtime.js')
+        isSerdeInfrastructureFile('/repo/packages/core/src/serialization.ts')
       ).toBe(true);
     });
 
-    it('matches pnpm virtual store @workflow package path', () => {
+    it('matches @workflow/core serialization in pnpm virtual store', () => {
       expect(
-        isWorkflowSdkFile(
+        isSerdeInfrastructureFile(
           '/tmp/app/node_modules/.pnpm/@workflow+core@4.1.0/node_modules/@workflow/core/dist/serialization.js'
         )
       ).toBe(true);
     });
 
-    it('matches pnpm virtual store workflow package path', () => {
+    // Other @workflow/core files should NOT be excluded
+    it('does not match other @workflow/core files', () => {
       expect(
-        isWorkflowSdkFile(
-          '/tmp/app/node_modules/.pnpm/workflow@4.1.0/node_modules/workflow/dist/runtime.js'
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/@workflow/core/dist/index.js'
         )
-      ).toBe(true);
+      ).toBe(false);
     });
 
-    it('does not match non-workflow package in pnpm store', () => {
+    it('does not match @workflow/core serialization-format.js', () => {
       expect(
-        isWorkflowSdkFile(
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/@workflow/core/dist/serialization-format.js'
+        )
+      ).toBe(false);
+    });
+
+    // Other @workflow packages should NOT be excluded
+    it('does not match workflow package runtime', () => {
+      expect(
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/workflow/dist/runtime.js'
+        )
+      ).toBe(false);
+    });
+
+    it('does not match other @workflow packages', () => {
+      expect(
+        isSerdeInfrastructureFile(
+          '/tmp/app/node_modules/@workflow/next/dist/loader.js'
+        )
+      ).toBe(false);
+    });
+
+    // Non-workflow packages should NOT be excluded
+    it('does not match non-workflow packages', () => {
+      expect(
+        isSerdeInfrastructureFile(
           '/tmp/app/node_modules/.pnpm/lodash@4.17.21/node_modules/lodash/lodash.js'
+        )
+      ).toBe(false);
+    });
+
+    // Backslash paths (Windows)
+    it('handles Windows-style backslash paths', () => {
+      expect(
+        isSerdeInfrastructureFile(
+          'C:\\Users\\dev\\app\\node_modules\\@workflow\\serde\\dist\\index.js'
+        )
+      ).toBe(true);
+      expect(
+        isSerdeInfrastructureFile(
+          'C:\\Users\\dev\\app\\node_modules\\@workflow\\core\\dist\\serialization.js'
+        )
+      ).toBe(true);
+      expect(
+        isSerdeInfrastructureFile(
+          'C:\\Users\\dev\\app\\node_modules\\@workflow\\core\\dist\\index.js'
         )
       ).toBe(false);
     });

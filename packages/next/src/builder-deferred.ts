@@ -57,7 +57,7 @@ export async function getNextBuilderDeferred() {
     applySwcTransform,
     detectWorkflowPatterns,
     getImportPath,
-    isWorkflowSdkFile,
+    isSerdeInfrastructureFile,
     resolveWorkflowAliasRelativePath,
     // biome-ignore lint/security/noGlobalEval: Need to use eval here to avoid TypeScript from transpiling the import statement into `require()`
   } = (await eval(
@@ -274,23 +274,23 @@ export async function getNextBuilderDeferred() {
             }
 
             if (!validatePatterns) {
-              const isSdkFile = isWorkflowSdkFile(filePath);
+              const isSerdeInfra = isSerdeInfrastructureFile(filePath);
               return {
                 filePath,
                 hasUseWorkflow: candidates.hasWorkflowCandidate,
                 hasUseStep: candidates.hasStepCandidate,
-                hasSerde: candidates.hasSerdeCandidate && !isSdkFile,
+                hasSerde: candidates.hasSerdeCandidate && !isSerdeInfra,
               };
             }
 
             const source = await readFile(filePath, 'utf-8');
             const patterns = detectWorkflowPatterns(source);
-            const isSdkFile = isWorkflowSdkFile(filePath);
+            const isSerdeInfra = isSerdeInfrastructureFile(filePath);
             return {
               filePath,
               hasUseWorkflow: patterns.hasUseWorkflow,
               hasUseStep: patterns.hasUseStep,
-              hasSerde: patterns.hasSerde && !isSdkFile,
+              hasSerde: patterns.hasSerde && !isSerdeInfra,
             };
           } catch {
             return null;
@@ -1631,7 +1631,10 @@ export async function getNextBuilderDeferred() {
 
       for (const serdeSeedFile of normalizedSerdeSeedFiles) {
         const seedPatterns = await getPatterns(serdeSeedFile);
-        if (seedPatterns?.hasSerde && !isWorkflowSdkFile(serdeSeedFile)) {
+        if (
+          seedPatterns?.hasSerde &&
+          !isSerdeInfrastructureFile(serdeSeedFile)
+        ) {
           discoveredSerdeFiles.add(serdeSeedFile);
         }
       }
@@ -1667,7 +1670,7 @@ export async function getNextBuilderDeferred() {
           const importPatterns = await getPatterns(resolvedImportPath);
           if (
             importPatterns?.hasSerde &&
-            !isWorkflowSdkFile(resolvedImportPath)
+            !isSerdeInfrastructureFile(resolvedImportPath)
           ) {
             discoveredSerdeFiles.add(resolvedImportPath);
           }

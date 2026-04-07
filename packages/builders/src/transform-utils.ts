@@ -27,17 +27,56 @@ export const workflowSerdeComputedPropertyPattern =
 export const generatedWorkflowPathPattern =
   /[/\\]\.well-known[/\\]workflow[/\\]/;
 
-// Pattern to detect @workflow SDK packages that should be excluded from transformation
-// These are internal SDK packages that should not be treated as user entry points.
-// Matches:
-// - node_modules/@workflow/*
-// - node_modules/workflow/*
-// - node_modules/.pnpm/.../node_modules/@workflow/* (pnpm virtual store)
-// - node_modules/.pnpm/.../node_modules/workflow/* (pnpm virtual store)
-// - monorepo packages/*/dist paths
-// User npm packages with workflows/steps/serde SHOULD still be discovered.
-export const workflowSdkPathPattern =
-  /[/\\](?:node_modules[/\\](?:@workflow[/\\]|workflow[/\\]|\.pnpm[/\\][^/\\]+[/\\]node_modules[/\\](?:@workflow[/\\]|workflow[/\\]))|packages[/\\](?:builders|core|rollup|vite|next|nitro|serde|workflow|swc-plugin-workflow)[/\\])/;
+/**
+ * Checks whether a file path belongs to serde infrastructure code that should
+ * be excluded from serde discovery and transformation. These files match serde
+ * patterns (e.g. they import `@workflow/serde` or reference the symbols) but do
+ * NOT define any classes that implement the serde protocol.
+ *
+ * Excluded files:
+ * - `@workflow/serde` package: only defines the `WORKFLOW_SERIALIZE` /
+ *   `WORKFLOW_DESERIALIZE` symbol constants.
+ * - `@workflow/core` serialization module (`serialization.{ts,js}`): the
+ *   runtime serialization engine that uses the symbols for introspection.
+ *
+ * Other files within `@workflow/*` packages (including those that define
+ * serde-implementing classes) are intentionally NOT excluded.
+ */
+export function isSerdeInfrastructureFile(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/');
+
+  // The @workflow/serde package only exports the WORKFLOW_SERIALIZE and
+  // WORKFLOW_DESERIALIZE symbol constants. It will never contain classes.
+  // Handles both standard and pnpm virtual store paths, e.g.:
+  //   node_modules/@workflow/serde/dist/index.js
+  //   node_modules/.pnpm/@workflow+serde@1.0.0/node_modules/@workflow/serde/dist/index.js
+  //   packages/serde/src/index.ts  (monorepo)
+  if (
+    normalized.includes('/node_modules/@workflow/serde/') ||
+    normalized.includes('/packages/serde/')
+  ) {
+    return true;
+  }
+
+  // The serialization module in @workflow/core is the runtime serialization
+  // engine. It imports and uses the serde symbols for runtime introspection
+  // but does not define any classes that implement the serde protocol.
+  // We check that the file is inside @workflow/core AND the basename is
+  // "serialization.*" (e.g. serialization.ts, serialization.js).
+  const isInCore =
+    normalized.includes('/node_modules/@workflow/core/') ||
+    normalized.includes('/packages/core/');
+  if (isInCore) {
+    const lastSlash = normalized.lastIndexOf('/');
+    const basename =
+      lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+    if (basename.startsWith('serialization.')) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 /**
  * Detects workflow-related patterns in source code.
@@ -90,22 +129,13 @@ export function isGeneratedWorkflowFile(filePath: string): boolean {
 }
 
 /**
- * Determines if a file path is part of the @workflow SDK.
- * @param filePath - The file path to check
- * @returns true if the file is part of the @workflow SDK
- */
-export function isWorkflowSdkFile(filePath: string): boolean {
-  return workflowSdkPathPattern.test(filePath);
-}
-
-/**
  * Determines if a file should be transformed based on its path and content patterns.
  *
  * Logic:
  * - Generated workflow route files are never transformed
  * - Files with directives ('use workflow' or 'use step') are always transformed
- * - Files with serde patterns are transformed, unless they're @workflow SDK files
- *   (SDK files with serde patterns are internal implementation, not user code)
+ * - Files with serde patterns are transformed, unless they're serde infrastructure
+ *   files (e.g. @workflow/serde constants, @workflow/core serialization engine)
  *
  * @param filePath - The file path to check
  * @param patterns - The detected patterns from detectWorkflowPatterns()
@@ -125,9 +155,9 @@ export function shouldTransformFile(
     return true;
   }
 
-  // Transform files with serde patterns, unless they're @workflow SDK files
+  // Transform files with serde patterns, unless they're serde infrastructure files
   if (patterns.hasSerde) {
-    return !isWorkflowSdkFile(filePath);
+    return !isSerdeInfrastructureFile(filePath);
   }
 
   return false;
