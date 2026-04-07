@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { isBuiltin } from 'node:module';
 import { relative } from 'node:path';
 import { promisify } from 'node:util';
 import enhancedResolveOrig from 'enhanced-resolve';
@@ -141,6 +142,13 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
               build.initialOptions.absWorkingDir || process.cwd(),
               specifier
             ).catch(() => undefined); // swallow so esbuild fallback below can try
+
+            // Node.js builtins (e.g. "crypto", "node:path") aren't resolvable
+            // by enhanced-resolve either, but must stay as bare specifiers —
+            // not be handed to esbuild's resolver which would relativize them.
+            if (!resolvedPath && isBuiltin(specifier)) {
+              return null;
+            }
 
             // Fall back to esbuild for aliases/tsconfig paths,
             // but only accept project-local results

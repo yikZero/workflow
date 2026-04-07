@@ -122,6 +122,42 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     expect(output).not.toContain('@/lib/config');
   });
 
+  it('keeps Node.js builtins as bare specifiers when enhanced-resolve fails', async () => {
+    const outdir = join(testRoot, 'out');
+    const srcDir = join(testRoot, 'src');
+    const stepFile = join(srcDir, 'step.ts');
+
+    writeFile(
+      stepFile,
+      `import { randomUUID } from 'crypto';\nimport { join } from 'node:path';\nconsole.log(randomUUID(), join('a', 'b'));`
+    );
+
+    const result = await esbuild.build({
+      entryPoints: [stepFile],
+      absWorkingDir: testRoot,
+      outdir,
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      write: false,
+      plugins: [
+        createSwcPlugin({
+          mode: 'step',
+          entriesToBundle: [stepFile],
+          outdir,
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputFiles[0].text;
+    // Builtins must stay as bare specifiers, not be relativized
+    expect(output).toMatch(/from\s+["']crypto["']/);
+    expect(output).toMatch(/from\s+["']node:path["']/);
+    expect(output).not.toMatch(/from\s+["']\..*crypto/);
+    expect(output).not.toMatch(/from\s+["']\..*node:path/);
+  });
+
   it('does not externalize aliased imports that resolve into node_modules', async () => {
     const outdir = join(testRoot, 'out');
     const srcDir = join(testRoot, 'src');
