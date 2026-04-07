@@ -100,16 +100,19 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
         }
       };
 
-      // Pre-compute the normalized side-effect entries set for O(1) lookups.
+      // Pre-compute normalized sets for O(1) lookups in the hot path.
       const normalizedSideEffectEntries = new Set(
         options.sideEffectEntries?.map((e) => e.replace(/\\/g, '/'))
+      );
+      const normalizedEntriesToBundle = options.entriesToBundle?.map((e) =>
+        e.replace(/\\/g, '/')
       );
 
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.pluginData?.skipSwcPlugin) return null;
 
         if (
-          !options.entriesToBundle &&
+          !normalizedEntriesToBundle &&
           normalizedSideEffectEntries.size === 0
         ) {
           return null;
@@ -119,51 +122,43 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
         // need to override sideEffects for top-level bare imports — typically
         // from the virtual entry. Skip resolution for transitive imports
         // (dynamic imports, requires, etc.) to avoid unnecessary overhead.
-        if (!options.entriesToBundle && args.kind !== 'import-statement') {
+        if (!normalizedEntriesToBundle && args.kind !== 'import-statement') {
           return null;
         }
 
         try {
           const specifier = args.path;
-          const specifierIsPath =
+          const isPathSpecifier =
             specifier.startsWith('.') || specifier.startsWith('/');
+          const projectRoot =
+            build.initialOptions.absWorkingDir || process.cwd();
 
-          let resolvedPath: string | false | undefined;
-          // Determines whether the external path should be relativized
-          // (project-local file) or kept as a bare specifier (npm package).
-          let shouldMakeRelative = specifierIsPath;
+          // Resolve path: enhanced-resolve first, esbuild fallback for
+          // aliases/tsconfig paths (project-local results only).
+          const directResolved = isPathSpecifier
+            ? await enhancedResolve(args.resolveDir, specifier)
+            : // Resolve from project root so nested deps aren't externalized
+              await enhancedResolve(projectRoot, specifier).catch(
+                () => undefined // swallow so esbuild fallback below can try
+              );
 
-          if (specifierIsPath) {
-            resolvedPath = await enhancedResolve(args.resolveDir, specifier);
-          } else {
-            // Resolve from project root so nested deps aren't externalized
-            resolvedPath = await enhancedResolve(
-              build.initialOptions.absWorkingDir || process.cwd(),
-              specifier
-            ).catch(() => undefined); // swallow so esbuild fallback below can try
-
-            // Fall back to esbuild for aliases/tsconfig paths,
-            // but only accept project-local results
-            if (!resolvedPath) {
-              const esbuildResult = await build.resolve(specifier, {
-                resolveDir: args.resolveDir,
-                kind: args.kind,
-                pluginData: { skipSwcPlugin: true },
-              });
-              const didResolve =
-                !!esbuildResult.path && !esbuildResult.errors.length;
-              const isProjectLocalFile =
-                didResolve &&
-                !esbuildResult.path
-                  .replace(/\\/g, '/')
-                  .includes('/node_modules/');
-              if (isProjectLocalFile) {
-                resolvedPath = esbuildResult.path;
-                shouldMakeRelative = true;
-              }
+          let fallbackResolved: string | undefined;
+          if (!isPathSpecifier && !directResolved) {
+            const result = await build.resolve(specifier, {
+              resolveDir: args.resolveDir,
+              kind: args.kind,
+              pluginData: { skipSwcPlugin: true },
+            });
+            const didResolve = !!result.path && !result.errors.length;
+            const isProjectLocalFile =
+              didResolve &&
+              !result.path.replace(/\\/g, '/').includes('/node_modules/');
+            if (isProjectLocalFile) {
+              fallbackResolved = result.path;
             }
           }
 
+          const resolvedPath = directResolved || fallbackResolved;
           if (!resolvedPath) return null;
 
           // Normalize to forward slashes for cross-platform comparison
@@ -177,70 +172,61 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
             normalizedResolvedPath
           );
 
-          if (options.entriesToBundle) {
-            let shouldBundle = false;
-            for (const entryToBundle of options.entriesToBundle) {
-              const normalizedEntry = entryToBundle.replace(/\\/g, '/');
-
-              if (normalizedResolvedPath === normalizedEntry) {
-                shouldBundle = true;
-                break;
-              }
-
-              // if the current entry imports a child that needs
-              // to be bundled then it needs to also be bundled so
-              // that the child can have our transform applied
-              if (parentHasChild(normalizedResolvedPath, normalizedEntry)) {
-                shouldBundle = true;
-                break;
-              }
-            }
-
-            if (shouldBundle) {
-              // Let esbuild bundle this entry, but override sideEffects if needed.
-              // We must return the resolved `path` alongside `sideEffects` because
-              // returning only `{ sideEffects: true }` without a path causes esbuild
-              // to fall through to its own resolver, which re-reads the package.json
-              // and applies `"sideEffects": false` from there.
-              return hasSideEffects
-                ? { path: resolvedPath, sideEffects: true }
-                : null;
-            }
-
-            let externalPath: string;
-            if (shouldMakeRelative) {
-              externalPath = relative(
-                options.outdir || process.cwd(),
-                resolvedPath
-              ).replace(/\\/g, '/');
-
-              if (options.rewriteTsExtensions) {
-                // Rewrite TypeScript extensions to their JS equivalents so the
-                // externalized import is loadable by Node's native ESM loader.
-                externalPath = externalPath
-                  .replace(/\.tsx?$/, '.js')
-                  .replace(/\.mts$/, '.mjs')
-                  .replace(/\.cts$/, '.cjs');
-              }
-            } else {
-              externalPath = specifier;
-            }
-
-            return {
-              external: true,
-              path: externalPath,
-              sideEffects: hasSideEffects || undefined,
-            };
+          if (!normalizedEntriesToBundle) {
+            // No entriesToBundle — only override sideEffects when needed.
+            // We must return the resolved `path` alongside `sideEffects` because
+            // returning only `{ sideEffects: true }` without a path causes esbuild
+            // to fall through to its own resolver, which re-reads the package.json
+            // and applies `"sideEffects": false` from there.
+            return hasSideEffects
+              ? { path: resolvedPath, sideEffects: true }
+              : null;
           }
 
-          // No entriesToBundle — only override sideEffects when needed.
-          // We must return the resolved `path` alongside `sideEffects` because
-          // returning only `{ sideEffects: true }` without a path causes esbuild
-          // to fall through to its own resolver, which re-reads the package.json
-          // and applies `"sideEffects": false` from there.
-          return hasSideEffects
-            ? { path: resolvedPath, sideEffects: true }
-            : null;
+          // if the current entry imports a child that needs
+          // to be bundled then it needs to also be bundled so
+          // that the child can have our transform applied
+          const shouldBundle = normalizedEntriesToBundle.some(
+            (entry) =>
+              normalizedResolvedPath === entry ||
+              parentHasChild(normalizedResolvedPath, entry)
+          );
+
+          if (shouldBundle) {
+            // Let esbuild bundle this entry, but override sideEffects if needed.
+            // We must return the resolved `path` alongside `sideEffects` because
+            // returning only `{ sideEffects: true }` without a path causes esbuild
+            // to fall through to its own resolver, which re-reads the package.json
+            // and applies `"sideEffects": false` from there.
+            return hasSideEffects
+              ? { path: resolvedPath, sideEffects: true }
+              : null;
+          }
+
+          let externalPath: string;
+          if (isPathSpecifier || fallbackResolved) {
+            externalPath = relative(
+              options.outdir || process.cwd(),
+              resolvedPath
+            ).replace(/\\/g, '/');
+
+            if (options.rewriteTsExtensions) {
+              // Rewrite TypeScript extensions to their JS equivalents so the
+              // externalized import is loadable by Node's native ESM loader.
+              externalPath = externalPath
+                .replace(/\.tsx?$/, '.js')
+                .replace(/\.mts$/, '.mjs')
+                .replace(/\.cts$/, '.cjs');
+            }
+          } else {
+            externalPath = specifier;
+          }
+
+          return {
+            external: true,
+            path: externalPath,
+            sideEffects: hasSideEffects || undefined,
+          };
         } catch (_) {}
         return null;
       });
