@@ -352,10 +352,24 @@ describe('transform-utils patterns', () => {
       ).toBe(true);
     });
 
-    it('matches @workflow/serde in monorepo packages/', () => {
+    it('matches @workflow/serde in monorepo packages/serde/src/index', () => {
       expect(
         isSerdeInfrastructureFile('/repo/packages/serde/src/index.ts')
       ).toBe(true);
+    });
+
+    it('matches @workflow/serde in monorepo packages/serde/dist/index', () => {
+      expect(
+        isSerdeInfrastructureFile('/repo/packages/serde/dist/index.js')
+      ).toBe(true);
+    });
+
+    it('does not match unrelated packages/serde directory', () => {
+      expect(
+        isSerdeInfrastructureFile(
+          '/user-monorepo/packages/serde/src/my-serializer.ts'
+        )
+      ).toBe(false);
     });
 
     // @workflow/core serialization module — runtime engine, no serde classes

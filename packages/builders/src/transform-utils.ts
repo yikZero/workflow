@@ -50,29 +50,24 @@ export function isSerdeInfrastructureFile(filePath: string): boolean {
   // Handles both standard and pnpm virtual store paths, e.g.:
   //   node_modules/@workflow/serde/dist/index.js
   //   node_modules/.pnpm/@workflow+serde@1.0.0/node_modules/@workflow/serde/dist/index.js
-  //   packages/serde/src/index.ts  (monorepo)
-  if (
-    normalized.includes('/node_modules/@workflow/serde/') ||
-    normalized.includes('/packages/serde/')
-  ) {
+  if (normalized.includes('/node_modules/@workflow/serde/')) {
     return true;
   }
 
   // The serialization module in @workflow/core is the runtime serialization
   // engine. It imports and uses the serde symbols for runtime introspection
   // but does not define any classes that implement the serde protocol.
-  // We check that the file is inside @workflow/core AND the basename is
-  // "serialization.*" (e.g. serialization.ts, serialization.js).
-  const isInCore =
-    normalized.includes('/node_modules/@workflow/core/') ||
-    normalized.includes('/packages/core/');
-  if (isInCore) {
-    const lastSlash = normalized.lastIndexOf('/');
-    const basename =
-      lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
-    if (basename.startsWith('serialization.')) {
-      return true;
-    }
+  // We match the specific file paths rather than broad directory patterns
+  // to avoid accidentally excluding user files in monorepos with similar paths.
+  if (
+    normalized.includes('/node_modules/@workflow/core/src/serialization.') ||
+    normalized.includes('/node_modules/@workflow/core/dist/serialization.') ||
+    normalized.includes('/packages/core/src/serialization.') ||
+    normalized.includes('/packages/core/dist/serialization.') ||
+    normalized.includes('/packages/serde/src/index.') ||
+    normalized.includes('/packages/serde/dist/index.')
+  ) {
+    return true;
   }
 
   return false;
