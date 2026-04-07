@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { listJSONFiles, stripTag } from './fs.js';
+import { listEntityFiles, stripTag } from './fs.js';
 import { createStorage } from './storage.js';
 import {
   createHook,
@@ -405,13 +405,13 @@ describe('File tagging', () => {
     });
   });
 
-  describe('listJSONFiles with tagged files', () => {
+  describe('listEntityFiles with tagged files', () => {
     it('should return fileIds for both cbor and legacy json files', async () => {
       const dir = path.join(testDir, 'runs');
       await fs.mkdir(dir, { recursive: true });
 
       // Write tagged and untagged files in both cbor and json formats.
-      // listJSONFiles should dedupe by fileId and prefer cbor when both exist.
+      // listEntityFiles should dedupe by fileId and prefer cbor when both exist.
       await fs.writeFile(path.join(dir, 'wrun_ABC.cbor'), Buffer.from([0xa0]));
       await fs.writeFile(
         path.join(dir, 'wrun_ABC.json'),
@@ -426,7 +426,7 @@ describe('File tagging', () => {
         JSON.stringify({ id: 'wrun_DEF' })
       );
 
-      const fileIds = await listJSONFiles(dir);
+      const fileIds = await listEntityFiles(dir);
       expect(fileIds).toHaveLength(2);
       // fileIds include the tag so paginatedFileSystemQuery can construct correct paths.
       expect(fileIds.sort()).toEqual(['wrun_ABC', 'wrun_DEF.vitest-0']);

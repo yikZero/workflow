@@ -96,7 +96,7 @@ export function taggedPath(
  * When a tag is set, tries the tagged path first, then falls back to the
  * untagged path (so a tagged world can read entities written without a tag).
  */
-export async function readJSONWithFallback<T>(
+export async function readEntityWithFallback<T>(
   basedir: string,
   entityDir: string,
   fileId: string,
@@ -105,10 +105,10 @@ export async function readJSONWithFallback<T>(
 ): Promise<T | null> {
   if (tag) {
     const taggedBasePath = path.join(basedir, entityDir, `${fileId}.${tag}`);
-    const result = await readJSON(taggedBasePath, schema);
+    const result = await readEntity(taggedBasePath, schema);
     if (result !== null) return result;
   }
-  return readJSON(path.join(basedir, entityDir, fileId), schema);
+  return readEntity(path.join(basedir, entityDir, fileId), schema);
 }
 
 /**
@@ -233,7 +233,7 @@ function normalizeDecodedBinary(value: unknown): unknown {
   return value;
 }
 
-export async function writeJSON(
+export async function writeEntity(
   filePath: string,
   data: any,
   opts?: WriteOptions
@@ -269,7 +269,7 @@ export async function writeJSON(
 
   const legacyPath = toLegacyEntityPath(filePath);
   if (legacyPath) {
-    await deleteJSON(legacyPath);
+    await deleteFile(legacyPath);
   }
 }
 
@@ -330,7 +330,7 @@ export async function write(
   }
 }
 
-export async function readJSON<T>(
+export async function readEntity<T>(
   filePath: string,
   decoder: z.ZodType<T>
 ): Promise<T | null> {
@@ -338,14 +338,14 @@ export async function readJSON<T>(
     !filePath.endsWith(ENTITY_FILE_EXTENSION) &&
     !filePath.endsWith(LEGACY_ENTITY_FILE_EXTENSION)
   ) {
-    const cborResult = await readJSON(
+    const cborResult = await readEntity(
       `${filePath}${ENTITY_FILE_EXTENSION}`,
       decoder
     );
     if (cborResult !== null) {
       return cborResult;
     }
-    return readJSON(`${filePath}${LEGACY_ENTITY_FILE_EXTENSION}`, decoder);
+    return readEntity(`${filePath}${LEGACY_ENTITY_FILE_EXTENSION}`, decoder);
   }
 
   try {
@@ -366,7 +366,7 @@ export async function readBuffer(filePath: string): Promise<Buffer> {
   return content;
 }
 
-export async function deleteJSON(filePath: string): Promise<void> {
+export async function deleteFile(filePath: string): Promise<void> {
   try {
     await fs.unlink(filePath);
   } catch (error) {
@@ -381,7 +381,7 @@ export async function deleteJSON(filePath: string): Promise<void> {
  */
 export async function writeExclusive(
   filePath: string,
-  data: string
+  data: string | Buffer
 ): Promise<boolean> {
   await ensureDir(path.dirname(filePath));
   try {
@@ -395,7 +395,21 @@ export async function writeExclusive(
   }
 }
 
-export async function listJSONFiles(dirPath: string): Promise<string[]> {
+/**
+ * Like writeExclusive, but encodes entity data using the correct format
+ * (CBOR for `.cbor` paths, JSON for `.json` paths) before writing.
+ */
+export async function writeEntityExclusive(
+  filePath: string,
+  data: any
+): Promise<boolean> {
+  const encoded = filePath.endsWith(ENTITY_FILE_EXTENSION)
+    ? Buffer.from(encode(data))
+    : JSON.stringify(data, jsonReplacer, 2);
+  return writeExclusive(filePath, encoded);
+}
+
+export async function listEntityFiles(dirPath: string): Promise<string[]> {
   try {
     const files = await fs.readdir(dirPath);
     const fileIds = new Map<string, string>();
@@ -486,7 +500,7 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
   } = config;
 
   // 1. Get all entity files in directory
-  const fileIds = await listJSONFiles(directory);
+  const fileIds = await listEntityFiles(directory);
 
   // 2. Filter by prefix if provided
   const relevantFileIds = filePrefix
@@ -533,7 +547,7 @@ export async function paginatedFileSystemQuery<T extends { createdAt: Date }>(
     const filePath = path.join(directory, fileId);
     let item: T | null = null;
     try {
-      item = await readJSON(filePath, schema);
+      item = await readEntity(filePath, schema);
     } catch (error: unknown) {
       // We don't expect zod errors to happen, but if a payload does get malformed,
       // we skip the item. Preferably, we'd have a way to mark items as malformed,

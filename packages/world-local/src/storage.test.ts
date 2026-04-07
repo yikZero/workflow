@@ -6,7 +6,7 @@ import type { Event, Storage } from '@workflow/world';
 import { stripEventDataRefs } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { writeJSON } from './fs.js';
+import { writeEntity } from './fs.js';
 import { createStorage } from './storage.js';
 import {
   completeWait,
@@ -2650,7 +2650,7 @@ describe('Storage', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      await writeJSON(path.join(runsDir, `${runId}.json`), run);
+      await writeEntity(path.join(runsDir, `${runId}.json`), run);
       return run;
     }
 
@@ -2666,7 +2666,7 @@ describe('Storage', () => {
         const legacyPath = path.join(testDir, 'runs', `${run.runId}.json`);
 
         await fs.unlink(cborPath);
-        await writeJSON(legacyPath, run, { overwrite: true });
+        await writeEntity(legacyPath, run, { overwrite: true });
 
         const fetched = await storage.runs.get(run.runId);
         expect(fetched.workflowName).toBe('legacy-json-read');
@@ -2684,7 +2684,7 @@ describe('Storage', () => {
         const legacyPath = path.join(testDir, 'runs', `${run.runId}.json`);
 
         await fs.unlink(cborPath);
-        await writeJSON(legacyPath, run, { overwrite: true });
+        await writeEntity(legacyPath, run, { overwrite: true });
 
         await storage.events.create(run.runId, {
           eventType: 'run_started',

@@ -7,10 +7,10 @@ import type { Config } from './config.js';
 import { config } from './config.js';
 import {
   clearCreatedFilesCache,
-  deleteJSON,
+  deleteFile,
   listTaggedFiles,
   listTaggedFilesByExtension,
-  readJSON,
+  readEntity,
 } from './fs.js';
 import { initDataDir } from './init.js';
 import { instrumentObject } from './instrumentObject.js';
@@ -93,12 +93,12 @@ export function createLocalWorld(args?: Partial<Config>): LocalWorld {
         const { HookSchema } = await import('@workflow/world');
         await Promise.all(
           taggedHookFiles.map(async (hookFile) => {
-            const hook = await readJSON(
+            const hook = await readEntity(
               path.join(hooksDir, hookFile),
               HookSchema
             );
             if (hook?.token) {
-              await deleteJSON(
+              await deleteFile(
                 path.join(hooksDir, 'tokens', `${hashToken(hook.token)}.json`)
               );
             }
@@ -119,7 +119,7 @@ export function createLocalWorld(args?: Partial<Config>): LocalWorld {
             const fullDir = path.join(basedir, dir);
             const files = await listTaggedFiles(fullDir, tag);
             await Promise.all(
-              files.map((f) => deleteJSON(path.join(fullDir, f)))
+              files.map((f) => deleteFile(path.join(fullDir, f)))
             );
           })
         );

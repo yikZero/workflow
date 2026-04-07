@@ -10,11 +10,11 @@ import type {
 import { HookSchema } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
 import {
-  deleteJSON,
-  listJSONFiles,
+  deleteFile,
+  listEntityFiles,
   paginatedFileSystemQuery,
-  readJSON,
-  readJSONWithFallback,
+  readEntity,
+  readEntityWithFallback,
 } from '../fs.js';
 import { filterHookData } from './filters.js';
 import { hashToken } from './helpers.js';
@@ -30,11 +30,11 @@ export function createHooksStorage(
   // Helper function to find a hook by token (shared between getByToken)
   async function findHookByToken(token: string): Promise<Hook | null> {
     const hooksDir = path.join(basedir, 'hooks');
-    const files = await listJSONFiles(hooksDir);
+    const files = await listEntityFiles(hooksDir);
 
     for (const file of files) {
       const hookBasePath = path.join(hooksDir, file);
-      const hook = await readJSON(hookBasePath, HookSchema);
+      const hook = await readEntity(hookBasePath, HookSchema);
       if (hook && hook.token === token) {
         return { ...hook, isWebhook: hook.isWebhook ?? true };
       }
@@ -44,7 +44,7 @@ export function createHooksStorage(
   }
 
   async function get(hookId: string, params?: GetHookParams): Promise<Hook> {
-    const hook = await readJSONWithFallback(
+    const hook = await readEntityWithFallback(
       basedir,
       'hooks',
       hookId,
@@ -117,11 +117,11 @@ export async function deleteAllHooksForRun(
   runId: string
 ): Promise<void> {
   const hooksDir = path.join(basedir, 'hooks');
-  const files = await listJSONFiles(hooksDir);
+  const files = await listEntityFiles(hooksDir);
 
   for (const file of files) {
     const hookBasePath = path.join(hooksDir, file);
-    const hook = await readJSON(hookBasePath, HookSchema);
+    const hook = await readEntity(hookBasePath, HookSchema);
     if (hook && hook.runId === runId) {
       // Delete the token constraint file to free up the token
       const constraintPath = path.join(
@@ -129,10 +129,10 @@ export async function deleteAllHooksForRun(
         'tokens',
         `${hashToken(hook.token)}.json`
       );
-      await deleteJSON(constraintPath);
+      await deleteFile(constraintPath);
       await Promise.all([
-        deleteJSON(`${hookBasePath}.cbor`),
-        deleteJSON(`${hookBasePath}.json`),
+        deleteFile(`${hookBasePath}.cbor`),
+        deleteFile(`${hookBasePath}.json`),
       ]);
     }
   }

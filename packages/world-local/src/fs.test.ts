@@ -16,9 +16,9 @@ import {
 import { z } from 'zod';
 import {
   paginatedFileSystemQuery,
-  readJSON,
+  readEntity,
   ulidToDate,
-  writeJSON,
+  writeEntity,
 } from './fs.js';
 
 // Create a new monotonic ULID factory for each test to avoid state pollution
@@ -107,14 +107,14 @@ describe('fs utilities', () => {
         createdAt: new Date(),
       };
 
-      await writeJSON(filePath, entity);
+      await writeEntity(filePath, entity);
 
-      const readByPath = await readJSON(filePath, BinaryEntitySchema);
+      const readByPath = await readEntity(filePath, BinaryEntitySchema);
       expect(readByPath).not.toBeNull();
       expect(readByPath?.payload).toBeInstanceOf(Uint8Array);
       expect(readByPath?.payload).toEqual(new Uint8Array([1, 2, 3]));
 
-      const readByBasePath = await readJSON(
+      const readByBasePath = await readEntity(
         path.join(testDir, 'entity'),
         BinaryEntitySchema
       );
@@ -131,14 +131,14 @@ describe('fs utilities', () => {
         createdAt: new Date(),
       };
 
-      await writeJSON(legacyPath, entity);
+      await writeEntity(legacyPath, entity);
       const legacyBefore = await fs
         .access(legacyPath)
         .then(() => true)
         .catch(() => false);
       expect(legacyBefore).toBe(true);
 
-      await writeJSON(cborPath, entity, { overwrite: true });
+      await writeEntity(cborPath, entity, { overwrite: true });
 
       const cborExists = await fs
         .access(cborPath)
@@ -827,12 +827,12 @@ describe('fs utilities', () => {
       const secondUlid = ulid();
 
       await Promise.all([
-        writeJSON(filePath, {
+        writeEntity(filePath, {
           id: firstUlid,
           name: 'test-item-1',
           createdAt: testTime,
         }),
-        writeJSON(filePath, {
+        writeEntity(filePath, {
           id: secondUlid,
           name: 'test-item-2',
           createdAt: testTime,

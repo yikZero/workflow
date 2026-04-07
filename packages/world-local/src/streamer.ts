@@ -11,10 +11,10 @@ import { z } from 'zod';
 import {
   listFilesByExtension,
   readBuffer,
-  readJSONWithFallback,
+  readEntityWithFallback,
   taggedPath,
   write,
-  writeJSON,
+  writeEntity,
 } from './fs.js';
 
 // Create a monotonic ULID factory that ensures ULIDs are always increasing
@@ -125,7 +125,7 @@ export function createStreamer(basedir: string, tag?: string): Streamer {
     const runStreamsPath = taggedPath(basedir, 'streams/runs', runId, tag);
 
     // Read existing streams for this run (try tagged first, fall back to untagged)
-    const existing = await readJSONWithFallback(
+    const existing = await readEntityWithFallback(
       basedir,
       'streams/runs',
       runId,
@@ -137,7 +137,7 @@ export function createStreamer(basedir: string, tag?: string): Streamer {
     // Add stream if not already present
     if (!streams.includes(streamName)) {
       streams.push(streamName);
-      await writeJSON(runStreamsPath, { streams }, { overwrite: true });
+      await writeEntity(runStreamsPath, { streams }, { overwrite: true });
     }
 
     registeredStreams.add(cacheKey);
@@ -281,7 +281,7 @@ export function createStreamer(basedir: string, tag?: string): Streamer {
     },
 
     async listStreamsByRunId(runId: string) {
-      const data = await readJSONWithFallback(
+      const data = await readEntityWithFallback(
         basedir,
         'streams/runs',
         runId,

@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { Event, EventResult, WorkflowRun } from '@workflow/world';
 import { SPEC_VERSION_CURRENT } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
-import { writeJSON } from '../fs.js';
+import { writeEntity } from '../fs.js';
 import { filterRunData, stripEventDataRefs } from './filters.js';
 import { monotonicUlid } from './helpers.js';
 import { deleteAllHooksForRun } from './hooks-storage.js';
@@ -45,7 +45,7 @@ export async function handleLegacyEvent(
         updatedAt: now,
       };
       const runPath = path.join(basedir, 'runs', `${runId}.cbor`);
-      await writeJSON(runPath, run, { overwrite: true });
+      await writeEntity(runPath, run, { overwrite: true });
       await deleteAllHooksForRun(basedir, runId);
       // Return without event (legacy behavior skips event storage)
       // Type assertion: EventResult expects WorkflowRun, filterRunData may return WorkflowRunWithoutData
@@ -71,7 +71,7 @@ export async function handleLegacyEvent(
       };
       const compositeKey = `${runId}-${eventId}`;
       const eventPath = path.join(basedir, 'events', `${compositeKey}.cbor`);
-      await writeJSON(eventPath, event);
+      await writeEntity(eventPath, event);
       return { event: stripEventDataRefs(event, resolveData) };
     }
 

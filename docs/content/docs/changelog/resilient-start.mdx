@@ -121,7 +121,7 @@ runs stuck at `pending` (no `run_started` event), and Windows CI showed
 "Unconsumed event in event log" errors from duplicate `run_created` events.
 
 **Root cause:** A TOCTOU race between the normal `run_created` path and the
-resilient start path. Both used `writeJSON` which checks existence with
+resilient start path. Both used `writeEntity` (formerly `writeJSON`) which checks existence with
 `fs.access()` (non-atomic), so both could pass the check and write separate
 `run_created` events with different event IDs. Fixed by switching both paths to
 `writeExclusive` (O_CREAT|O_EXCL) — see retrospective items 12 and 16.
@@ -243,7 +243,7 @@ violating repo rules ("all changes should be patch"). Changed after discussion.
 ### 12. world-local TOCTOU race causing duplicate `run_created` events (Windows CI)
 
 The resilient start path AND the normal `run_created` path in `world-local/events-storage.ts`
-both used `writeJSON` to create the run entity. `writeJSON` checks file existence with
+both used `writeEntity` (formerly `writeJSON`) to create the run entity. `writeEntity` checks file existence with
 `fs.access()` then writes via temp+rename — a classic TOCTOU race. On the local world,
 the queue delivers via an async IIFE in the same event loop, so `events.create(run_created)`
 and `events.create(run_started)` (with resilient start) run concurrently:
@@ -298,7 +298,7 @@ the pre-refactor behavior where eventData was explicitly stripped from the resul
 ### 16. Normal `run_created` path also needed `writeExclusive` (Windows CI)
 
 The initial TOCTOU fix (item 12) only changed the resilient start path to use
-`writeExclusive`. The normal `run_created` entity write still used `writeJSON` which
+`writeExclusive`. The normal `run_created` entity write still used `writeEntity` (formerly `writeJSON`) which
 checks existence with `fs.access()` then writes via temp+rename — not atomic. On
 Windows CI, the local queue's async IIFE delivered fast enough for both paths to pass
 their existence checks simultaneously, producing two `run_created` events with different

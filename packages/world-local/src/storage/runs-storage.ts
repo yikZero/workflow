@@ -3,7 +3,7 @@ import { WorkflowRunNotFoundError } from '@workflow/errors';
 import type { Storage, WorkflowRunWithoutData } from '@workflow/world';
 import { WorkflowRunSchema } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
-import { paginatedFileSystemQuery, readJSONWithFallback } from '../fs.js';
+import { paginatedFileSystemQuery, readEntityWithFallback } from '../fs.js';
 import { filterRunData } from './filters.js';
 import { getObjectCreatedAt } from './helpers.js';
 
@@ -17,7 +17,7 @@ export function createRunsStorage(
 ): Storage['runs'] {
   return {
     get: (async (id: string, params?: any) => {
-      const run = await readJSONWithFallback(
+      const run = await readEntityWithFallback(
         basedir,
         'runs',
         id,

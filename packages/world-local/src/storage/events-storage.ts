@@ -31,14 +31,14 @@ import {
 } from '@workflow/world';
 import { DEFAULT_RESOLVE_DATA_OPTION } from '../config.js';
 import {
-  deleteJSON,
-  jsonReplacer,
-  listJSONFiles,
+  deleteFile,
+  listEntityFiles,
   paginatedFileSystemQuery,
-  readJSONWithFallback,
+  readEntityWithFallback,
   taggedPath,
+  writeEntity,
+  writeEntityExclusive,
   writeExclusive,
-  writeJSON,
 } from '../fs.js';
 import { stripEventDataRefs } from './filters.js';
 import { getObjectCreatedAt, hashToken, monotonicUlid } from './helpers.js';
@@ -54,7 +54,7 @@ async function deleteAllWaitsForRun(
   runId: string
 ): Promise<void> {
   const waitsDir = path.join(basedir, 'waits');
-  const files = await listJSONFiles(waitsDir);
+  const files = await listEntityFiles(waitsDir);
 
   for (const file of files) {
     // fileIds may contain tag suffixes (e.g., "wrun_ABC-corrId.vitest-0")
@@ -62,8 +62,8 @@ async function deleteAllWaitsForRun(
     if (file.startsWith(`${runId}-`)) {
       const waitBasePath = path.join(waitsDir, file);
       await Promise.all([
-        deleteJSON(`${waitBasePath}.cbor`),
-        deleteJSON(`${waitBasePath}.json`),
+        deleteFile(`${waitBasePath}.cbor`),
+        deleteFile(`${waitBasePath}.json`),
       ]);
     }
   }
@@ -121,7 +121,7 @@ export function createEventsStorage(
         data.eventType !== 'run_created' &&
         !skipRunValidationEvents.includes(data.eventType)
       ) {
-        currentRun = await readJSONWithFallback(
+        currentRun = await readEntityWithFallback(
           basedir,
           'runs',
           effectiveRunId,
@@ -170,10 +170,7 @@ export function createEventsStorage(
               updatedAt: now,
             };
             const runPath = taggedPath(basedir, 'runs', effectiveRunId, tag);
-            const created = await writeExclusive(
-              runPath,
-              JSON.stringify(createdRun, jsonReplacer)
-            );
+            const created = await writeEntityExclusive(runPath, createdRun);
 
             if (created) {
               // We created the run — also write the run_created event.
@@ -192,7 +189,7 @@ export function createEventsStorage(
                 },
               };
               const createdCompositeKey = `${effectiveRunId}-${runCreatedEventId}`;
-              await writeJSON(
+              await writeEntity(
                 taggedPath(basedir, 'events', createdCompositeKey, tag),
                 runCreatedEvent
               );
@@ -200,7 +197,7 @@ export function createEventsStorage(
             } else {
               // Run already exists (concurrent run_created won the
               // race). Re-read it so downstream logic sees the real state.
-              currentRun = await readJSONWithFallback(
+              currentRun = await readEntityWithFallback(
                 basedir,
                 'runs',
                 effectiveRunId,
@@ -264,7 +261,7 @@ export function createEventsStorage(
             specVersion: effectiveSpecVersion,
           };
           const compositeKey = `${effectiveRunId}-${eventId}`;
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'events', compositeKey, tag),
             event
           );
@@ -317,7 +314,7 @@ export function createEventsStorage(
       ];
       if (stepEvents.includes(data.eventType) && data.correlationId) {
         const stepCompositeKey = `${effectiveRunId}-${data.correlationId}`;
-        validatedStep = await readJSONWithFallback(
+        validatedStep = await readEntityWithFallback(
           basedir,
           'steps',
           stepCompositeKey,
@@ -355,7 +352,7 @@ export function createEventsStorage(
         hookEventsRequiringExistence.includes(data.eventType) &&
         data.correlationId
       ) {
-        const existingHook = await readJSONWithFallback(
+        const existingHook = await readEntityWithFallback(
           basedir,
           'hooks',
           data.correlationId,
@@ -415,10 +412,7 @@ export function createEventsStorage(
         // start path (run_started on non-existent run) that could result
         // in duplicate run_created events in the event log.
         const runPath = taggedPath(basedir, 'runs', effectiveRunId, tag);
-        const created = await writeExclusive(
-          runPath,
-          JSON.stringify(run, jsonReplacer, 2)
-        );
+        const created = await writeEntityExclusive(runPath, run);
         if (!created) {
           throw new EntityConflictError(
             `Workflow run "${effectiveRunId}" already exists`
@@ -452,7 +446,7 @@ export function createEventsStorage(
             startedAt: currentRun.startedAt ?? now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'runs', effectiveRunId, tag),
             run,
             { overwrite: true }
@@ -478,7 +472,7 @@ export function createEventsStorage(
             completedAt: now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'runs', effectiveRunId, tag),
             run,
             { overwrite: true }
@@ -518,7 +512,7 @@ export function createEventsStorage(
             completedAt: now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'runs', effectiveRunId, tag),
             run,
             { overwrite: true }
@@ -547,7 +541,7 @@ export function createEventsStorage(
             completedAt: now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'runs', effectiveRunId, tag),
             run,
             { overwrite: true }
@@ -584,7 +578,7 @@ export function createEventsStorage(
           specVersion: effectiveSpecVersion,
         };
         const stepCompositeKey = `${effectiveRunId}-${data.correlationId}`;
-        await writeJSON(
+        await writeEntity(
           taggedPath(basedir, 'steps', stepCompositeKey, tag),
           step
         );
@@ -614,7 +608,7 @@ export function createEventsStorage(
           // (the local world is single-process / dev-only; the postgres
           // world uses SQL-level atomic guards for production).
           const stepCompositeKey = `${effectiveRunId}-${data.correlationId}`;
-          const freshStep = await readJSONWithFallback(
+          const freshStep = await readEntityWithFallback(
             basedir,
             'steps',
             stepCompositeKey,
@@ -638,7 +632,7 @@ export function createEventsStorage(
             retryAfter: undefined,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'steps', stepCompositeKey, tag),
             step,
             { overwrite: true }
@@ -673,7 +667,7 @@ export function createEventsStorage(
             completedAt: now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'steps', stepCompositeKey, tag),
             step,
             { overwrite: true }
@@ -718,7 +712,7 @@ export function createEventsStorage(
             completedAt: now,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'steps', stepCompositeKey, tag),
             step,
             { overwrite: true }
@@ -747,7 +741,7 @@ export function createEventsStorage(
             retryAfter: retryData.retryAfter,
             updatedAt: now,
           };
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'steps', stepCompositeKey, tag),
             step,
             { overwrite: true }
@@ -798,7 +792,7 @@ export function createEventsStorage(
 
           // Store the conflict event
           const compositeKey = `${effectiveRunId}-${eventId}`;
-          await writeJSON(
+          await writeEntity(
             taggedPath(basedir, 'events', compositeKey, tag),
             conflictEvent
           );
@@ -829,7 +823,7 @@ export function createEventsStorage(
           specVersion: effectiveSpecVersion,
           isWebhook: hookData.isWebhook ?? false,
         };
-        await writeJSON(
+        await writeEntity(
           taggedPath(basedir, 'hooks', data.correlationId, tag),
           hook
         );
@@ -849,7 +843,7 @@ export function createEventsStorage(
         }
         // Read the hook to get its token before deleting
         const hookPath = taggedPath(basedir, 'hooks', data.correlationId, tag);
-        const existingHook = await readJSONWithFallback(
+        const existingHook = await readEntityWithFallback(
           basedir,
           'hooks',
           data.correlationId,
@@ -864,16 +858,16 @@ export function createEventsStorage(
             'tokens',
             `${hashToken(existingHook.token)}.json`
           );
-          await deleteJSON(disposedConstraintPath);
+          await deleteFile(disposedConstraintPath);
         }
-        await deleteJSON(hookPath);
+        await deleteFile(hookPath);
       } else if (data.eventType === 'wait_created' && 'eventData' in data) {
         // wait_created: Creates wait entity with status 'waiting'
         const waitData = data.eventData as {
           resumeAt?: Date;
         };
         const waitCompositeKey = `${effectiveRunId}-${data.correlationId}`;
-        const existingWait = await readJSONWithFallback(
+        const existingWait = await readEntityWithFallback(
           basedir,
           'waits',
           waitCompositeKey,
@@ -895,7 +889,7 @@ export function createEventsStorage(
           updatedAt: now,
           specVersion: effectiveSpecVersion,
         };
-        await writeJSON(
+        await writeEntity(
           taggedPath(basedir, 'waits', waitCompositeKey, tag),
           wait
         );
@@ -914,7 +908,7 @@ export function createEventsStorage(
             `Wait "${data.correlationId}" already completed`
           );
         }
-        const existingWait = await readJSONWithFallback(
+        const existingWait = await readEntityWithFallback(
           basedir,
           'waits',
           waitCompositeKey,
@@ -936,7 +930,7 @@ export function createEventsStorage(
           completedAt: now,
           updatedAt: now,
         };
-        await writeJSON(
+        await writeEntity(
           taggedPath(basedir, 'waits', waitCompositeKey, tag),
           wait,
           { overwrite: true }
@@ -947,7 +941,10 @@ export function createEventsStorage(
 
       // Store event using composite key {runId}-{eventId}
       const compositeKey = `${effectiveRunId}-${eventId}`;
-      await writeJSON(taggedPath(basedir, 'events', compositeKey, tag), event);
+      await writeEntity(
+        taggedPath(basedir, 'events', compositeKey, tag),
+        event
+      );
 
       const resolveData = params?.resolveData ?? DEFAULT_RESOLVE_DATA_OPTION;
       const filteredEvent = stripEventDataRefs(event, resolveData);
@@ -980,7 +977,7 @@ export function createEventsStorage(
 
     async get(runId, eventId, params) {
       const compositeKey = `${runId}-${eventId}`;
-      const event = await readJSONWithFallback(
+      const event = await readEntityWithFallback(
         basedir,
         'events',
         compositeKey,
