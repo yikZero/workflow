@@ -313,17 +313,34 @@ export function workflowEntrypoint(
                     return;
                   } else if (RunNotSupportedError.is(err)) {
                     // The World rejected this run because its specVersion
-                    // is higher than the World supports. This typically
-                    // means a community world was published against an
-                    // older @workflow/world. We cannot write run_failed
-                    // (the same check would reject it), so consume the
-                    // message to stop retries and log a clear error.
+                    // is higher than the World supports. Try to fail the
+                    // run so tests and callers see a terminal status
+                    // immediately instead of polling until timeout.
                     runtimeLogger.error(
                       `Run requires spec version ${err.runSpecVersion} but the World only supports version ${err.worldSpecVersion}. ` +
-                        'Upgrade the World package or the workflow SDK. ' +
-                        'The run will remain in its current state.',
+                        'Upgrade the World package or the workflow SDK.',
                       { workflowRunId: runId }
                     );
+                    try {
+                      await world.events.create(
+                        runId,
+                        {
+                          eventType: 'run_failed',
+                          specVersion: SPEC_VERSION_CURRENT,
+                          eventData: {
+                            error: {
+                              message: err.message,
+                            },
+                            errorCode: RUN_ERROR_CODES.RUNTIME_ERROR,
+                          },
+                        },
+                        { requestId }
+                      );
+                    } catch {
+                      // Best effort — community worlds will reject this
+                      // too (same requiresNewerWorld check). Either way,
+                      // consume the message to stop retries.
+                    }
                     return;
                   } else if (err instanceof WorkflowRuntimeError) {
                     runtimeLogger.error(

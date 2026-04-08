@@ -3,6 +3,7 @@ import {
   EntityConflictError,
   FatalError,
   RetryableError,
+  RUN_ERROR_CODES,
   RunExpiredError,
   RunNotSupportedError,
   StepNotRegisteredError,
@@ -265,10 +266,25 @@ const stepHandler = getWorldHandlers().createQueueHandler(
             if (RunNotSupportedError.is(err)) {
               runtimeLogger.error(
                 `Run requires spec version ${err.runSpecVersion} but the World only supports version ${err.worldSpecVersion}. ` +
-                  'Upgrade the World package or the workflow SDK. ' +
-                  'The run will remain in its current state.',
+                  'Upgrade the World package or the workflow SDK.',
                 { workflowRunId, stepId }
               );
+              try {
+                await world.events.create(
+                  workflowRunId,
+                  {
+                    eventType: 'run_failed',
+                    specVersion: SPEC_VERSION_CURRENT,
+                    eventData: {
+                      error: { message: err.message },
+                      errorCode: RUN_ERROR_CODES.RUNTIME_ERROR,
+                    },
+                  },
+                  { requestId }
+                );
+              } catch {
+                // Best effort — community worlds will reject this too.
+              }
               return;
             }
             // Re-throw other errors
