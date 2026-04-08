@@ -2,6 +2,7 @@ import {
   EntityConflictError,
   RUN_ERROR_CODES,
   RunExpiredError,
+  RunNotSupportedError,
   WorkflowRuntimeError,
 } from '@workflow/errors';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
@@ -308,6 +309,20 @@ export function workflowEntrypoint(
                     runtimeLogger.info(
                       'Run already finished during setup, skipping',
                       { workflowRunId: runId, message: err.message }
+                    );
+                    return;
+                  } else if (RunNotSupportedError.is(err)) {
+                    // The World rejected this run because its specVersion
+                    // is higher than the World supports. This typically
+                    // means a community world was published against an
+                    // older @workflow/world. We cannot write run_failed
+                    // (the same check would reject it), so consume the
+                    // message to stop retries and log a clear error.
+                    runtimeLogger.error(
+                      `Run requires spec version ${err.runSpecVersion} but the World only supports version ${err.worldSpecVersion}. ` +
+                        'Upgrade the World package or the workflow SDK. ' +
+                        'The run will remain in its current state.',
+                      { workflowRunId: runId }
                     );
                     return;
                   } else if (err instanceof WorkflowRuntimeError) {

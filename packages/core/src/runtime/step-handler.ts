@@ -4,6 +4,7 @@ import {
   FatalError,
   RetryableError,
   RunExpiredError,
+  RunNotSupportedError,
   StepNotRegisteredError,
   ThrottleError,
   TooEarlyError,
@@ -34,6 +35,7 @@ import {
   getErrorStack,
   normalizeUnknownError,
 } from '../types.js';
+import { MAX_QUEUE_DELIVERIES } from './constants.js';
 import {
   getQueueOverhead,
   getWorkflowQueueName,
@@ -42,7 +44,6 @@ import {
   queueMessage,
   withHealthCheck,
 } from './helpers.js';
-import { MAX_QUEUE_DELIVERIES } from './constants.js';
 import { getWorld, getWorldHandlers } from './world.js';
 
 const DEFAULT_STEP_MAX_RETRIES = 3;
@@ -260,6 +261,15 @@ const stepHandler = getWorldHandlers().createQueueHandler(
                 timeoutSeconds,
               });
               return { timeoutSeconds };
+            }
+            if (RunNotSupportedError.is(err)) {
+              runtimeLogger.error(
+                `Run requires spec version ${err.runSpecVersion} but the World only supports version ${err.worldSpecVersion}. ` +
+                  'Upgrade the World package or the workflow SDK. ' +
+                  'The run will remain in its current state.',
+                { workflowRunId, stepId }
+              );
+              return;
             }
             // Re-throw other errors
             throw err;
