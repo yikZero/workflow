@@ -34,6 +34,7 @@
     "clean": "turbo clean",
     "typecheck": "turbo typecheck",
     "knip": "pnpm dlx knip --config knip.jsonc",
+    "knip:strict": "pnpm dlx knip --config knip.strict.jsonc",
     "test:e2e": "vitest run packages/core/e2e/e2e.test.ts packages/core/e2e/e2e-agent.test.ts",
     "test:e2e:nextjs-webpack:staged": "node scripts/test-staged-nextjs-webpack.mjs",
     "test:docs": "pnpm --filter @workflow/docs-typecheck test:docs",

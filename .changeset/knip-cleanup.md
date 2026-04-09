@@ -1,6 +1,8 @@
 ---
 "@workflow/next": patch
 "@workflow/typescript-plugin": patch
+"@workflow/web": patch
+"@workflow/web-shared": patch
 "@workflow/world-postgres": patch
 ---
 
