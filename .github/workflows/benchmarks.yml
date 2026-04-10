@@ -429,6 +429,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'workflow-server-test') }}
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-worlds: ${{ steps.set-matrix.outputs.has-worlds }}
     steps:
       - uses: actions/checkout@v4
 
@@ -439,11 +440,15 @@ jobs:
           build-packages: 'false'
 
       - id: set-matrix
-        run: echo "matrix=$(node ./scripts/create-community-worlds-matrix.mjs)" >> $GITHUB_OUTPUT
+        run: |
+          MATRIX=$(node ./scripts/create-community-worlds-matrix.mjs)
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          WORLD_COUNT=$(echo "$MATRIX" | jq '.world | length')
+          echo "has-worlds=$([[ $WORLD_COUNT -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
   benchmark-community:
     name: Benchmark Community World (${{ matrix.world.name }})
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'workflow-server-test') }}
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'workflow-server-test') && needs.getCommunityWorldsMatrix.outputs.has-worlds == 'true' }}
     needs: [build, getCommunityWorldsMatrix]
     strategy:
       fail-fast: false

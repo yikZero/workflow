@@ -1594,8 +1594,8 @@ describe('e2e', () => {
       expect(flowBody).toEqual({
         healthy: true,
         endpoint: '/.well-known/workflow/v1/flow',
-        // specVersion comes from the World's declared specVersion (e.g. 3
-        // for world-vercel) or falls back to SPEC_VERSION_CURRENT (2).
+        // specVersion comes from the World's declared specVersion
+        // or falls back to SPEC_VERSION_SUPPORTS_EVENT_SOURCING (2).
         specVersion: expect.any(Number),
         workflowCoreVersion: expect.any(String),
       });

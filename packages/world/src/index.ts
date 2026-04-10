@@ -52,6 +52,7 @@ export {
   SPEC_VERSION_LEGACY,
   SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
   SPEC_VERSION_SUPPORTS_EVENT_SOURCING,
+  SPEC_VERSION_SUPPORTS_RESTRUCTURED_WORLD,
 } from './spec-version.js';
 export type * from './steps.js';
 export { StepSchema, StepStatusSchema } from './steps.js';

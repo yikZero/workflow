@@ -23,10 +23,11 @@ export const SPEC_VERSION_LEGACY = 1 as SpecVersion;
 
 export const SPEC_VERSION_SUPPORTS_EVENT_SOURCING = 2 as SpecVersion;
 export const SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT = 3 as SpecVersion;
+export const SPEC_VERSION_SUPPORTS_RESTRUCTURED_WORLD = 4 as SpecVersion;
 
-/** Current spec version (event-sourced architecture with CBOR queue transport). */
+/** Current spec version (restructured world interface with run-scoped streams and async getWorld). */
 export const SPEC_VERSION_CURRENT =
-  SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT as SpecVersion;
+  SPEC_VERSION_SUPPORTS_RESTRUCTURED_WORLD as SpecVersion;
 
 /**
  * Check if a spec version is legacy (<= SPEC_VERSION_LEGACY or undefined).

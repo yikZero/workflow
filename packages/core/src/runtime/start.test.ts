@@ -135,7 +135,7 @@ describe('start', () => {
 
       vi.clearAllMocks();
 
-      // Mock world with specVersion 3 → uses it
+      // Mock world with specVersion set → uses it
       vi.mocked(getWorld).mockReturnValue({
         specVersion: SPEC_VERSION_CURRENT,
         getDeploymentId: vi.fn().mockResolvedValue('deploy_123'),
