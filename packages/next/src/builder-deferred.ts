@@ -1452,6 +1452,15 @@ export async function getNextBuilderDeferred() {
         return targetPath;
       }
 
+      // When a relative import like ../encryption.js resolves to a src/
+      // path that doesn't exist, try the built dist/ equivalent first.
+      // Turbopack can't follow .js extension imports inside .ts source
+      // files, but it handles built dist/ JS fine.
+      const distPath = targetPath.replace(/\/src\//, '/dist/');
+      if (distPath !== targetPath && existsSync(distPath)) {
+        return distPath;
+      }
+
       const extensionMatch = targetPath.match(/(\.[^./\\]+)$/);
       const extension = extensionMatch?.[1]?.toLowerCase();
       if (!extension) {
