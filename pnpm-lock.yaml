@@ -30,6 +30,9 @@ catalogs:
     ai:
       specifier: 6.0.116
       version: 6.0.116
+    enhanced-resolve:
+      specifier: 5.19.0
+      version: 5.19.0
     esbuild:
       specifier: ^0.27.3
       version: 0.27.3
@@ -413,7 +416,7 @@ importers:
         specifier: 5.6.2
         version: 5.6.2
       enhanced-resolve:
-        specifier: 5.19.0
+        specifier: 'catalog:'
         version: 5.19.0
       esbuild:
         specifier: 'catalog:'
@@ -739,6 +742,9 @@ importers:
       '@workflow/swc-plugin':
         specifier: workspace:*
         version: link:../swc-plugin-workflow
+      enhanced-resolve:
+        specifier: 'catalog:'
+        version: 5.19.0
       semver:
         specifier: 'catalog:'
         version: 7.7.4
@@ -13988,10 +13994,6 @@ packages:
   tailwindcss@4.1.18:
     resolution: {integrity: sha512-4+Z+0yiYyEtUVCScyfHCxOYP06L5Ne+JiHhY2IjR2KWMIWhJOYZKLSGZaP5HkZ8+bY0cxfzwDE5uOmzFXyIwxw==}
 
-  tapable@2.2.2:
-    resolution: {integrity: sha512-Re10+NauLTMCudc7T5WLFLAwDhQ0JWdrMK+9B2M8zR5hRExKmsRDCBA7/aV/pNJFltmBFO5BAMlQFi/vq3nKOg==}
-    engines: {node: '>=6'}
-
   tapable@2.3.0:
     resolution: {integrity: sha512-g9ljZiwki/LfxmQADO3dEY1CbpmXT5Hm2fJ+QaGKwSXUylMybePR7/67YW7jOrrvjEgL1Fmz5kzyAjWVWLlucg==}
     engines: {node: '>=6'}
@@ -25293,7 +25295,7 @@ snapshots:
       node-abort-controller: 3.1.1
       schema-utils: 3.3.0
       semver: 7.7.4
-      tapable: 2.2.2
+      tapable: 2.3.0
       typescript: 5.9.3
       webpack: 5.104.1(@swc/core@1.15.3)(esbuild@0.27.3)
 
@@ -30670,8 +30672,6 @@ snapshots:
 
   tailwindcss@4.1.18: {}
 
-  tapable@2.2.2: {}
-
   tapable@2.3.0: {}
 
   tar-fs@2.1.4:
@@ -30867,7 +30867,7 @@ snapshots:
     dependencies:
       chalk: 4.1.2
       enhanced-resolve: 5.19.0
-      tapable: 2.2.2
+      tapable: 2.3.0
       tsconfig-paths: 4.2.0
 
   tsconfig-paths@4.2.0:
