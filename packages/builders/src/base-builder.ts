@@ -826,7 +826,10 @@ export abstract class BaseBuilder {
       );
 
       if (this.config.workflowManifestPath) {
-        const resolvedPath = this.resolvePath(this.config.workflowManifestPath);
+        const resolvedPath = resolve(
+          process.cwd(),
+          this.config.workflowManifestPath
+        );
         let prefix = '';
 
         if (resolvedPath.endsWith('.cjs')) {
