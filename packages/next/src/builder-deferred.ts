@@ -640,6 +640,10 @@ export async function getNextBuilderDeferred() {
           'public/.well-known/workflow/v1'
         );
         await mkdir(publicManifestDir, { recursive: true });
+        await this.writeFileIfChanged(
+          join(publicManifestDir, '.gitignore'),
+          '*'
+        );
         await this.copyFileIfChanged(
           manifestFilePath,
           join(publicManifestDir, 'manifest.json')

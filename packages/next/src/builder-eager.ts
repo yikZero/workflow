@@ -76,6 +76,7 @@ export async function getNextBuilderEager() {
           'public/.well-known/workflow/v1'
         );
         await mkdir(publicManifestDir, { recursive: true });
+        await writeFile(join(publicManifestDir, '.gitignore'), '*');
         await copyFile(
           join(workflowGeneratedDir, 'manifest.json'),
           join(publicManifestDir, 'manifest.json')

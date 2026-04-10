@@ -88,6 +88,7 @@ export class SvelteKitBuilder extends BaseBuilder {
         'static/.well-known/workflow/v1'
       );
       await mkdir(staticManifestDir, { recursive: true });
+      await writeFile(join(staticManifestDir, '.gitignore'), '*');
       await copyFile(
         join(workflowGeneratedDir, 'manifest.json'),
         join(staticManifestDir, 'manifest.json')
