@@ -14,6 +14,7 @@ import {
 } from './apply-swc-transform.js';
 import { createDiscoverEntriesPlugin } from './discover-entries-esbuild-plugin.js';
 import { getEsbuildTsconfigOptions } from './esbuild-tsconfig.js';
+import { ensureGeneratedFileGitignore } from './gitignore.js';
 import { getImportPath } from './module-specifier.js';
 import { createNodeModuleErrorPlugin } from './node-module-esbuild-plugin.js';
 import { createPseudoPackagePlugin } from './pseudo-package-esbuild-plugin.js';
@@ -826,10 +827,7 @@ export abstract class BaseBuilder {
       );
 
       if (this.config.workflowManifestPath) {
-        const resolvedPath = resolve(
-          process.cwd(),
-          this.config.workflowManifestPath
-        );
+        const resolvedPath = this.resolvePath(this.config.workflowManifestPath);
         let prefix = '';
 
         if (resolvedPath.endsWith('.cjs')) {
@@ -846,6 +844,18 @@ export abstract class BaseBuilder {
           resolvedPath,
           prefix + JSON.stringify(workflowManifest, null, 2)
         );
+
+        try {
+          await ensureGeneratedFileGitignore({
+            workingDir: this.config.workingDir,
+            filePath: resolvedPath,
+          });
+        } catch (error) {
+          console.warn(
+            `Failed to write colocated .gitignore for generated manifest ${resolvedPath}:`,
+            error
+          );
+        }
       }
 
       // Create .gitignore in .swc directory
