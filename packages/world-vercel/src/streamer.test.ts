@@ -180,6 +180,47 @@ vi.mock('./utils.js', () => ({
   }),
 }));
 
+describe('readFromStream', () => {
+  async function getStreamer() {
+    const { createStreamer } = await import('./streamer.js');
+    return createStreamer();
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('constructs the correct fetch URL', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(
+        async () => new Response(new ReadableStream(), { status: 200 })
+      );
+
+    const streamer = await getStreamer();
+    await streamer.readFromStream('my-stream');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url = new URL(fetchSpy.mock.calls[0][0] as string);
+    expect(url.pathname).toBe('/v2/stream/my-stream');
+  });
+
+  it('passes startIndex as a query parameter', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(
+        async () => new Response(new ReadableStream(), { status: 200 })
+      );
+
+    const streamer = await getStreamer();
+    await streamer.readFromStream('my-stream', 5);
+
+    const url = new URL(fetchSpy.mock.calls[0][0] as string);
+    expect(url.pathname).toBe('/v2/stream/my-stream');
+    expect(url.searchParams.get('startIndex')).toBe('5');
+  });
+});
+
 describe('writeToStreamMulti pagination', () => {
   /**
    * Decode length-prefixed multi-chunk body to count chunks per request.
