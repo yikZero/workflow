@@ -28,11 +28,15 @@ export class Run {
         this.id = id;
     }
     get value() {
-        return this.#getEncryptionKey().then(()=>getWorld().get(this.id));
+        return this.#getEncryptionKey().then(async ()=>{
+            const world = await getWorld();
+            return world.get(this.id);
+        });
     }
     async cancel() {
         const key = await this.#getEncryptionKey();
-        await getWorld().cancel(this.id, key);
+        const world = await getWorld();
+        await world.cancel(this.id, key);
     }
     toString() {
         return `Run(${this.id}, ${this.#label})`;

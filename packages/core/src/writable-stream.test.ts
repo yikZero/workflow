@@ -27,7 +27,7 @@ describe('WorkflowServerWritableStream', () => {
     mockWorld = { streams: mockStreams };
 
     const { getWorld } = await import('./runtime/world.js');
-    vi.mocked(getWorld).mockReturnValue(mockWorld as any);
+    vi.mocked(getWorld).mockResolvedValue(mockWorld as any);
   });
 
   afterEach(() => {

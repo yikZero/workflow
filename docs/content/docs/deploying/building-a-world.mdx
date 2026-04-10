@@ -61,7 +61,7 @@ interface Storage {
   };
 
   steps: {
-    get(runId: string | undefined, stepId: string, params?: GetStepParams): Promise<Step>;
+    get(runId: string, stepId: string, params?: GetStepParams): Promise<Step>;
     list(params: ListWorkflowRunStepsParams): Promise<PaginatedResponse<Step>>;
   };
 
@@ -71,7 +71,8 @@ interface Storage {
     
     // Create an event for an existing run
     create(runId: string, data: CreateEventRequest, params?: CreateEventParams): Promise<EventResult>;
-    
+
+    get(runId: string, eventId: string, params?: GetEventParams): Promise<Event>;
     list(params: ListEventsParams): Promise<PaginatedResponse<Event>>;
     listByCorrelationId(params: ListEventsByCorrelationIdParams): Promise<PaginatedResponse<Event>>;
   };

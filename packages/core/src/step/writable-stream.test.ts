@@ -16,7 +16,7 @@ describe('step-level getWritable', () => {
     };
 
     const { getWorld } = await import('../runtime/world.js');
-    (getWorld as ReturnType<typeof vi.fn>).mockReturnValue(mockWorld);
+    (getWorld as ReturnType<typeof vi.fn>).mockResolvedValue(mockWorld);
   });
 
   afterEach(() => {

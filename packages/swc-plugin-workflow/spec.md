@@ -1193,7 +1193,10 @@ export class Run {
 
   get value(): Promise<any> {
     'use step';
-    return this.getEncryptionKey().then(() => getWorld().get(this.id));
+    return this.getEncryptionKey().then(async () => {
+      const world = await getWorld();
+      return world.get(this.id);
+    });
   }
 }
 ```

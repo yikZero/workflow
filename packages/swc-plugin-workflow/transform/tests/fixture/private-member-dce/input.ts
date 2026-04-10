@@ -34,14 +34,18 @@ export class Run {
   // Step getter — references private members, will be stripped
   get value(): Promise<any> {
     'use step';
-    return this.getEncryptionKey().then(() => getWorld().get(this.id));
+    return this.getEncryptionKey().then(async () => {
+      const world = await getWorld();
+      return world.get(this.id);
+    });
   }
 
   // Step method — references private members, will be stripped
   async cancel(): Promise<void> {
     'use step';
     const key = await this.getEncryptionKey();
-    await getWorld().cancel(this.id, key);
+    const world = await getWorld();
+    await world.cancel(this.id, key);
   }
 
   // Non-step public method — should be kept

@@ -34,13 +34,17 @@ export class Run {
 
   get value() {
     'use step';
-    return this.#getEncryptionKey().then(() => getWorld().get(this.id));
+    return this.#getEncryptionKey().then(async () => {
+      const world = await getWorld();
+      return world.get(this.id);
+    });
   }
 
   async cancel() {
     'use step';
     const key = await this.#getEncryptionKey();
-    await getWorld().cancel(this.id, key);
+    const world = await getWorld();
+    await world.cancel(this.id, key);
   }
 
   toString() {
