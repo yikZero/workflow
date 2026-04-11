@@ -109,6 +109,10 @@ jobs:
       - name: Install ${{ inputs.world-name }} World
         run: pnpm --filter ${{ inputs.app-name }} add ${{ inputs.world-package }}
 
+      - name: Set environment variables
+        run: |
+          echo '${{ inputs.env-vars }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+
       - name: Run setup command
         if: ${{ inputs.setup-command != '' }}
         run: ${{ inputs.setup-command }}
@@ -116,10 +120,6 @@ jobs:
 
       - name: Resolve symlinks
         run: ./scripts/resolve-symlinks.sh workbench/${{ inputs.app-name }}
-
-      - name: Set environment variables
-        run: |
-          echo '${{ inputs.env-vars }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
 
       - name: Build workbench
         run: pnpm turbo run build --filter='./workbench/${{ inputs.app-name }}'
