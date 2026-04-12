@@ -93,15 +93,14 @@ Before showing hooks, quickly ground the viewer in how workflows work:
   Node.js access; workflows are sandboxed orchestrators.
 - When a workflow calls `await step()`, `await sleep()`, or `await hook` — it
   **suspends**. No compute running. State is durably persisted.
-- When it's time to resume, the framework **replays** the workflow from the
-  beginning, fast-forwarding through completed work.
+- When it's time to resume, the framework picks up right where it left off.
 
 > "`sleep` suspends until a timestamp. `hook` suspends until an external event.
 > That's really all there is to it."
 
 ### The code contrast
 
-**Traditional** (code is scattered):
+**Traditional** (logic is scattered):
 
 ```
 webhook-handler.ts  →  queue.ts  →  worker.ts  →  redis-state.ts
@@ -135,9 +134,8 @@ export async function orderWorkflow(orderId: string) {
    automatically cleaned up when the block exits.
 3. **`await hook`** — The workflow _suspends_. No compute is running. No server
    is spinning. The function's local state is durably persisted.
-4. **When `resumeHook(token, payload)` is called** — The framework replays the
-   workflow from the beginning, fast-forwarding through completed steps, and
-   delivers the payload to the awaiting hook.
+4. **When `resumeHook(token, payload)` is called** — The framework resumes the
+   workflow and delivers the payload to the awaiting hook.
 5. **`let` is your database** — `order` and `shipment` are just local variables,
    but they survive days, weeks, indefinitely.
 
@@ -154,7 +152,7 @@ No special APIs to learn for composition. It's just JavaScript.
 
 ### Emphasize the DX inversion
 
-- Traditional: code is scattered across handler → queue → worker → database
+- Traditional: logic is scattered across handler → queue → worker → database
 - Workflow SDK: code is one function, reads top-to-bottom, your business logic
   is the whole thing
 
