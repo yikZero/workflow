@@ -81,11 +81,25 @@ What if your logic spans _multiple_ webhook events?
 
 ---
 
-## ACT 2: THE PARADIGM SHIFT (1.5–2 min)
+## ACT 2: THE PARADIGM SHIFT (2–2.5 min)
 
 Introduce Workflow SDK hooks at a conceptual level.
 
-### The mental model
+### The suspension mental model
+
+Before showing hooks, quickly ground the viewer in how workflows work:
+
+- A **workflow** orchestrates. A **step** does the actual work. Steps have full
+  Node.js access; workflows are sandboxed orchestrators.
+- When a workflow calls `await step()`, `await sleep()`, or `await hook` — it
+  **suspends**. No compute running. State is durably persisted.
+- When it's time to resume, the framework **replays** the workflow from the
+  beginning, fast-forwarding through completed work.
+
+> "`sleep` suspends until a timestamp. `hook` suspends until an external event.
+> That's really all there is to it."
+
+### The code contrast
 
 **Traditional** (code is scattered):
 
@@ -127,6 +141,17 @@ export async function orderWorkflow(orderId: string) {
 5. **`let` is your database** — `order` and `shipment` are just local variables,
    but they survive days, weeks, indefinitely.
 
+### Everything is just a Promise
+
+One more thing before the demos — hooks, steps, and sleeps are all just
+Promises. That means standard JavaScript patterns work naturally:
+
+- **Timeout**: `Promise.race([hook, sleep("5m")])` — first one wins
+- **Parallel**: `Promise.all([stepA(), stepB()])` — run steps concurrently
+- **Background**: call a step without `await`, pick up the result later
+
+No special APIs to learn for composition. It's just JavaScript.
+
 ### Emphasize the DX inversion
 
 - Traditional: code is scattered across handler → queue → worker → database
@@ -137,11 +162,20 @@ export async function orderWorkflow(orderId: string) {
 
 ## ACT 3: DEMOS (6–8 min)
 
-### Demo 1: Magic Link Login (~2 min)
+Brief framing before diving in: hooks have three main use cases. We'll demo all
+three, plus a bonus:
+
+1. **Human-in-the-loop** — suspend until a person takes action
+2. **3rd party callback** — suspend until an external service calls back
+3. **1st party service** — suspend until your own infrastructure reports back
+
+### Demo 1: Magic Link Login — _human-in-the-loop_ (~2 min)
 
 **Intro**: "Let's start with something everyone has experienced — magic link
 email login. You enter your email, get a link, click it, and you're logged in.
-Simple from the user's perspective, but surprisingly tricky to build correctly."
+Simple from the user's perspective, but surprisingly tricky to build correctly.
+This is the classic human-in-the-loop pattern — the workflow suspends until a
+human takes action."
 
 #### Show the workflow code
 
@@ -166,9 +200,12 @@ export async function emailLogin(url: string, email: string) {
 - `createWebhook()` generates a unique, public URL — "this URL goes right into
   the email"
 - `respondWith: 'manual'` means when someone hits that URL, WE control the HTTP
-  response — "we redirect their browser to the dashboard"
+  response — "we can send back a redirect, a custom page, whatever we want"
+  (this is the _dynamic_ response mode — there's also a _static_ mode for
+  simple cases like returning a fixed redirect header)
 - `Promise.race([webhook, sleep("5m")])` — "built-in 5-minute timeout, no
-  setTimeout, no cron cleanup"
+  setTimeout, no cron cleanup. This is the timeout pattern — it works with any
+  primitive."
 - `using` keyword — "when the block exits, the webhook token is disposed — no
   stale tokens hanging around"
 
@@ -190,11 +227,12 @@ email arriving, click the link, see the redirect + success state.
 
 ---
 
-### Demo 2: OpenAI Background Response (~1.5 min)
+### Demo 2: OpenAI Background Response — _3rd party callback_ (~1.5 min)
 
-**Intro**: "Same pattern, different use case. OpenAI has a 'background' mode for
-long-running responses. You kick off the request, and they call you back when
-it's done. Perfect for hooks."
+**Intro**: "Same suspension pattern, different trigger. Instead of a human
+clicking a link, a third-party service calls us back. OpenAI has a 'background'
+mode for long-running responses — you kick off the request, and they call you
+when it's done. Perfect for hooks."
 
 #### Show the code
 
@@ -216,7 +254,7 @@ export async function withCreateHook() {
 }
 ```
 
-#### Key insight — the deterministic token pattern
+#### Key insight — deterministic tokens
 
 ```ts
 // Workflow side:
@@ -232,16 +270,18 @@ await resumeHook(token, event);
 it from the event data. The response ID is the shared key between the workflow
 and the webhook handler. No database lookup needed."
 
-"This pattern works for any provider that includes an identifier in their
-callback — Stripe, Twilio, Resend, you name it."
+"Deterministic tokens are the key insight that makes event routing work without
+a database. This pattern works for any provider that includes an identifier in
+their callback — Stripe, Twilio, Resend, fal.ai, you name it."
 
 ---
 
-### Demo 3: GitHub Webhook Routing (~2 min)
+### Demo 3: GitHub Webhook Routing — _3rd party, multi-event_ (~2 min)
 
 **Intro**: "Now let's get more ambitious. What if your workflow needs to wait for
 MULTIPLE webhook events in sequence? Like: wait for a PR to be approved, then
-wait for CI to pass, then auto-merge."
+wait for CI to pass, then auto-merge. Same 3rd party callback pattern, but now
+chaining multiple suspensions."
 
 #### Show the workflow
 
@@ -282,7 +322,7 @@ export async function autoMerge(repo: string, prNumber: number) {
 - "Read this code. It's a checklist. Wait for approval, wait for CI, merge.
   That IS the business logic."
 - "Each `using` block scopes the hook's lifetime. When the approval phase is
-  done, that token is freed."
+  done, that token is freed — ready to be reused by another workflow."
 - "Building this with traditional webhooks means a state machine, a database
   table tracking which PRs are in which phase, and handler code that checks
   'is this PR waiting for approval or CI?'"
@@ -321,12 +361,12 @@ routing is implicit in the token convention."
 
 ---
 
-### Demo 4: Vercel Sandbox + Long-Running Task (~1.5 min)
+### Demo 4: Vercel Sandbox — _1st party service callback_ (~1.5 min)
 
-**Intro**: "For our last example, let's combine hooks with Vercel Sandbox.
-Sandbox lets you spin up ephemeral Linux VMs. Imagine kicking off an hours-long
-code analysis, going on your commute, and having the results waiting when you
-arrive."
+**Intro**: "For our last example — the third use case: your own infrastructure
+calling back. Let's combine hooks with Vercel Sandbox. Sandbox lets you spin up
+ephemeral Linux VMs. Imagine kicking off an hours-long code analysis, going on
+your commute, and having the results waiting when you arrive."
 
 #### Show the workflow
 
@@ -366,6 +406,8 @@ async function launchAnalysis(repoUrl: string, callbackUrl: string) {
 
 #### Talking points
 
+- "This is the 1st party service pattern — your own GPU box, your own build
+  server, your own Sandbox. Give it a webhook URL, it calls back when done."
 - "The Sandbox runs for as long as it needs. The workflow is suspended the whole
   time — zero compute cost."
 - "When the Sandbox finishes, it POSTs the results to the webhook URL. That
@@ -379,24 +421,26 @@ async function launchAnalysis(repoUrl: string, callbackUrl: string) {
 
 ## ACT 4: RECAP & CLOSE (1 min)
 
-### Quick visual recap
+### The three use cases
 
-Show all 4 patterns side by side:
+Reinforce the mental model by mapping each demo to a use case category:
 
-| Pattern   | Hook Type          | Token                | Use Case                   |
-| --------- | ------------------ | -------------------- | -------------------------- |
-| Magic Link| `createWebhook()`  | Random (auto)        | User clicks a URL          |
-| OpenAI    | `createHook()`     | Deterministic        | Provider callback          |
-| GitHub    | `createHook()`     | Deterministic        | Multi-event routing        |
-| Sandbox   | `createWebhook()`  | Random (auto)        | Long-running task callback |
+| Use Case             | Demo          | Hook Type         | Token         |
+| -------------------- | ------------- | ----------------- | ------------- |
+| Human-in-the-loop    | Magic Link    | `createWebhook()` | Random (auto) |
+| 3rd party callback   | OpenAI        | `createHook()`    | Deterministic |
+| 3rd party, chained   | GitHub PR     | `createHook()`    | Deterministic |
+| 1st party service    | Sandbox       | `createWebhook()` | Random (auto) |
 
 ### Closing points
 
 1. **`let` is your database** — durable local variables, no Redis needed
 2. **`await hook` is your control flow** — suspend for minutes, hours, days
-3. **One function, one place** — business logic reads top-to-bottom
-4. **Zero-cost suspension** — no compute while waiting
-5. **Built-in reliability** — retries, replay, exactly-once, all transparent
+3. **Everything is a Promise** — timeout, parallelism, composition — it's just
+   JavaScript
+4. **One function, one place** — business logic reads top-to-bottom
+5. **Zero-cost suspension** — no compute while waiting
+6. **Built-in reliability** — retries, replay, exactly-once, all transparent
 
 ### Closing line
 
