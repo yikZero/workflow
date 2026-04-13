@@ -97,7 +97,7 @@ Imagine chaining multiple webhook events together.
 export async function doEmailLogin(url: string, email: string) {
   "use workflow";
 
-  using webhook = createWebhook({ respondWith: "manual" });
+  const webhook = createWebhook({ respondWith: "manual" });
 
   await sendLoginEmail(email, new URL(webhookUrl.pathname, url));
 
@@ -135,10 +135,6 @@ webhook to the user's browser. Pretty wild.
 `Promise.race([webhook, sleep("5m")])` — built-in timeout. If the user
 doesn't click within 5 minutes, `sleep` wins the race and we get `null`.
 No setTimeout, no cron job cleaning up expired sessions, no Redis TTLs.
-
-And `using` — this is the TC39 Explicit Resource Management proposal. When
-the block exits, the webhook token is automatically disposed. No stale
-tokens sitting around.
 
 > Screen: Open `app/api/login/email/route.ts`
 
@@ -324,7 +320,7 @@ see exactly what happened.
 Then the webhook part:
 
 ```ts
-using webhook = createWebhook();
+const webhook = createWebhook();
 const callbackUrl = new URL(webhook.url, baseUrl).href;
 ```
 

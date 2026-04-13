@@ -12,7 +12,7 @@ Start with a dramatic code contrast. Screen shows a messy architecture diagram
 (webhook handler → queue → worker → Redis → dead letter queue), then cuts to:
 
 ```ts
-using hook = createHook({ token: `order:${orderId}` });
+const hook = createHook({ token: `order:${orderId}` });
 const result = await hook;
 ```
 
@@ -88,7 +88,7 @@ export async function orderWorkflow(orderId: string) {
 
   let order = await processPayment(orderId);
 
-  using hook = createHook({ token: `shipping:${orderId}` });
+  const hook = createHook({ token: `shipping:${orderId}` });
   let shipment = await hook; // ← workflow SUSPENDS here
 
   // Resumes when the hook is called — state is preserved
@@ -131,7 +131,7 @@ email login. The workflow suspends until a human clicks a link."
 export async function emailLogin(url: string, email: string) {
   "use workflow";
 
-  using webhook = createWebhook({ respondWith: "manual" });
+  const webhook = createWebhook({ respondWith: "manual" });
 
   await sendLoginEmail(email, webhook.url);
 
@@ -149,7 +149,6 @@ export async function emailLogin(url: string, email: string) {
 - `respondWith: 'manual'` means the workflow controls the HTTP response — here
   we redirect the user's browser to the dashboard
 - `Promise.race([webhook, sleep("5m")])` — built-in 5-minute timeout
-- `using` — auto-disposes the webhook token when the block exits
 
 #### Starting the workflow
 
@@ -324,7 +323,7 @@ commute, and the results are waiting when you arrive."
 export async function analyzeRepo(repoUrl: string) {
   "use workflow";
 
-  using webhook = createWebhook();
+  const webhook = createWebhook();
 
   await launchAnalysis(repoUrl, webhook.url);
 
