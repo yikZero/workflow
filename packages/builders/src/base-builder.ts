@@ -589,6 +589,22 @@ export abstract class BaseBuilder {
 
     const stepsResult = await esbuildCtx.rebuild();
 
+    // Post-process the generated step bundle to add bundler-ignore comments
+    // to dynamic `import()` calls with non-literal arguments (e.g. variables,
+    // expressions).  These dynamic imports are resolved at runtime and should
+    // not be traced by downstream bundlers like Turbopack/webpack, which would
+    // otherwise emit "Module not found" errors for unresolvable paths.
+    if (outfile) {
+      const bundleContent = await readFile(outfile, 'utf8');
+      const processed = bundleContent.replace(
+        /\bimport\((?!\s*["'`])/g,
+        'import(/* webpackIgnore: true */ '
+      );
+      if (processed !== bundleContent) {
+        await writeFile(outfile, processed);
+      }
+    }
+
     this.logEsbuildMessages(stepsResult, 'steps bundle creation');
     this.logBaseBuilderInfo(
       'Created steps bundle',

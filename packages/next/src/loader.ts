@@ -178,6 +178,14 @@ function getSocketInfoFilePath(): string | null {
     return configuredPath;
   }
 
+  // Only fall back to filesystem discovery when deferred (lazy) discovery is
+  // active.  Without this guard, a stale socket-info file left behind by a
+  // previous `next dev` session causes ECONNREFUSED during eager builds
+  // (i.e. `next build` without `lazyDiscovery`).
+  if (process.env.WORKFLOW_NEXT_LAZY_DISCOVERY !== '1') {
+    return null;
+  }
+
   // Fallback for worker processes that don't inherit dynamic env updates
   // from the process that created the socket server.
   const distDir = process.env.WORKFLOW_NEXT_DIST_DIR || '.next';
