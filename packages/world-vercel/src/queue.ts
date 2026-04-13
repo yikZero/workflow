@@ -260,7 +260,22 @@ export function createQueue(config?: APIConfig): Queue {
       // If CBOR transport failed, fall back to JSON transport. The receiving
       // side uses DualTransport which accepts both formats.
       if (useCbor) {
-        return await send(jsonTransport);
+        try {
+          return await send(jsonTransport);
+        } catch (fallbackError) {
+          // The CBOR send may have partially succeeded (server received the
+          // message but the client failed to parse the response). In that case
+          // the JSON retry with the same idempotencyKey will throw a
+          // DuplicateMessageError which we handle identically to the primary path.
+          if (fallbackError instanceof DuplicateMessageError) {
+            return {
+              messageId: MessageId.parse(
+                `msg_duplicate_${fallbackError.idempotencyKey ?? opts?.idempotencyKey ?? 'unknown'}`
+              ),
+            };
+          }
+          throw fallbackError;
+        }
       }
       throw error;
     }
