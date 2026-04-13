@@ -207,12 +207,6 @@ export function createQueue(config?: APIConfig): Queue {
       SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT;
     const transport = useCbor ? cborTransport : jsonTransport;
 
-    const client = new QueueClient({
-      ...clientOptions,
-      deploymentId,
-      transport,
-    });
-
     // The CborTransport handles CBOR encoding inside serialize(),
     // preserving Uint8Array values (workflow input in specVersion >= 2).
     const wrapper = {
@@ -222,20 +216,35 @@ export function createQueue(config?: APIConfig): Queue {
       deploymentId: opts?.deploymentId,
     };
     const sanitizedQueueName = queueName.replace(/[^A-Za-z0-9-_]/g, '-');
-    try {
-      const { messageId } = await client.send(sanitizedQueueName, wrapper, {
-        idempotencyKey: opts?.idempotencyKey,
-        delaySeconds: opts?.delaySeconds,
-        headers: {
-          ...getHeadersFromPayload(payload),
-          ...opts?.headers,
-        },
+    const sendOpts = {
+      idempotencyKey: opts?.idempotencyKey,
+      delaySeconds: opts?.delaySeconds,
+      headers: {
+        ...getHeadersFromPayload(payload),
+        ...opts?.headers,
+      },
+    };
+
+    const send = async (t: Transport<unknown>) => {
+      const client = new QueueClient({
+        ...clientOptions,
+        deploymentId,
+        transport: t,
       });
+      const { messageId } = await client.send(
+        sanitizedQueueName,
+        wrapper,
+        sendOpts
+      );
       return {
         // messageId may be null when VQS fails over to a different region —
         // the event is ingested but the responding region cannot return an ID.
         messageId: messageId ? MessageId.parse(messageId) : null,
       };
+    };
+
+    try {
+      return await send(transport);
     } catch (error) {
       // Silently handle idempotency key conflicts - the message was already queued.
       // This matches the behavior of world-local and world-postgres.
@@ -247,6 +256,11 @@ export function createQueue(config?: APIConfig): Queue {
             `msg_duplicate_${error.idempotencyKey ?? opts?.idempotencyKey ?? 'unknown'}`
           ),
         };
+      }
+      // If CBOR transport failed, fall back to JSON transport. The receiving
+      // side uses DualTransport which accepts both formats.
+      if (useCbor) {
+        return await send(jsonTransport);
       }
       throw error;
     }
