@@ -39,8 +39,6 @@ import {
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
 } from '~/components/ui/breadcrumb';
 import { Button } from '~/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
@@ -552,14 +550,10 @@ export function RunDetailView({
             <BreadcrumbList>
               <BreadcrumbItem>
                 <BreadcrumbLink asChild>
-                  <Link to="/">Runs</Link>
+                  <Link to="/" className="font-mono text-xs">
+                    {runId.length > 8 ? `${runId.slice(0, 8)}...` : runId}
+                  </Link>
                 </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage className="font-mono text-xs">
-                  {runId}
-                </BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
