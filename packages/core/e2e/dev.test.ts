@@ -13,6 +13,8 @@ export interface DevTestConfig {
   testWorkflowFile?: string;
   /** The workflows directory relative to appPath. Defaults to 'workflows' */
   workflowsDir?: string;
+  /** Override deferred step copy support detection. Defaults to auto-detect from path. */
+  supportsDeferredStepCopies?: boolean;
 }
 
 function getConfigFromEnv(): DevTestConfig | null {
@@ -44,9 +46,11 @@ export function createDevTests(config?: DevTestConfig) {
     );
     const testWorkflowFile = finalConfig.testWorkflowFile ?? '3_streams.ts';
     const workflowsDir = finalConfig.workflowsDir ?? 'workflows';
-    const supportsDeferredStepCopies = generatedStep.includes(
-      path.join('.well-known', 'workflow', 'v1', 'step', 'route.js')
-    );
+    const supportsDeferredStepCopies =
+      finalConfig.supportsDeferredStepCopies ??
+      generatedStep.includes(
+        path.join('.well-known', 'workflow', 'v1', 'step', 'route.js')
+      );
     const restoreFiles: Array<{ path: string; content: string }> = [];
 
     const fetchWithTimeout = (pathname: string) => {
