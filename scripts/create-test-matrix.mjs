@@ -12,6 +12,12 @@ const DEV_TEST_CONFIGS = {
     apiFilePath: 'app/api/chat/route.ts',
     apiFileImportPath: '../../..',
   },
+  'nextjs-eager': {
+    generatedStepPath: 'app/.well-known/workflow/v1/step/route.js',
+    generatedWorkflowPath: 'app/.well-known/workflow/v1/flow/route.js',
+    apiFilePath: 'app/api/chat/route.ts',
+    apiFileImportPath: '../../..',
+  },
   nitro: {
     generatedStepPath: 'node_modules/.nitro/workflow/steps.mjs',
     generatedWorkflowPath: 'node_modules/.nitro/workflow/workflows.mjs',
@@ -82,6 +88,11 @@ const matrix = {
       name: 'nextjs-webpack',
       project: 'example-nextjs-workflow-webpack',
       ...DEV_TEST_CONFIGS['nextjs-webpack'],
+    },
+    {
+      name: 'nextjs-eager',
+      project: 'example-nextjs-workflow-eager',
+      ...DEV_TEST_CONFIGS['nextjs-eager'],
     },
   ],
 };

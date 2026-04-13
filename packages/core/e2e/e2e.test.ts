@@ -2065,12 +2065,12 @@ describe('e2e', () => {
   );
 
   // ==================== PAGES ROUTER TESTS ====================
-  // Tests for Next.js Pages Router API endpoint (only runs for nextjs-turbopack and nextjs-webpack)
-  const isNextJsApp =
+  // Tests for Next.js Pages Router API endpoint (nextjs-eager has no pages dir)
+  const isNextJsAppWithPagesRouter =
     process.env.APP_NAME === 'nextjs-turbopack' ||
     process.env.APP_NAME === 'nextjs-webpack';
 
-  describe.skipIf(!isNextJsApp)('pages router', () => {
+  describe.skipIf(!isNextJsAppWithPagesRouter)('pages router', () => {
     test('addTenWorkflow via pages router', { timeout: 60_000 }, async () => {
       const run = await startWorkflowViaHttp(
         {

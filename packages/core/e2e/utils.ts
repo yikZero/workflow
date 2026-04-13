@@ -52,7 +52,9 @@ export function hasStepSourceMaps(): boolean {
   // Next.js does not consume inline sourcemaps AT ALL for step bundles
   // TODO: we need to fix this
   const appName = process.env.APP_NAME as string;
-  if (['nextjs-webpack', 'nextjs-turbopack'].includes(appName)) {
+  if (
+    ['nextjs-webpack', 'nextjs-turbopack', 'nextjs-eager'].includes(appName)
+  ) {
     return false;
   }
 

@@ -95,6 +95,7 @@ describe.each([
   'example',
   'nextjs-webpack',
   'nextjs-turbopack',
+  'nextjs-eager',
   'nitro',
   'vite',
   'sveltekit',

@@ -17,7 +17,7 @@ runs:
     - id: prepare
       shell: bash
       run: |
-        if [[ "${{ inputs.app-name }}" == "nextjs-turbopack" || "${{ inputs.app-name }}" == "nextjs-webpack" ]]; then
+        if [[ "${{ inputs.app-name }}" == "nextjs-turbopack" || "${{ inputs.app-name }}" == "nextjs-webpack" || "${{ inputs.app-name }}" == "nextjs-eager" ]]; then
           STAGE_LOG="$(mktemp)"
           node scripts/stage-workbench-with-tarballs.mjs "workbench/${{ inputs.app-name }}" | tee "$STAGE_LOG"
           WORKBENCH_APP_PATH="$(sed -n 's/^Staged workbench: //p' "$STAGE_LOG" | tail -n 1)"

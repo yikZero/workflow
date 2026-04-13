@@ -48,6 +48,7 @@ interface Manifest {
 const MANIFEST_PATHS: Record<string, string> = {
   'nextjs-webpack': 'app/.well-known/workflow/v1/manifest.json',
   'nextjs-turbopack': 'app/.well-known/workflow/v1/manifest.json',
+  'nextjs-eager': 'app/.well-known/workflow/v1/manifest.json',
   nitro: 'node_modules/.nitro/workflow/manifest.json',
   vite: 'node_modules/.nitro/workflow/manifest.json',
   sveltekit: 'src/routes/.well-known/workflow/v1/manifest.json',
@@ -190,6 +191,7 @@ function getStepNodes(graph: ManifestWorkflow['graph']): ManifestNode[] {
 describe.each([
   'nextjs-webpack',
   'nextjs-turbopack',
+  'nextjs-eager',
 ])('dot-directory discovery (.well-known/agent)', (project) => {
   test(
     `${project}: discovers steps inside .well-known/agent directory`,

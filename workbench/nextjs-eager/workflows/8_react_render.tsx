@@ -1,0 +1,1 @@
+../../nextjs-turbopack/workflows/8_react_render.tsx
