@@ -1010,6 +1010,24 @@ importers:
 
   packages/web:
     dependencies:
+      '@workflow/core':
+        specifier: workspace:*
+        version: link:../core
+      '@workflow/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@workflow/utils':
+        specifier: workspace:*
+        version: link:../utils
+      '@workflow/web-shared':
+        specifier: workspace:*
+        version: link:../web-shared
+      '@workflow/world':
+        specifier: workspace:*
+        version: link:../world
+      '@workflow/world-vercel':
+        specifier: workspace:*
+        version: link:../world-vercel
       express:
         specifier: ^4.21.0
         version: 4.22.1
@@ -1074,24 +1092,6 @@ importers:
       '@types/react-dom':
         specifier: '19'
         version: 19.1.9(@types/react@19.1.13)
-      '@workflow/core':
-        specifier: workspace:*
-        version: link:../core
-      '@workflow/errors':
-        specifier: workspace:*
-        version: link:../errors
-      '@workflow/utils':
-        specifier: workspace:*
-        version: link:../utils
-      '@workflow/web-shared':
-        specifier: workspace:*
-        version: link:../web-shared
-      '@workflow/world':
-        specifier: workspace:*
-        version: link:../world
-      '@workflow/world-vercel':
-        specifier: workspace:*
-        version: link:../world-vercel
       '@xyflow/react':
         specifier: 12.10.1
         version: 12.10.1(@types/react@19.1.13)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
