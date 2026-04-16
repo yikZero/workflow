@@ -815,11 +815,35 @@ export async function recreateRun(
 ): Promise<ServerActionResult<string>> {
   try {
     const world = await getWorldFromEnv({ ...worldEnv });
+
+    // Probe the target deployment's specVersion via health check so we use
+    // the correct queue transport (JSON for old deployments, CBOR for new).
+    // Falls back to the run's specVersion inside recreateRunFromExisting
+    // if the probe fails (e.g. old deployment without health check support).
+    let specVersion: number | undefined;
+    try {
+      let targetDeploymentId = deploymentId;
+      if (!targetDeploymentId) {
+        const run = await world.runs.get(runId, { resolveData: 'none' });
+        targetDeploymentId = run.deploymentId;
+      }
+      const hc = await healthCheck(world, 'workflow', {
+        deploymentId: targetDeploymentId,
+        timeout: 10_000,
+      });
+      if (hc.healthy && hc.specVersion != null) {
+        specVersion = hc.specVersion;
+      }
+    } catch {
+      // Health check failed — fall back to run's specVersion.
+    }
+
     const newRunId = await workflowRunHelpers.recreateRunFromExisting(
       world,
       runId,
       {
         deploymentId,
+        specVersion,
       }
     );
     return createResponse(newRunId);
