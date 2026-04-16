@@ -287,13 +287,13 @@ describe('streams.get reconnection (integration)', () => {
     fetchMock.mockResolvedValueOnce(new Response(errorStream, { status: 200 }));
 
     const streamer = await getStreamer();
-    const stream = await streamer.streams.get('run_test', 'strm_test');
-
-    // The error should propagate to the consumer rather than silently closing
-    await expect(drain(stream)).rejects.toThrow('connection reset');
+    // streams.get() reads the full response via arrayBuffer(), so a
+    // mid-stream error rejects the get() promise itself.
+    await expect(streamer.streams.get('run_test', 'strm_test')).rejects.toThrow(
+      'connection reset'
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    // Should NOT have attempted a second fetch (no reconnection on error)
   });
 
   it('throws on non-200 response', async () => {

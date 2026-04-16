@@ -386,9 +386,7 @@ describe('streams.get', () => {
   it('includes runId in the fetch URL', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockImplementation(
-        async () => new Response(new ReadableStream(), { status: 200 })
-      );
+      .mockImplementation(async () => new Response('', { status: 200 }));
 
     const streamer = await getStreamer();
     await streamer.streams.get('run-123', 'my-stream');
@@ -401,9 +399,7 @@ describe('streams.get', () => {
   it('passes startIndex as a query parameter', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockImplementation(
-        async () => new Response(new ReadableStream(), { status: 200 })
-      );
+      .mockImplementation(async () => new Response('', { status: 200 }));
 
     const streamer = await getStreamer();
     await streamer.streams.get('run-123', 'my-stream', 5);
