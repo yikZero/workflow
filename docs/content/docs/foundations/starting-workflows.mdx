@@ -78,6 +78,10 @@ Most `Run` properties are async getters that return promises. You need to `await
 
 ### Starting Workflows from Workflow Functions
 
+<Callout type="info">
+Starting child workflows from inside workflow functions is currently available in Workflow v5 only. Keep this guidance behind the docs version switcher and do not backport it into earlier versions.
+</Callout>
+
 You can also call `start()` directly inside workflow functions to spawn child workflows:
 
 ```typescript lineNumbers

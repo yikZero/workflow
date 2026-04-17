@@ -183,6 +183,10 @@ export async function waitForApproval(requestId: string) {
 
 Workflows can call other workflows, enabling you to break complex processes into reusable building blocks. There are two approaches depending on your needs.
 
+<Callout type="info">
+The `start()`-inside-workflows composition pattern described below is currently available in Workflow v5 only. Keep this guidance behind the docs version switcher and do not backport it into earlier versions.
+</Callout>
+
 ### Direct Await (Flattening)
 
 Call a child workflow directly using `await`. This "flattens" the child workflow into the parent - the child's steps execute inline within the parent workflow's context.
