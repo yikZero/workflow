@@ -394,7 +394,9 @@ export function createStreamer(config?: APIConfig): Streamer {
             // variable, so this sees whichever connection is active right now;
             // the `cancelled` flag guards against a concurrent reconnect
             // swapping in a fresh reader after this runs.
-            await reader.cancel().catch(() => {});
+            await reader.cancel().catch((err) => {
+              console.warn('Failed to cancel reader:', err);
+            });
           },
         });
       },
