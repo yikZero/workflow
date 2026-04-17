@@ -59,7 +59,7 @@ const nextConfig: NextConfig = {};
 
 export default withWorkflow(nextConfig, {
   workflows: {
-    lazyDiscovery: true,
+    lazyDiscovery: false,
     local: {
       port: 4000,
     },
@@ -69,7 +69,7 @@ export default withWorkflow(nextConfig, {
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `workflows.lazyDiscovery` | `boolean` | `false` | When `true`, defers workflow discovery until files are requested instead of scanning eagerly at startup. Useful for large projects where startup time matters. |
+| `workflows.lazyDiscovery` | `boolean` | `true` | Defers workflow discovery until files are requested instead of scanning eagerly at startup. Set to `false` to force eager discovery (scanning the project up front). Requires a Next.js version that supports deferred entries; older versions fall back to eager discovery automatically. |
 | `workflows.local.port` | `number` | — | Overrides the `PORT` environment variable for local development. Has no effect when deployed to Vercel. |
 
 <Callout type="info">

@@ -109,4 +109,22 @@ describe('withWorkflow outputFileTracingRoot', () => {
       workingDir: process.cwd(),
     });
   });
+
+  it('enables lazyDiscovery by default', async () => {
+    withWorkflow({});
+    expect(process.env.WORKFLOW_NEXT_LAZY_DISCOVERY).toBe('1');
+  });
+
+  it('enables lazyDiscovery when explicitly set to true', async () => {
+    withWorkflow({}, { workflows: { lazyDiscovery: true } });
+    expect(process.env.WORKFLOW_NEXT_LAZY_DISCOVERY).toBe('1');
+  });
+
+  it('disables lazyDiscovery when explicitly set to false', async () => {
+    // Ensure env var is set (as if a prior call enabled it) so we can verify
+    // the explicit `false` clears it.
+    process.env.WORKFLOW_NEXT_LAZY_DISCOVERY = '1';
+    withWorkflow({}, { workflows: { lazyDiscovery: false } });
+    expect(process.env.WORKFLOW_NEXT_LAZY_DISCOVERY).toBeUndefined();
+  });
 });
