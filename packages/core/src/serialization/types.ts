@@ -45,6 +45,12 @@ export interface SerializableSpecial {
   BigInt64Array: string; // base64 string
   BigUint64Array: string; // base64 string
   Date: string; // ISO string
+  DOMException: {
+    message: string;
+    name: string;
+    stack?: string;
+    cause?: unknown;
+  };
   Float32Array: string; // base64 string
   Float64Array: string; // base64 string
   Error: Record<string, any>;
@@ -87,6 +93,9 @@ export interface SerializableSpecial {
     closureVars?: Record<string, any>;
   };
   URL: string;
+  WorkflowFunction: {
+    workflowId: string;
+  };
   URLSearchParams: string;
   Uint8Array: string; // base64 string
   Uint8ClampedArray: string; // base64 string
