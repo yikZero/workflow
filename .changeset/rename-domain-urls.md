@@ -18,4 +18,4 @@
 "@workflow/web-shared": patch
 ---
 
-Rename `useworkflow.dev` URLs to `workflow-sdk.dev`
+Rename `useworkflow.dev` to `workflow-sdk.dev`
