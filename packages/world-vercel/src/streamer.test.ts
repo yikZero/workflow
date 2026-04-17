@@ -503,3 +503,137 @@ describe('writeMulti pagination', () => {
     ]);
   });
 });
+
+// Regression tests for consumer-cancel propagation on streams.get.
+//
+// Before the fix, cancelling the ReadableStream returned by streams.get()
+// only called reader.cancel() on the currently-captured fetch body reader.
+// The pull loop kept running, and if the upstream had emitted a timeout
+// control frame, pull would happily call connect() again and keep reading
+// — so a consumer disconnect (e.g. an HTTP client hanging up on
+// `run.getReadable()`) would leave the server still fetching in the
+// background.
+describe('streams.get consumer cancel', () => {
+  async function getStreamer() {
+    const { createStreamer } = await import('./streamer.js');
+    return createStreamer();
+  }
+
+  function chunkedStream(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+    let i = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (i < chunks.length) {
+          controller.enqueue(chunks[i++]);
+        } else {
+          controller.close();
+        }
+      },
+    });
+  }
+
+  function streamResponse(...chunks: Uint8Array[]): Response {
+    return new Response(chunkedStream(chunks), {
+      status: 200,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('aborts the in-flight upstream fetch via AbortSignal', async () => {
+    const capturedSignals: (AbortSignal | null | undefined)[] = [];
+    let resolveFirstFetch: (r: Response) => void;
+    const firstFetchPromise = new Promise<Response>((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      capturedSignals.push(init?.signal);
+      return firstFetchPromise;
+    });
+
+    const streamer = await getStreamer();
+    // streams.get kicks off the fetch synchronously via connect().
+    const streamPromise = streamer.streams.get('run-1', 'my-stream');
+    // Give connect() a tick to start the fetch.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Resolve the fetch so the ReadableStream construction can complete.
+    resolveFirstFetch!(streamResponse(new Uint8Array(0)));
+    const stream = await streamPromise;
+
+    await stream.cancel();
+
+    expect(capturedSignals.length).toBeGreaterThan(0);
+    const signal = capturedSignals[0];
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('does not reconnect after the consumer cancels mid-timeout', async () => {
+    const chunk1 = new TextEncoder().encode('hello, world');
+    const timeout = buildControlFrame(false, 1);
+
+    let fetchCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        return streamResponse(chunk1, timeout);
+      }
+      // A reconnect should never happen after cancel. If it does, hang
+      // indefinitely so the test can assert fetchCount === 1.
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('aborted', 'AbortError'))
+        );
+      });
+    });
+
+    const streamer = await getStreamer();
+    const stream = await streamer.streams.get('run-1', 'my-stream');
+    const reader = stream.getReader();
+
+    // Drain the data bytes — this forces pull to observe the upstream
+    // close and enter the reconnect branch.
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+
+    // Cancel while (or right after) pull is attempting to reconnect.
+    await reader.cancel();
+
+    // Give any lingering pull work a chance to misbehave.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Only the initial connection should ever have been made.
+    expect(fetchCount).toBe(1);
+  });
+
+  it('cancels the active reader when cancel is called during a read', async () => {
+    // Upstream body that hangs — so pull is blocked in reader.read() when
+    // cancel arrives. A correct implementation cancels the body reader and
+    // lets pull exit cleanly; the broken one would continue spinning.
+    const hangingBody = new ReadableStream<Uint8Array>({
+      start() {
+        // Never enqueue or close; we want pull to be stuck in read().
+      },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(hangingBody, { status: 200 })
+    );
+
+    const streamer = await getStreamer();
+    const stream = await streamer.streams.get('run-1', 'my-stream');
+    const reader = stream.getReader();
+
+    // Schedule a read so pull starts and gets parked in reader.read().
+    const readPromise = reader.read();
+    await new Promise((r) => setTimeout(r, 10));
+
+    await reader.cancel();
+
+    const result = await readPromise;
+    expect(result.done).toBe(true);
+  });
+});

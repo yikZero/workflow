@@ -262,6 +262,14 @@ export function createStreamer(config?: APIConfig): Streamer {
         const MAX_RECONNECTS = 50;
         let reconnectCount = 0;
 
+        // Propagates consumer cancellation all the way to the upstream fetch.
+        // Without this, a client disconnect mid-reconnect would leave the new
+        // fetch untouched and the pull loop happily reading from it, so the
+        // caller (e.g. an API endpoint returning run.getReadable()) would keep
+        // running well after its own client hung up.
+        let cancelled = false;
+        const abortController = new AbortController();
+
         const connect = async (): Promise<
           ReadableStreamDefaultReader<Uint8Array>
         > => {
@@ -270,6 +278,7 @@ export function createStreamer(config?: APIConfig): Streamer {
           url.searchParams.set('startIndex', String(currentStartIndex));
           const response = await fetch(url, {
             headers: httpConfig.headers,
+            signal: abortController.signal,
           });
           if (!response.ok) {
             throw new Error(`Failed to fetch stream: ${response.status}`);
@@ -289,10 +298,15 @@ export function createStreamer(config?: APIConfig): Streamer {
         return new ReadableStream<Uint8Array>({
           pull: async (controller) => {
             for (;;) {
+              if (cancelled) return;
+
               let result: { done: boolean; value?: Uint8Array };
               try {
                 result = await reader.read();
               } catch (err) {
+                // A cancel during an in-flight read can surface here as an
+                // AbortError — swallow it, since the consumer asked for it.
+                if (cancelled) return;
                 // Network error — not a clean close. Forward any buffered
                 // data and propagate the error so consumers know the stream
                 // was truncated.
@@ -303,6 +317,8 @@ export function createStreamer(config?: APIConfig): Streamer {
                 controller.error(err);
                 return;
               }
+
+              if (cancelled) return;
 
               if (!result.done) {
                 // Append new data to tail buffer, forward everything except
@@ -351,7 +367,13 @@ export function createStreamer(config?: APIConfig): Streamer {
                   return;
                 }
                 currentStartIndex = control.nextIndex;
-                reader = await connect();
+                try {
+                  reader = await connect();
+                } catch (err) {
+                  if (cancelled) return;
+                  controller.error(err);
+                  return;
+                }
                 continue;
               }
 
@@ -366,7 +388,13 @@ export function createStreamer(config?: APIConfig): Streamer {
             }
           },
           cancel: async () => {
-            await reader.cancel();
+            cancelled = true;
+            abortController.abort();
+            // Best-effort cancel of the current reader. `reader` is a closure
+            // variable, so this sees whichever connection is active right now;
+            // the `cancelled` flag guards against a concurrent reconnect
+            // swapping in a fresh reader after this runs.
+            await reader.cancel().catch(() => {});
           },
         });
       },
