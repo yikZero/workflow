@@ -56,10 +56,6 @@ Learn more about [`WorkflowReadableStreamOptions`](/docs/api-reference/workflow-
 * All arguments must be [serializable](/docs/foundations/serialization).
 * When `deploymentId` is provided, the argument types and return type become `unknown` since there is no guarantee the workflow function's types will be consistent across different deployments.
 
-<Callout type="info">
-Calling `start()` directly inside workflow functions is currently available in Workflow v5 only. Keep this guidance behind the docs version switcher and do not backport it into earlier versions.
-</Callout>
-
 ## Examples
 
 ### With Arguments
