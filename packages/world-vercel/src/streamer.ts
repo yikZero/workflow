@@ -393,6 +393,7 @@ export function createStreamer(config?: APIConfig): Streamer {
         },
         cancel: async () => {
           cancelled = true;
+          console.log('Cancelling stream');
           abortController.abort();
           // Best-effort cancel of the current reader. `reader` is a closure
           // variable, so this sees whichever connection is active right now;
