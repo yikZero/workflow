@@ -887,9 +887,14 @@ async function processEvents(
       case 'step_started':
       case 'step_retrying':
       case 'wait_created':
-      case 'hook_created':
-      case 'hook_disposed': {
+      case 'hook_created': {
         markCreated(vm, escapedCid);
+        break;
+      }
+      case 'hook_disposed': {
+        // Disambiguate from the `hook` pending op with the same
+        // correlationId — we want to mark the `hook_dispose` entry.
+        markCreated(vm, escapedCid, 'hook_dispose');
         break;
       }
     }
@@ -897,9 +902,17 @@ async function processEvents(
   return resolved;
 }
 
-function markCreated(vm: QuickJS, escapedCid: string): void {
+function markCreated(vm: QuickJS, escapedCid: string, opType?: string): void {
+  // `hook` and `hook_dispose` pending ops share the same correlationId,
+  // so when processing `hook_disposed` events we must disambiguate by
+  // type — otherwise `.find()` returns the original `hook` op and the
+  // `hook_dispose` op is never marked, causing the entrypoint to keep
+  // retrying a hook_disposed for an already-deleted entity.
+  const predicate = opType
+    ? `function(p){return p.correlationId==="${escapedCid}"&&p.type==="${opType}";}`
+    : `function(p){return p.correlationId==="${escapedCid}";}`;
   vm.evalCode(
-    `var __p=globalThis.__pending.find(function(p){return p.correlationId==="${escapedCid}";});` +
+    `var __p=globalThis.__pending.find(${predicate});` +
       `if(__p)__p.hasCreatedEvent=true;`
   ).dispose();
 }

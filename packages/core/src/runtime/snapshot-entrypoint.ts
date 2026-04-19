@@ -309,7 +309,11 @@ export async function runWorkflowWithSnapshots(params: {
               token: hook.token,
               // metadata is already devalue-serialized (Uint8Array) from the VM
               metadata: hook.metadata,
-              ...(hook.isWebhook ? { isWebhook: true } : {}),
+              // Always include isWebhook explicitly. Worlds default it to
+              // `true` when absent, which would break the public webhook
+              // endpoint's 404 guard for hooks created via createHook().
+              // Matches suspension-handler.ts in the replay runtime.
+              isWebhook: hook.isWebhook,
             } as any,
           });
 
