@@ -11,9 +11,9 @@ function createLogger(namespace: string) {
       // Always output error/warn to console so users see critical issues
       // debug/info only output when DEBUG env var is set
       if (level === 'error') {
-        console.error(`[Workflow] ${message}`, metadata ?? '');
+        console.error(`[workflow-sdk] ${message}`, metadata ?? '');
       } else if (level === 'warn') {
-        console.warn(`[Workflow] ${message}`, metadata ?? '');
+        console.warn(`[workflow-sdk] ${message}`, metadata ?? '');
       }
 
       // Also log to debug library for verbose output when DEBUG is enabled

@@ -188,18 +188,30 @@ export function workflowEntrypoint(
         let replayTimeout: NodeJS.Timeout | undefined;
         if (process.env.VERCEL_URL !== undefined) {
           replayTimeout = setTimeout(async () => {
-            runtimeLogger.error('Workflow replay exceeded timeout', {
-              workflowRunId: runId,
-              timeoutMs: REPLAY_TIMEOUT_MS,
-              attempt: metadata.attempt,
-              maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
-            });
-
             // Allow a few retries before permanently failing the run.
             // On early attempts, just exit so the queue retries the message.
             if (metadata.attempt <= REPLAY_TIMEOUT_MAX_RETRIES) {
+              runtimeLogger.warn(
+                'Workflow replay exceeded timeout but will be re-attempted (attempt < maxRetries)',
+                {
+                  workflowRunId: runId,
+                  timeoutMs: REPLAY_TIMEOUT_MS,
+                  attempt: metadata.attempt,
+                  maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+                }
+              );
               process.exit(1);
             }
+
+            runtimeLogger.error(
+              'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
+              {
+                workflowRunId: runId,
+                timeoutMs: REPLAY_TIMEOUT_MS,
+                attempt: metadata.attempt,
+                maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+              }
+            );
 
             try {
               const world = await getWorld();
@@ -217,8 +229,16 @@ export function workflowEntrypoint(
                 },
                 { requestId }
               );
-            } catch {
+            } catch (err) {
               // Best effort — process exits regardless
+              runtimeLogger.warn(
+                'Unable to mark run as failed. The queue will continue to retry',
+                {
+                  workflowRunId: runId,
+                  error: err instanceof Error ? err.message : String(err),
+                  attempt: metadata.attempt,
+                }
+              );
             }
             // Note that this also prevents the runtime from acking the queue message,
             // so the queue will call back once, after which a 410 will get it to exit early.
@@ -538,11 +558,10 @@ export function workflowEntrypoint(
                     // everything else is a user code error.
                     const errorCode = classifyRunError(err);
 
-                    runtimeLogger.error('Error while running workflow', {
+                    runtimeLogger.error(errorStack, {
                       workflowRunId: runId,
                       errorCode,
                       errorName,
-                      errorStack,
                     });
 
                     // Fail the workflow run via event (event-sourced architecture)
