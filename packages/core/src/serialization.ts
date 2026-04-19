@@ -1,5 +1,5 @@
 import { WorkflowRuntimeError } from '@workflow/errors';
-import { DevalueError, parse, stringify } from 'devalue';
+import { parse, stringify } from 'devalue';
 import { monotonicFactory } from 'ulid';
 import {
   decrypt as aesGcmDecrypt,
@@ -12,7 +12,6 @@ import {
   pollReadableLock,
   pollWritableLock,
 } from './flushable-stream.js';
-import { runtimeLogger } from './logger.js';
 import { getStepFunction } from './private.js';
 import { getWorld } from './runtime/world.js';
 import * as clientModule from './serialization/client.js';
@@ -21,6 +20,7 @@ import {
   type EncryptionKeyParam,
   encrypt,
 } from './serialization/encryption.js';
+import { formatSerializationError } from './serialization/errors.js';
 import {
   decodeFormatPrefix,
   encodeWithFormatPrefix,
@@ -82,33 +82,6 @@ export type SerializationFormatType =
  * (e.g., when starting a workflow or handling step return values).
  */
 const defaultUlid = monotonicFactory();
-
-/**
- * Format a serialization error with context about what failed.
- * Extracts path, value, and reason from devalue's DevalueError when available.
- * Logs the problematic value to the console for better debugging.
- */
-function formatSerializationError(context: string, error: unknown): string {
-  // Use "returning" for return values, "passing" for arguments/inputs
-  const verb = context.includes('return value') ? 'returning' : 'passing';
-
-  // Build the error message with path info if available from DevalueError
-  let message = `Failed to serialize ${context}`;
-  if (error instanceof DevalueError && error.path) {
-    message += ` at path "${error.path}"`;
-  }
-  message += `. Ensure you're ${verb} serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`;
-
-  // Log the problematic value for debugging
-  if (error instanceof DevalueError && error.value !== undefined) {
-    runtimeLogger.error('Serialization failed', {
-      context,
-      problematicValue: error.value,
-    });
-  }
-
-  return message;
-}
 
 /**
  * Detect if a readable stream is a byte stream.
