@@ -7,17 +7,17 @@
  * 3. The pure-JS base64 implementation is correct
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { base64Decode, base64Encode } from './base64.js';
-import {
-  serialize as vmSerialize,
-  deserialize as vmDeserialize,
-} from './workflow-vm.js';
-import {
-  serialize as nodeSerialize,
-  deserialize as nodeDeserialize,
-} from './workflow.js';
 import { peekFormatPrefix } from './format.js';
+import {
+  deserialize as nodeDeserialize,
+  serialize as nodeSerialize,
+} from './workflow.js';
+import {
+  deserialize as vmDeserialize,
+  serialize as vmSerialize,
+} from './workflow-vm.js';
 
 describe('base64 encode/decode', () => {
   it('should round-trip empty buffer', () => {
@@ -99,6 +99,30 @@ describe('VM workflow serializer', () => {
     expect(result.b[0]).toBe(2);
     expect(result.b[1]).toBeInstanceOf(Date);
     expect(result.c.d).toBe('e');
+  });
+
+  it('should round-trip WorkflowFunction reference', () => {
+    // Simulate an SWC-compiled workflow function: a function with a
+    // `workflowId` property that the runtime treats as an opaque handle.
+    const fn = Object.assign(() => {}, {
+      workflowId: 'workflow//./src/foo//myWorkflow',
+    });
+    const revived = vmDeserialize(vmSerialize(fn)) as any;
+    expect(typeof revived).toBe('function');
+    expect(revived.workflowId).toBe('workflow//./src/foo//myWorkflow');
+    // Calling the revived stub throws — workflow functions must be invoked
+    // via start(), not directly.
+    expect(() => revived()).toThrow(/Use start\(\)/);
+  });
+
+  it('should round-trip DOMException', () => {
+    const ex = new DOMException('boom', 'AbortError');
+    const revived = vmDeserialize(vmSerialize(ex)) as Error;
+    // The revived value is a DOMException (or Error fallback with the same
+    // name) — either way it should preserve name/message and be instanceof Error.
+    expect(revived).toBeInstanceOf(Error);
+    expect(revived.name).toBe('AbortError');
+    expect(revived.message).toBe('boom');
   });
 });
 

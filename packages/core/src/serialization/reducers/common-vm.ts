@@ -9,7 +9,7 @@
  */
 
 import { base64Decode, base64Encode } from '../base64.js';
-import type { Reducers, Revivers } from '../types.js';
+import type { Reducers, Revivers, SerializableSpecial } from '../types.js';
 
 // ---- Base64 helpers ----
 
@@ -49,6 +49,21 @@ export function getCommonReducers(): Partial<Reducers> {
       if (!(value instanceof Date)) return false;
       const valid = !Number.isNaN(value.getDate());
       return valid ? value.toISOString() : '.';
+    },
+    // DOMException is checked before Error so that DOMException-specific
+    // shape (name, message, stack, cause) survives the round-trip.
+    // Uses duck-typing instead of `instanceof` because DOMException may not
+    // be available as a global in all QuickJS versions.
+    DOMException: (value) => {
+      if (!(value instanceof Error)) return false;
+      if (value.constructor?.name !== 'DOMException') return false;
+      const reduced: SerializableSpecial['DOMException'] = {
+        message: value.message,
+        name: value.name,
+        stack: value.stack,
+      };
+      if ('cause' in value) reduced.cause = (value as any).cause;
+      return reduced;
     },
     Error: (value) => {
       // In the VM, use instanceof Error (no node:util available)
@@ -157,6 +172,16 @@ export function getCommonReducers(): Partial<Reducers> {
       if (typeof URL !== 'undefined' && value instanceof URL) return value.href;
       return false;
     },
+    WorkflowFunction: (value) => {
+      // Only match function references with a workflowId property (set by
+      // the SWC compiler on workflow functions). Plain { workflowId } objects
+      // are NOT matched — this prevents infinite recursion since the reduced
+      // form { workflowId } is a plain object, not a function.
+      if (typeof value !== 'function') return false;
+      const workflowId = (value as any).workflowId;
+      if (typeof workflowId !== 'string') return false;
+      return { workflowId };
+    },
     URLSearchParams: (value) => {
       if (
         typeof URLSearchParams !== 'undefined' &&
@@ -186,6 +211,25 @@ export function getCommonRevivers(): Partial<Revivers> {
     BigUint64Array: (value: string) =>
       new BigUint64Array(reviveArrayBuffer(value)),
     Date: (value) => new Date(value),
+    DOMException: (value) => {
+      // DOMException may not be constructible in all QuickJS versions —
+      // fall back to a regular Error with the same shape if unavailable.
+      const DOMExceptionCtor =
+        typeof (globalThis as any).DOMException === 'function'
+          ? (globalThis as any).DOMException
+          : null;
+      if (DOMExceptionCtor) {
+        const error = new DOMExceptionCtor(value.message, value.name);
+        if (value.stack !== undefined) error.stack = value.stack;
+        if ('cause' in value) error.cause = value.cause;
+        return error;
+      }
+      const error = new Error(value.message);
+      error.name = value.name;
+      if (value.stack !== undefined) error.stack = value.stack;
+      if ('cause' in value) (error as any).cause = value.cause;
+      return error;
+    },
     Error: (value) => {
       const error = new Error(value.message);
       error.name = value.name;
@@ -204,6 +248,15 @@ export function getCommonRevivers(): Partial<Revivers> {
       if (typeof URL !== 'undefined') return new URL(value);
       return value;
     },
+    WorkflowFunction: (value) =>
+      Object.assign(
+        () => {
+          throw new Error(
+            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          );
+        },
+        { workflowId: value.workflowId }
+      ),
     URLSearchParams: (value) => {
       if (typeof URLSearchParams !== 'undefined')
         return new URLSearchParams(value === '.' ? '' : value);
