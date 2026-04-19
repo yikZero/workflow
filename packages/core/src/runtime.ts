@@ -27,6 +27,10 @@ import {
   parseHealthCheckPayload,
   withHealthCheck,
 } from './runtime/helpers.js';
+import {
+  getWorkflowRuntimeFromEnv,
+  WORKFLOW_RUNTIMES,
+} from './runtime/runtime-mode.js';
 import { runWorkflowWithSnapshots } from './runtime/snapshot-entrypoint.js';
 import { handleSuspension } from './runtime/suspension-handler.js';
 import {
@@ -53,10 +57,22 @@ import { runWorkflow } from './workflow.js';
  * WORKFLOW_RUNTIME=replay env var, or per-run via
  * executionContext.workflowRuntime = 'replay' (set by the SDK at start()).
  * The per-run setting allows the same deployment to serve both runtimes.
+ *
+ * Throws if `WORKFLOW_RUNTIME` is set to an unknown value, or if the run's
+ * `executionContext.workflowRuntime` is set to an unknown value.
  */
 function useSnapshotRuntime(workflowRun: WorkflowRun): boolean {
-  if (process.env.WORKFLOW_RUNTIME === 'replay') return false;
-  if (workflowRun.executionContext?.workflowRuntime === 'replay') return false;
+  if (getWorkflowRuntimeFromEnv() === 'replay') return false;
+  const runtimeFromRun = workflowRun.executionContext?.workflowRuntime;
+  if (runtimeFromRun !== undefined) {
+    if (!(WORKFLOW_RUNTIMES as readonly string[]).includes(runtimeFromRun)) {
+      throw new WorkflowRuntimeError(
+        `Invalid executionContext.workflowRuntime value: "${runtimeFromRun}". ` +
+          `Expected one of: ${WORKFLOW_RUNTIMES.join(', ')}.`
+      );
+    }
+    if (runtimeFromRun === 'replay') return false;
+  }
   return true;
 }
 

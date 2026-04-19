@@ -22,6 +22,7 @@ import { waitedUntil } from '../util.js';
 import { version as workflowCoreVersion } from '../version.js';
 import { getWorkflowQueueName } from './helpers.js';
 import { Run } from './run.js';
+import { getWorkflowRuntimeFromEnv } from './runtime-mode.js';
 import { getWorld } from './world.js';
 
 /** ULID generator for client-side runId generation */
@@ -206,15 +207,10 @@ export async function start<TArgs extends unknown[], TResult>(
         v1Compat
       );
 
-      // If WORKFLOW_RUNTIME is set to 'replay' or 'snapshot' on the client
-      // starting the run, propagate that choice through to the runtime so the
-      // same deployment can serve both runtimes. Unknown values are ignored —
-      // the runtime defaults to snapshot if nothing is set.
-      const workflowRuntimeEnv = process.env.WORKFLOW_RUNTIME;
-      const workflowRuntime =
-        workflowRuntimeEnv === 'replay' || workflowRuntimeEnv === 'snapshot'
-          ? workflowRuntimeEnv
-          : undefined;
+      // If WORKFLOW_RUNTIME is set on the client starting the run, propagate
+      // that choice through to the runtime so the same deployment can serve
+      // both runtimes. Unknown values throw — see getWorkflowRuntimeFromEnv().
+      const workflowRuntime = getWorkflowRuntimeFromEnv();
 
       const executionContext = {
         traceCarrier,
