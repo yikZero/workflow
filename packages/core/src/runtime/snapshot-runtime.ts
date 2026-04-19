@@ -97,6 +97,13 @@ export interface SnapshotRuntimeOptions {
   } | null;
   /** Encryption key for decrypting event payloads (undefined if unencrypted) */
   encryptionKey?: CryptoKey;
+  /**
+   * The local port the workflow server is listening on, used to populate
+   * `workflowMetadata.url`. Resolved at call time on the host side so the
+   * VM doesn't have to probe the filesystem. Ignored on Vercel — VERCEL_URL
+   * takes precedence there.
+   */
+  port?: number;
 }
 
 // ---- VM Bootstrap Code ----
@@ -521,7 +528,11 @@ export async function runSnapshotWorkflow(
       inputHandle.dispose();
     }
 
-    // Set workflow context metadata (for getWorkflowMetadata())
+    // Set workflow context metadata (for getWorkflowMetadata()).
+    // Must match the shape that the replay runtime produces (see
+    // packages/core/src/workflow.ts: runWorkflow → ctx) so user code
+    // that compares `getWorkflowMetadata()` values between a step
+    // (server-side) and the workflow (VM-side) sees identical objects.
     {
       const metadata = {
         workflowName: workflowRun.workflowName,
@@ -531,7 +542,8 @@ export async function runSnapshotWorkflow(
           : new Date(),
         url: process.env.VERCEL_URL
           ? `https://${process.env.VERCEL_URL}`
-          : `http://localhost:${process.env.PORT ?? 3000}`,
+          : `http://localhost:${options.port ?? 3000}`,
+        features: { encryption: !!options.encryptionKey },
       };
       vm.evalCode(
         `globalThis[Symbol.for("WORKFLOW_CONTEXT")] = ${JSON.stringify(metadata)};` +
@@ -539,11 +551,20 @@ export async function runSnapshotWorkflow(
       ).dispose();
     }
 
-    // Start the workflow function
+    // Start the workflow function. If the workflow isn't registered,
+    // throw an error tagged with `name = "WorkflowNotRegisteredError"`
+    // so the host-side entrypoint can reconstruct a real
+    // WorkflowNotRegisteredError (a WorkflowRuntimeError subclass that
+    // classifies as RUNTIME_ERROR) rather than a generic user error.
+    // See snapshot-entrypoint.ts's run_failed branch.
     try {
       vm.evalCode(`
         var __wfn = globalThis.__private_workflows.get(${JSON.stringify(workflowId)});
-        if (!__wfn) throw new Error("Workflow not found: " + ${JSON.stringify(workflowId)});
+        if (!__wfn) {
+          var __wfnErr = new Error("Workflow \\"" + ${JSON.stringify(workflowId)} + "\\" is not registered in the current deployment.");
+          __wfnErr.name = "WorkflowNotRegisteredError";
+          throw __wfnErr;
+        }
         var __args = globalThis.__wdk_input
           ? globalThis.__wdk_deserialize(globalThis.__wdk_input)
           : [];

@@ -5,13 +5,19 @@
  * snapshot-based runtime instead of the event-replay runtime.
  */
 
-import { EntityConflictError, RunExpiredError } from '@workflow/errors';
+import {
+  EntityConflictError,
+  RunExpiredError,
+  WorkflowNotRegisteredError,
+} from '@workflow/errors';
+import { getPort } from '@workflow/utils/get-port';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
   SPEC_VERSION_CURRENT,
   type WorkflowRun,
 } from '@workflow/world';
+import { classifyRunError } from '../classify-error.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import { remapErrorStack } from '../source-map.js';
@@ -130,6 +136,12 @@ export async function runWorkflowWithSnapshots(params: {
   const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
   const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
 
+  // Resolve the workflow server port so `getWorkflowMetadata().url` inside
+  // the VM matches what the step-side handler reports. Skipped on Vercel —
+  // the VM reads VERCEL_URL directly in that environment.
+  const isVercel = process.env.VERCEL_URL !== undefined;
+  const port = isVercel ? undefined : await getPort();
+
   // Run the snapshot runtime
   runtimeLogger.debug('Snapshot runtime: invoking VM', {
     workflowRunId: runId,
@@ -145,6 +157,7 @@ export async function runWorkflowWithSnapshots(params: {
     events,
     existingSnapshot,
     encryptionKey,
+    port,
   });
 
   runtimeLogger.debug('Snapshot runtime: VM returned', {
@@ -401,11 +414,30 @@ export async function runWorkflowWithSnapshots(params: {
       errorStack = remapErrorStack(errorStack, filename, workflowCode);
     }
 
+    // Classify the error so consumers (`run.returnValue`, observability)
+    // get `USER_ERROR` / `RUNTIME_ERROR` on `error.cause.code`, matching
+    // what the replay runtime already does in runtime.ts.
+    //
+    // The VM serializes errors as `{ name, message, stack }`, so we
+    // reconstruct a host-side Error of the correct class based on the
+    // VM-side `name` — specific WorkflowRuntimeError subclasses need
+    // to be preserved so classifyRunError() tags them as RUNTIME_ERROR.
+    const reconstructed: Error =
+      result.failed.name === 'WorkflowNotRegisteredError'
+        ? new WorkflowNotRegisteredError(workflowName)
+        : result.failed.name === 'Error'
+          ? new Error(result.failed.message)
+          : Object.assign(new Error(result.failed.message), {
+              name: result.failed.name,
+            });
+    const errorCode = classifyRunError(reconstructed);
+
     runtimeLogger.error('Snapshot runtime: workflow failed', {
       workflowRunId: runId,
       errorName: result.failed.name,
       errorMessage: result.failed.message,
       errorStack,
+      errorCode,
     });
 
     // Delete the snapshot
@@ -421,6 +453,7 @@ export async function runWorkflowWithSnapshots(params: {
             message: result.failed.message,
             stack: errorStack,
           },
+          errorCode,
         },
       });
     } catch (err) {

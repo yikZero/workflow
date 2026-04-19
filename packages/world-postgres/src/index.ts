@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import type { PostgresWorldConfig } from './config.js';
 import { createClient, type Drizzle } from './drizzle/index.js';
 import { createQueue } from './queue.js';
+import { createSnapshotsStorage } from './snapshots.js';
 import {
   createEventsStorage,
   createHooksStorage,
@@ -12,33 +13,13 @@ import {
 } from './storage.js';
 import { createStreamer } from './streamer.js';
 
-function createSnapshotsStorage(): Storage['snapshots'] {
-  return {
-    async save() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-postgres'
-      );
-    },
-    async load() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-postgres'
-      );
-    },
-    async delete() {
-      throw new Error(
-        'Snapshot storage is not yet implemented for world-postgres'
-      );
-    },
-  };
-}
-
 function createStorage(drizzle: Drizzle): Storage {
   return {
     runs: createRunsStorage(drizzle),
     events: createEventsStorage(drizzle),
     hooks: createHooksStorage(drizzle),
     steps: createStepsStorage(drizzle),
-    snapshots: createSnapshotsStorage(),
+    snapshots: createSnapshotsStorage(drizzle),
   };
 }
 
