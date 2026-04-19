@@ -48,13 +48,16 @@ import { runWorkflow } from './workflow.js';
 
 /**
  * Whether to use the snapshot-based workflow runtime for a given run.
- * The runtime can be selected globally via WORKFLOW_RUNTIME=snapshot env var,
- * or per-run via executionContext.workflowRuntime (set by the SDK at start()).
+ *
+ * The snapshot runtime is the default. It can be disabled globally via
+ * WORKFLOW_RUNTIME=replay env var, or per-run via
+ * executionContext.workflowRuntime = 'replay' (set by the SDK at start()).
  * The per-run setting allows the same deployment to serve both runtimes.
  */
 function useSnapshotRuntime(workflowRun: WorkflowRun): boolean {
-  if (process.env.WORKFLOW_RUNTIME === 'snapshot') return true;
-  return workflowRun.executionContext?.workflowRuntime === 'snapshot';
+  if (process.env.WORKFLOW_RUNTIME === 'replay') return false;
+  if (workflowRun.executionContext?.workflowRuntime === 'replay') return false;
+  return true;
 }
 
 export type { Event, WorkflowRun };
@@ -406,7 +409,7 @@ export function workflowEntrypoint(
                     return;
                   }
 
-                  // --- Snapshot runtime (opt-in via WORKFLOW_RUNTIME=snapshot) ---
+                  // --- Snapshot runtime (default; opt-out via WORKFLOW_RUNTIME=replay) ---
                   if (useSnapshotRuntime(workflowRun)) {
                     runtimeLogger.debug('Using snapshot runtime', {
                       workflowRunId: runId,

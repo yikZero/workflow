@@ -148,4 +148,12 @@ matrix.app.push({
   ...DEV_TEST_CONFIGS.astro,
 });
 
+// Cross-product with the runtime axis: every app is tested against both
+// the snapshot runtime (the default) and the event-replay runtime
+// (opt-in via WORKFLOW_RUNTIME=replay).
+const RUNTIMES = ['snapshot', 'replay'];
+matrix.app = matrix.app.flatMap((app) =>
+  RUNTIMES.map((runtime) => ({ ...app, runtime }))
+);
+
 console.log(JSON.stringify(matrix));
