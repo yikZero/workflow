@@ -1,5 +1,7 @@
 import type { World } from '@workflow/world';
+import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world';
 import { createGetEncryptionKeyForRun } from './encryption.js';
+import { instrumentObject } from './instrumentObject.js';
 import { createQueue } from './queue.js';
 import { createResolveLatestDeploymentId } from './resolve-latest-deployment.js';
 import { createStorage } from './storage.js';
@@ -23,9 +25,10 @@ export function createVercelWorld(config?: APIConfig): World {
     config?.projectConfig?.projectId || process.env.VERCEL_PROJECT_ID;
 
   return {
+    specVersion: SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
     ...createQueue(config),
     ...createStorage(config),
-    ...createStreamer(config),
+    ...instrumentObject('world.streams', createStreamer(config)),
     getEncryptionKeyForRun: createGetEncryptionKeyForRun(
       projectId,
       config?.projectConfig?.teamId,

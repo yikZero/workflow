@@ -1,7 +1,8 @@
 'use client';
 
-import type { Event } from '@workflow/world';
+import { EVENT_DATA_REF_FIELDS, type Event } from '@workflow/world';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isExpiredMarker } from '../../lib/hydration';
 import { ErrorCard } from '../ui/error-card';
 import {
   ErrorStackBlock,
@@ -54,45 +55,55 @@ function EventItem({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const wasExpandedRef = useRef(false);
+  /** Mirrors whether we have a fetched payload; avoids stale `loadedData` in load closure. */
+  const loadedDataRef = useRef<unknown | null>(null);
 
   // Check if the event already has eventData from the store
   const existingData =
     'eventData' in event && event.eventData != null ? event.eventData : null;
-  const displayData = existingData ?? loadedData;
+  const mergedDisplay = loadedData ?? existingData;
   const canHaveData = DATA_EVENT_TYPES.has(event.eventType);
 
-  const loadEventData = useCallback(async () => {
-    if (!onLoadEventData || !event.correlationId || !event.eventId) return;
+  const loadEventData = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!onLoadEventData || !event.correlationId || !event.eventId) return;
+      if (!options?.force && loadedDataRef.current !== null) {
+        return;
+      }
 
-    try {
-      setIsLoading(true);
-      setLoadError(null);
-      const data = await onLoadEventData(event.correlationId, event.eventId);
-      setLoadedData(data);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [onLoadEventData, event.correlationId, event.eventId]);
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        const data = await onLoadEventData(event.correlationId, event.eventId);
+        loadedDataRef.current = data;
+        setLoadedData(data);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [onLoadEventData, event.correlationId, event.eventId]
+  );
 
   const handleExpand = useCallback(async () => {
-    if (existingData || loadedData !== null || isLoading) return;
+    if (isLoading) return;
     wasExpandedRef.current = true;
     await loadEventData();
-  }, [existingData, loadedData, isLoading, loadEventData]);
+  }, [isLoading, loadEventData]);
 
   // When the encryption key changes and this event was previously expanded,
   // re-load the data so it gets decrypted
   useEffect(() => {
-    if (encryptionKey && wasExpandedRef.current && loadedData !== null) {
-      setLoadedData(null); // clear stale data
-      loadEventData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [encryptionKey]);
+    if (!encryptionKey || !wasExpandedRef.current) return;
+    loadedDataRef.current = null;
+    setLoadedData(null);
+    void loadEventData({ force: true });
+  }, [encryptionKey, loadEventData]);
 
   const createdAt = new Date(event.createdAt);
+
+  const displayPayload = isLoading ? loadedData : mergedDisplay;
 
   return (
     <DetailCard
@@ -188,12 +199,30 @@ function EventItem({
       )}
 
       {/* Event data */}
-      {displayData != null && (
+      {displayPayload != null && (
         <div className="mt-2">
-          <EventDataBlock eventType={event.eventType} data={displayData} />
+          <EventDataBlock eventType={event.eventType} data={displayPayload} />
         </div>
       )}
     </DetailCard>
+  );
+}
+
+/**
+ * Check if an eventData object has only expired marker values in ref/payload
+ * fields for this event type (see {@link EVENT_DATA_REF_FIELDS}). Other keys
+ * (e.g. `resumeAt`, `stepName`) are ignored.
+ */
+function hasOnlyExpiredFields(data: unknown, eventType: string): boolean {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  const record = data as Record<string, unknown>;
+  const refKeys = EVENT_DATA_REF_FIELDS[eventType] ?? [];
+  const presentKeys = refKeys.filter((k) => k in record);
+  return (
+    presentKeys.length > 0 &&
+    presentKeys.every((k) => isExpiredMarker(record[k]))
   );
 }
 
@@ -208,6 +237,24 @@ function EventDataBlock({
   eventType: string;
   data: unknown;
 }) {
+  // Expired data — show a simple message instead of the raw stub.
+  // Check both the top-level eventData and nested sub-fields (result, input, etc.)
+  // since the server stubs each ref field independently.
+  if (isExpiredMarker(data) || hasOnlyExpiredFields(data, eventType)) {
+    return (
+      <div
+        className="flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs"
+        style={{
+          borderColor: 'var(--ds-gray-300)',
+          backgroundColor: 'var(--ds-gray-100)',
+          color: 'var(--ds-gray-700)',
+        }}
+      >
+        <span className="font-medium">Data expired</span>
+      </div>
+    );
+  }
+
   // For error events (step_failed, step_retrying), the eventData has the shape
   // { error: StructuredError, stack?: string, ... }. Check both the top-level
   // value and the nested `error` field for a stack trace.

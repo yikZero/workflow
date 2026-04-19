@@ -27,6 +27,7 @@ import {
   type EncryptionKeyResolver,
   hydrateResourceIO,
   isEncryptedRef,
+  isExpiredRef,
 } from './hydration.js';
 
 /**
@@ -275,7 +276,7 @@ const formatIdField = (
   return idStr;
 };
 
-const formatTableValue = (
+export const formatTableValue = (
   prop: string,
   value: unknown,
   opts: InspectCLIOptions = {},
@@ -317,8 +318,12 @@ const formatTableValue = (
   }
 
   if (prop === 'output' || prop === 'input' || prop === 'error') {
-    // Check if data has expired
-    if (item && 'expiredAt' in item && item.expiredAt != null) {
+    if (
+      item &&
+      'expiredAt' in item &&
+      item.expiredAt != null &&
+      new Date(item.expiredAt as string | number | Date) < new Date()
+    ) {
       return EXPIRED_DATA_MESSAGE;
     }
     return inlineFormatIO(value);
@@ -489,10 +494,26 @@ const showInspectInfoBox = (resource: string) => {
 const EXPIRED_DATA_MESSAGE = chalk.gray('<data expired>');
 
 /**
- * Checks if a run has expired data storage
+ * Checks if a run has expired data storage (run-level expiredAt field).
+ * Only returns true when `expiredAt` is in the past.
  */
-const hasExpiredData = (run: WorkflowRun): boolean => {
-  return 'expiredAt' in run && run.expiredAt != null;
+export const hasExpiredData = (run: WorkflowRun): boolean => {
+  return (
+    'expiredAt' in run &&
+    run.expiredAt != null &&
+    new Date(run.expiredAt) < new Date()
+  );
+};
+
+/**
+ * Checks if any data field in a hydrated resource has been replaced with an
+ * expired placeholder. Works for runs, steps, hooks, and events — unlike
+ * `hasExpiredData` which only checks the run-level `expiredAt` field.
+ */
+const hasExpiredFields = (resource: Record<string, unknown>): boolean => {
+  return ['input', 'output', 'error', 'metadata'].some((key) =>
+    isExpiredRef(resource[key])
+  );
 };
 
 /**
@@ -507,6 +528,8 @@ const inlineFormatIO = <T>(io: T, topLevel: boolean = true): string => {
     value = '<null>';
   } else if (isEncryptedRef(io)) {
     value = chalk.dim.yellow('\u{1F512} Encrypted');
+  } else if (isExpiredRef(io)) {
+    value = chalk.gray('<data expired>');
   } else if (io && Array.isArray(io)) {
     if (io.length === 0) {
       value = '<empty>';
@@ -563,6 +586,7 @@ export const listRuns = async (world: World, opts: InspectCLIOptions = {}) => {
     try {
       const runs = await world.runs.list({
         workflowName: opts.workflowName,
+        status: opts.status as any,
         pagination: {
           sortOrder: opts.sort || 'desc',
           cursor: opts.cursor,
@@ -590,6 +614,7 @@ export const listRuns = async (world: World, opts: InspectCLIOptions = {}) => {
       try {
         const runs = await world.runs.list({
           workflowName: opts.workflowName,
+          status: opts.status as any,
           pagination: {
             sortOrder: opts.sort || 'desc',
             cursor,
@@ -721,7 +746,10 @@ export const listSteps = async (
         },
         resolveData,
       });
-      showJson(stepChunks.data);
+      const stepsWithHydratedIO = await Promise.all(
+        stepChunks.data.map((s) => hydrateResourceIO(s, resolveKey))
+      );
+      showJson(stepsWithHydratedIO);
       return;
     } catch (error) {
       if (handleApiError(error, opts.backend)) {
@@ -801,6 +829,15 @@ export const showStep = async (
       showJson(stepWithHydratedIO);
       return;
     } else {
+      if (
+        hasExpiredFields(
+          stepWithHydratedIO as unknown as Record<string, unknown>
+        )
+      ) {
+        logger.warn(
+          "This step's data (input/output/error) has expired and is no longer available."
+        );
+      }
       logger.log(stepWithHydratedIO);
     }
   } catch (error) {
@@ -821,7 +858,10 @@ export const showStream = async (
       'Filtering by step-id is not supported when showing a stream, ignoring filter.'
     );
   }
-  const rawStream = await world.readFromStream(streamId);
+  if (!opts.runId) {
+    throw new Error('--run is required when showing a stream');
+  }
+  const rawStream = await world.streams.get(opts.runId, streamId);
 
   // Only resolve the encryption key when --decrypt is passed and --run is provided.
   // We fetch the full WorkflowRun object so that getEncryptionKeyForRun has
@@ -893,7 +933,7 @@ export const listStreamsByRunId = async (
   }
 
   try {
-    const streamIds = await world.listStreamsByRunId(runId);
+    const streamIds = await world.streams.list(runId);
     const matchingStreams = streamIds.map((streamId) => ({
       runId,
       streamId,
@@ -1115,6 +1155,13 @@ export const showHook = async (
       showJson(hydratedHook);
       return;
     } else {
+      if (
+        hasExpiredFields(hydratedHook as unknown as Record<string, unknown>)
+      ) {
+        logger.warn(
+          "This hook's data (metadata) has expired and is no longer available."
+        );
+      }
       logger.log(hydratedHook);
     }
   } catch (error) {

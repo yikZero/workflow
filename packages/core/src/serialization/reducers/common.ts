@@ -10,7 +10,7 @@
  */
 
 import { types } from 'node:util';
-import type { Reducers, Revivers } from '../types.js';
+import type { Reducers, Revivers, SerializableSpecial } from '../types.js';
 
 // ---- Base64 helpers ----
 
@@ -67,6 +67,21 @@ export function getCommonReducers(
       const valid = !Number.isNaN(value.getDate());
       return valid ? value.toISOString() : '.';
     },
+    // DOMException is a special case: in Node.js it passes isNativeError()
+    // and instanceof Error, but has a unique constructor signature
+    // (message, name) and a read-only numeric `code` property derived from
+    // `name`. It must be checked before the generic Error reducer.
+    DOMException: (value) => {
+      if (!types.isNativeError(value)) return false;
+      if (value.constructor?.name !== 'DOMException') return false;
+      const reduced: SerializableSpecial['DOMException'] = {
+        message: value.message,
+        name: value.name,
+        stack: value.stack,
+      };
+      if ('cause' in value) reduced.cause = value.cause;
+      return reduced;
+    },
     Error: (value) => {
       // Use types.isNativeError() instead of `instanceof global.Error`
       // because errors may originate from a different VM context.
@@ -100,6 +115,16 @@ export function getCommonReducers(
     // to deserialize as plain objects.
     Set: (value) => value instanceof global.Set && Array.from(value),
     URL: (value) => value instanceof global.URL && value.href,
+    WorkflowFunction: (value) => {
+      // Only match function references with a workflowId property (set by
+      // the SWC compiler on workflow functions). Plain { workflowId } objects
+      // are NOT matched — this prevents infinite recursion since the reduced
+      // form { workflowId } is a plain object, not a function.
+      if (typeof value !== 'function') return false;
+      const workflowId = (value as any).workflowId;
+      if (typeof workflowId !== 'string') return false;
+      return { workflowId };
+    },
     URLSearchParams: (value) => {
       if (!(value instanceof global.URLSearchParams)) return false;
       if (value.size === 0) return '.';
@@ -129,6 +154,14 @@ export function getCommonRevivers(
     BigUint64Array: (value: string) =>
       new global.BigUint64Array(reviveArrayBuffer(value, global)),
     Date: (value) => new global.Date(value),
+    DOMException: (value) => {
+      const error = new global.DOMException(value.message, value.name);
+      if (value.stack !== undefined) error.stack = value.stack;
+      // DOMException's constructor doesn't accept a cause option, so
+      // we set it manually when present in the serialized data.
+      if ('cause' in value) error.cause = value.cause;
+      return error;
+    },
     Error: (value) => {
       const error = new global.Error(value.message);
       error.name = value.name;
@@ -150,6 +183,15 @@ export function getCommonRevivers(
     RegExp: (value) => new global.RegExp(value.source, value.flags),
     Set: (value) => new global.Set(value),
     URL: (value) => new global.URL(value),
+    WorkflowFunction: (value) =>
+      Object.assign(
+        () => {
+          throw new Error(
+            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          );
+        },
+        { workflowId: value.workflowId }
+      ),
     URLSearchParams: (value) =>
       new global.URLSearchParams(value === '.' ? '' : value),
     Uint8Array: (value: string) =>

@@ -44,11 +44,9 @@ export function createDevTests(config?: DevTestConfig) {
     );
     const testWorkflowFile = finalConfig.testWorkflowFile ?? '3_streams.ts';
     const workflowsDir = finalConfig.workflowsDir ?? 'workflows';
-    const supportsDeferredStepCopies =
-      finalConfig.canary === true &&
-      generatedStep.includes(
-        path.join('.well-known', 'workflow', 'v1', 'step', 'route.js')
-      );
+    const supportsDeferredStepCopies = generatedStep.includes(
+      path.join('.well-known', 'workflow', 'v1', 'step', 'route.js')
+    );
     const restoreFiles: Array<{ path: string; content: string }> = [];
 
     const fetchWithTimeout = (pathname: string) => {
@@ -408,6 +406,63 @@ ${apiFileContent}`
             expect(
               copiedStepContents.some((content) =>
                 content.includes('discoveredViaWorkflowStep')
+              )
+            ).toBe(true);
+          },
+        });
+      }
+    );
+
+    test.skipIf(!supportsDeferredStepCopies)(
+      'should copy package step sources discovered via manifest entries',
+      { timeout: 30_000 },
+      async () => {
+        const workflowManifestPath = path.join(
+          appPath,
+          'app/.well-known/workflow/v1/manifest.json'
+        );
+        const copiedStepDir = path.join(
+          path.dirname(generatedStep),
+          '__workflow_step_files__'
+        );
+
+        await pollUntil({
+          description:
+            'copied deferred step files to include @workflow/ai package steps',
+          timeoutMs: 25_000,
+          check: async () => {
+            await fetchWithTimeout('/api/chat');
+            const manifestJson = await fs.readFile(
+              workflowManifestPath,
+              'utf8'
+            );
+            const manifest = JSON.parse(manifestJson) as {
+              steps?: Record<string, unknown>;
+            };
+            const manifestStepFiles = Object.keys(manifest.steps || {});
+            expect(
+              manifestStepFiles.some((filePath) =>
+                filePath.includes('ai/dist/agent/durable-agent.js')
+              )
+            ).toBe(true);
+
+            const copiedStepFileNames = await fs.readdir(copiedStepDir);
+            const copiedStepContents = await Promise.all(
+              copiedStepFileNames.map(async (copiedStepFileName) => {
+                const copiedStepFilePath = path.join(
+                  copiedStepDir,
+                  copiedStepFileName
+                );
+                const copiedStepStats = await fs.stat(copiedStepFilePath);
+                if (!copiedStepStats.isFile()) {
+                  return '';
+                }
+                return await fs.readFile(copiedStepFilePath, 'utf8');
+              })
+            );
+            expect(
+              copiedStepContents.some((content) =>
+                content.includes('async function closeStream')
               )
             ).toBe(true);
           },

@@ -5,7 +5,7 @@
  * snapshot-based runtime instead of the event-replay runtime.
  */
 
-import { WorkflowAPIError } from '@workflow/errors';
+import { EntityConflictError, RunExpiredError } from '@workflow/errors';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
@@ -41,7 +41,7 @@ export async function runWorkflowWithSnapshots(params: {
   workflowRun: WorkflowRun;
 }): Promise<{ timeoutSeconds?: number } | void> {
   const { workflowCode, workflowName, workflowRun } = params;
-  const world = getWorld();
+  const world = await getWorld();
   const runId = workflowRun.runId;
 
   // The workflowName from the queue topic is already the full workflow ID
@@ -119,7 +119,7 @@ export async function runWorkflowWithSnapshots(params: {
           });
           if (result.event) events.push(result.event);
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
       }
@@ -175,10 +175,7 @@ export async function runWorkflowWithSnapshots(params: {
         },
       });
     } catch (err) {
-      if (
-        WorkflowAPIError.is(err) &&
-        (err.status === 409 || err.status === 410)
-      ) {
+      if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
         runtimeLogger.warn(
           'Workflow already finished, skipping run_completed',
           { workflowRunId: runId }
@@ -243,7 +240,7 @@ export async function runWorkflowWithSnapshots(params: {
             },
           });
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
 
@@ -317,7 +314,7 @@ export async function runWorkflowWithSnapshots(params: {
             );
           }
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
       } else if (op.type === 'hook_dispose' && !op.hasCreatedEvent) {
@@ -329,7 +326,7 @@ export async function runWorkflowWithSnapshots(params: {
             correlationId: op.correlationId,
           });
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
       } else if (op.type === 'wait' && !op.hasCreatedEvent) {
@@ -346,7 +343,7 @@ export async function runWorkflowWithSnapshots(params: {
             },
           });
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
       }
@@ -371,7 +368,7 @@ export async function runWorkflowWithSnapshots(params: {
           });
           needsRequeue = true;
         } catch (err) {
-          if (WorkflowAPIError.is(err) && err.status === 409) continue;
+          if (EntityConflictError.is(err)) continue;
           throw err;
         }
       } else {
@@ -427,10 +424,7 @@ export async function runWorkflowWithSnapshots(params: {
         },
       });
     } catch (err) {
-      if (
-        WorkflowAPIError.is(err) &&
-        (err.status === 409 || err.status === 410)
-      ) {
+      if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
         runtimeLogger.warn('Workflow already finished, skipping run_failed', {
           workflowRunId: runId,
         });

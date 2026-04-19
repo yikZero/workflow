@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { WorkflowAPIError } from '@workflow/errors';
+import { EntityConflictError } from '@workflow/errors';
 import type { PaginatedResponse } from '@workflow/world';
 import { monotonicFactory } from 'ulid';
 import { z } from 'zod';
@@ -161,7 +161,7 @@ interface WriteOptions {
  * Custom JSON replacer that encodes Uint8Array as base64 strings.
  * Format: { __type: 'Uint8Array', data: '<base64>' }
  */
-function jsonReplacer(_key: string, value: unknown): unknown {
+export function jsonReplacer(_key: string, value: unknown): unknown {
   if (value instanceof Uint8Array) {
     return {
       __type: 'Uint8Array',
@@ -174,7 +174,7 @@ function jsonReplacer(_key: string, value: unknown): unknown {
 /**
  * Custom JSON reviver that decodes base64 strings back to Uint8Array.
  */
-function jsonReviver(_key: string, value: unknown): unknown {
+export function jsonReviver(_key: string, value: unknown): unknown {
   if (
     value !== null &&
     typeof value === 'object' &&
@@ -212,9 +212,8 @@ export async function write(
     // Fast path: check in-memory cache first to avoid expensive fs.access() calls
     // This provides significant performance improvement when creating many files
     if (createdFilesCache.has(filePath)) {
-      throw new WorkflowAPIError(
-        `File ${filePath} already exists and 'overwrite' is false`,
-        { status: 409 }
+      throw new EntityConflictError(
+        `File ${filePath} already exists and 'overwrite' is false`
       );
     }
 
@@ -223,9 +222,8 @@ export async function write(
       await fs.access(filePath);
       // File exists on disk, add to cache for future checks
       createdFilesCache.add(filePath);
-      throw new WorkflowAPIError(
-        `File ${filePath} already exists and 'overwrite' is false`,
-        { status: 409 }
+      throw new EntityConflictError(
+        `File ${filePath} already exists and 'overwrite' is false`
       );
     } catch (error: any) {
       // If file doesn't exist (ENOENT), continue with write

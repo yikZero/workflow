@@ -10,9 +10,13 @@ import {
   extractClassName,
   hydrateResourceIO as hydrateResourceIOGeneric,
   isEncryptedData,
+  isExpiredStub,
+  isRunRef,
   observabilityRevivers,
   type Revivers,
+  serializedInstanceToRef,
 } from '@workflow/core/serialization-format';
+import { EVENT_DATA_REF_FIELDS } from '@workflow/world';
 
 // Re-export types and utilities that consumers need
 export {
@@ -22,11 +26,15 @@ export {
   extractStreamIds,
   isClassInstanceRef,
   isEncryptedData,
+  isRunRef,
   isStreamId,
   isStreamRef,
   type Revivers,
+  RUN_REF_TYPE,
+  type RunRef,
   STREAM_REF_TYPE,
   type StreamRef,
+  serializedInstanceToRef,
   truncateId,
 } from '@workflow/core/serialization-format';
 
@@ -96,6 +104,37 @@ export function getWebRevivers(): Revivers {
     Uint32Array: (value: string) => new Uint32Array(reviveArrayBuffer(value)),
 
     Headers: (value) => new Headers(value),
+    Request: (value) => {
+      // biome-ignore lint/complexity/useArrowFunction: arrow functions have no .prototype
+      const ctor = { Request: function () {} }.Request!;
+      const obj = Object.create(ctor.prototype);
+      Object.assign(obj, {
+        method: value.method,
+        url: value.url,
+        headers: new Headers(value.headers),
+        body: value.body,
+        duplex: value.duplex,
+        ...(value.responseWritable
+          ? { responseWritable: value.responseWritable }
+          : {}),
+      });
+      return obj;
+    },
+    Response: (value) => {
+      // biome-ignore lint/complexity/useArrowFunction: arrow functions have no .prototype
+      const ctor = { Response: function () {} }.Response!;
+      const obj = Object.create(ctor.prototype);
+      Object.assign(obj, {
+        status: value.status,
+        statusText: value.statusText,
+        url: value.url,
+        headers: new Headers(value.headers),
+        body: value.body,
+        redirected: value.redirected,
+        type: value.type,
+      });
+      return obj;
+    },
     URL: (value) => new URL(value),
     URLSearchParams: (value) => new URLSearchParams(value === '.' ? '' : value),
 
@@ -104,6 +143,11 @@ export function getWebRevivers(): Revivers {
     // react-inspector shows the class name (it reads constructor.name).
     Class: (value) => `<class:${extractClassName(value.classId)}>`,
     Instance: (value) => {
+      // Run instances are rendered as clickable RunRef badges
+      const runRef = serializedInstanceToRef(value);
+      if (isRunRef(runRef)) {
+        return runRef;
+      }
       const className = extractClassName(value.classId);
       const data = value.data;
       const props =
@@ -149,7 +193,7 @@ export function hydrateResourceIO<T>(resource: T): T {
     resource as any,
     getRevivers()
   ) as T;
-  return replaceEncryptedWithMarkers(hydrated);
+  return replaceEncryptedAndExpiredWithMarkers(hydrated);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,26 +235,64 @@ export function isEncryptedMarker(value: unknown): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Expired data display markers
+// ---------------------------------------------------------------------------
+
+export const EXPIRED_DISPLAY_NAME = 'Expired Data';
+
+/**
+ * Create a display-friendly object for expired data.
+ *
+ * Uses the same named-constructor trick as the encrypted marker so that
+ * ObjectInspector renders the constructor name ("Expired Data") with no
+ * expandable children.
+ */
+function createExpiredMarker(): object {
+  // biome-ignore lint/complexity/useArrowFunction: arrow functions have no .prototype
+  const ctor = { [EXPIRED_DISPLAY_NAME]: function () {} }[
+    EXPIRED_DISPLAY_NAME
+  ]!;
+  return Object.create(ctor.prototype);
+}
+
+/** Check if a value is an expired data display marker */
+export function isExpiredMarker(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    value.constructor?.name === EXPIRED_DISPLAY_NAME
+  );
+}
+
+/** Replace a single field value with a display marker if it's encrypted or expired. */
+function toDisplayMarker(value: unknown): unknown {
+  if (isEncryptedData(value)) return createEncryptedMarker(value as Uint8Array);
+  if (isExpiredStub(value)) return createExpiredMarker();
+  return value;
+}
+
 /**
  * Post-process hydrated resource data: replace encrypted Uint8Array values
- * with display-friendly marker objects in known data fields.
+ * and expired stubs with display-friendly marker objects in known data fields.
  */
-function replaceEncryptedWithMarkers<T>(resource: T): T {
+function replaceEncryptedAndExpiredWithMarkers<T>(resource: T): T {
   if (!resource || typeof resource !== 'object') return resource;
   const r = resource as Record<string, unknown>;
   const result = { ...r };
 
   for (const key of ['input', 'output', 'metadata', 'error']) {
-    if (isEncryptedData(result[key])) {
-      result[key] = createEncryptedMarker(result[key] as Uint8Array);
-    }
+    result[key] = toDisplayMarker(result[key]);
   }
 
   if (result.eventData && typeof result.eventData === 'object') {
+    const eventType =
+      typeof result.eventType === 'string' ? result.eventType : '';
+    const refKeys = EVENT_DATA_REF_FIELDS[eventType] ?? [];
     const ed = { ...(result.eventData as Record<string, unknown>) };
-    for (const key of EVENT_DATA_SERIALIZED_FIELDS) {
-      if (isEncryptedData(ed[key])) {
-        ed[key] = createEncryptedMarker(ed[key] as Uint8Array);
+    for (const key of refKeys) {
+      if (key in ed) {
+        ed[key] = toDisplayMarker(ed[key]);
       }
     }
     result.eventData = ed;
@@ -219,15 +301,6 @@ function replaceEncryptedWithMarkers<T>(resource: T): T {
   return result as T;
 }
 
-/** Known serialized subfields within eventData, matching hydrateEventData in core */
-const EVENT_DATA_SERIALIZED_FIELDS = [
-  'result',
-  'input',
-  'output',
-  'metadata',
-  'payload',
-];
-
 /**
  * Hydrate resource data with decryption support.
  *
@@ -235,7 +308,7 @@ const EVENT_DATA_SERIALIZED_FIELDS = [
  * This is the async version used when the user clicks "Decrypt" in the web UI.
  *
  * Handles both top-level fields (input, output, metadata) and nested
- * eventData subfields (result, input, output, metadata, payload).
+ * eventData subfields per `EVENT_DATA_REF_FIELDS` from `@workflow/world` for that event type.
  */
 export async function hydrateResourceIOWithKey<T>(
   resource: T,
@@ -279,8 +352,11 @@ export async function hydrateResourceIOWithKey<T>(
 
   // Decrypt + hydrate eventData subfields (events)
   if (result.eventData && typeof result.eventData === 'object') {
+    const eventType =
+      typeof result.eventType === 'string' ? result.eventType : '';
+    const refKeys = EVENT_DATA_REF_FIELDS[eventType] ?? [];
     const eventData = { ...(result.eventData as Record<string, unknown>) };
-    for (const field of EVENT_DATA_SERIALIZED_FIELDS) {
+    for (const field of refKeys) {
       if (field in eventData) {
         eventData[field] = await decryptField(
           eventData[field],
@@ -293,4 +369,30 @@ export async function hydrateResourceIOWithKey<T>(
   }
 
   return result as T;
+}
+
+/**
+ * Check whether a hydrated resource (event, step, run, etc.) contains any
+ * encrypted display markers. Inspects the standard top-level fields
+ * (`input`, `output`, `error`, `metadata`) as well as the event-type-specific
+ * `eventData` ref fields.
+ */
+export function hasEncryptedFields(resource: unknown): boolean {
+  if (!resource || typeof resource !== 'object') return false;
+  const r = resource as Record<string, unknown>;
+
+  for (const key of ['input', 'output', 'metadata', 'error']) {
+    if (isEncryptedMarker(r[key])) return true;
+  }
+
+  if (r.eventData && typeof r.eventData === 'object') {
+    const eventType = typeof r.eventType === 'string' ? r.eventType : '';
+    const refKeys = EVENT_DATA_REF_FIELDS[eventType] ?? [];
+    const ed = r.eventData as Record<string, unknown>;
+    for (const key of refKeys) {
+      if (key in ed && isEncryptedMarker(ed[key])) return true;
+    }
+  }
+
+  return false;
 }

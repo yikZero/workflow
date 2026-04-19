@@ -6,6 +6,43 @@ import {
   WORKFLOW_DEFERRED_ENTRIES,
 } from './builder.js';
 
+function resolveNextVersion(workingDir: string): string {
+  const errors: unknown[] = [];
+
+  // Try resolving from the consuming project's working directory first.
+  // This handles monorepo setups where `next` may not be hoisted to the
+  // same location as `@workflow/next`.
+  try {
+    const packageJsonPath = require.resolve('next/package.json', {
+      paths: [workingDir],
+    });
+    const resolvedPackageJson = require(packageJsonPath) as {
+      version?: unknown;
+    };
+    if (typeof resolvedPackageJson.version === 'string') {
+      return resolvedPackageJson.version;
+    }
+  } catch (e) {
+    errors.push(e);
+  }
+
+  // Fall back to resolving relative to this package's location.
+  try {
+    const version = (require('next/package.json') as { version?: unknown })
+      .version;
+    if (typeof version === 'string') {
+      return version;
+    }
+  } catch (e) {
+    errors.push(e);
+  }
+
+  throw new AggregateError(
+    errors,
+    `Could not resolve Next.js version. Ensure \`next\` is installed in your project (working directory: ${workingDir}).`
+  );
+}
+
 export function withWorkflow(
   nextConfigOrFn:
     | NextConfig
@@ -20,7 +57,6 @@ export function withWorkflow(
       lazyDiscovery?: boolean;
       local?: {
         port?: number;
-        dataDir?: string;
       };
     };
   } = {}
@@ -69,7 +105,7 @@ export function withWorkflow(
       nextConfig.turbopack.rules = {};
     }
     const existingRules = nextConfig.turbopack.rules as any;
-    const nextVersion = require('next/package.json').version;
+    const nextVersion = resolveNextVersion(process.cwd());
     const supportsTurboCondition = semver.gte(nextVersion, 'v16.0.0');
     const useDeferredBuilder = shouldUseDeferredBuilder(nextVersion);
 
@@ -86,15 +122,9 @@ export function withWorkflow(
           const NextBuilder = await getNextBuilder(nextVersion);
           return new NextBuilder({
             watch: shouldWatch,
-            // discover workflows from pages/app entries and common workflow dirs
-            dirs: [
-              'pages',
-              'app',
-              'src/pages',
-              'src/app',
-              'workflows',
-              'src/workflows',
-            ],
+            // discover workflows from pages/app entries
+            dirs: ['pages', 'app', 'src/pages', 'src/app'],
+            projectRoot: nextConfig.outputFileTracingRoot,
             workingDir: process.cwd(),
             distDir: nextConfig.distDir || '.next',
             buildTarget: 'next',

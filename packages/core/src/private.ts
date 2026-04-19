@@ -15,7 +15,23 @@ export type StepFunction<
   stepId?: string;
 };
 
-const registeredSteps = new Map<string, StepFunction>();
+const RegisteredStepsKey = Symbol.for('@workflow/core//registeredSteps');
+
+const globalSymbols: typeof globalThis & {
+  [RegisteredStepsKey]?: Map<string, StepFunction>;
+} = globalThis;
+
+// biome-ignore lint/suspicious/noAssignInExpressions: /
+const registeredSteps = (globalSymbols[RegisteredStepsKey] ??= new Map<
+  string,
+  StepFunction
+>());
+
+const BUILTIN_STEP_NAMES = new Set([
+  '__builtin_response_array_buffer',
+  '__builtin_response_json',
+  '__builtin_response_text',
+]);
 
 function getStepIdAliasCandidates(stepId: string): string[] {
   const parts = stepId.split('//');
@@ -53,9 +69,28 @@ function getStepIdAliasCandidates(stepId: string): string[] {
   );
 }
 
+function getBuiltinResponseStepAlias(stepId: string): StepFunction | undefined {
+  if (!BUILTIN_STEP_NAMES.has(stepId)) {
+    return undefined;
+  }
+
+  for (const [registeredStepId, stepFn] of registeredSteps.entries()) {
+    if (registeredStepId.endsWith(`//${stepId}`)) {
+      return stepFn;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Register a step function to be served in the server bundle.
  * Also sets the stepId property on the function for serialization support.
+ *
+ * Note: The SWC compiler plugin no longer generates calls to this function.
+ * Step registration is now inlined as a self-contained IIFE that writes
+ * directly to the global Map at Symbol.for("@workflow/core//registeredSteps").
+ * This function is kept for internal/test use only.
  */
 export function registerStepFunction(stepId: string, stepFn: StepFunction) {
   registeredSteps.set(stepId, stepFn);
@@ -79,14 +114,18 @@ export function getStepFunction(stepId: string): StepFunction | undefined {
     }
   }
 
+  const builtinAliasMatch = getBuiltinResponseStepAlias(stepId);
+  if (builtinAliasMatch) {
+    return builtinAliasMatch;
+  }
+
   return undefined;
 }
 
-/**
- * Get closure variables for the current step function
- * @internal
- */
-export { __private_getClosureVars } from './step/get-closure-vars.js';
+// Note: __private_getClosureVars is no longer re-exported here.
+// The SWC compiler plugin now inlines closure variable access as a
+// self-contained IIFE that reads directly from the global AsyncLocalStorage
+// at Symbol.for("WORKFLOW_STEP_CONTEXT_STORAGE").
 
 export interface WorkflowOrchestratorContext {
   runId: string;

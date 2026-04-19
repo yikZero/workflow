@@ -26,8 +26,10 @@ import {
   type UIMessageChunk,
 } from 'ai';
 import { convertToLanguageModelPrompt, standardizePrompt } from 'ai/internal';
+import { getErrorMessage } from '../get-error-message.js';
+import { safeParseToolCallInput } from './safe-parse-tool-call-input.js';
 import { streamTextIterator } from './stream-text-iterator.js';
-import { recordSpan } from './telemetry.js';
+import { recordSpan, runInContext } from './telemetry.js';
 import type { CompatibleLanguageModel } from './types.js';
 
 // Re-export for consumers
@@ -368,6 +370,15 @@ export interface DurableAgentOptions<TTools extends ToolSet = ToolSet>
    * Optional telemetry configuration (experimental).
    */
   experimental_telemetry?: TelemetrySettings;
+
+  /**
+   * Default context that is passed into tool execution for every stream call on this agent.
+   *
+   * Per-stream `experimental_context` values passed to `stream()` override this default.
+   * Experimental (can break in patch releases).
+   * @default undefined
+   */
+  experimental_context?: unknown;
 
   /**
    * Default callback function called before each step in the agent loop.
@@ -742,7 +753,7 @@ export interface DurableAgentStreamResult<
  *
  * DurableAgent enables you to create AI-powered agents that can maintain state
  * across workflow steps, call tools, and gracefully handle interruptions and resumptions.
- * It integrates seamlessly with the AI SDK and the Workflow DevKit for
+ * It integrates seamlessly with the AI SDK and the Workflow SDK for
  * production-grade reliability.
  *
  * @example
@@ -767,7 +778,10 @@ export interface DurableAgentStreamResult<
  */
 export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
   private model: string | (() => Promise<CompatibleLanguageModel>);
-  private tools: TBaseTools;
+  /**
+   * The tool set configured for this agent.
+   */
+  public readonly tools: TBaseTools;
   private instructions?:
     | string
     | SystemModelMessage
@@ -775,6 +789,7 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
   private generationSettings: GenerationSettings;
   private toolChoice?: ToolChoice<TBaseTools>;
   private telemetry?: TelemetrySettings;
+  private experimentalContext: unknown;
   private prepareStep?: PrepareStepCallback<TBaseTools>;
   private constructorOnStepFinish?: StreamTextOnStepFinishCallback<ToolSet>;
   private constructorOnFinish?: StreamTextOnFinishCallback<ToolSet>;
@@ -786,6 +801,7 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
     this.instructions = options.instructions ?? options.system;
     this.toolChoice = options.toolChoice;
     this.telemetry = options.experimental_telemetry;
+    this.experimentalContext = options.experimental_context;
     this.prepareStep = options.prepareStep;
     this.constructorOnStepFinish = options.onStepFinish;
     this.constructorOnFinish = options.onFinish;
@@ -945,7 +961,8 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
         : this.tools;
 
     // Initialize context
-    let experimentalContext = options.experimental_context;
+    let experimentalContext =
+      options.experimental_context ?? this.experimentalContext;
 
     const steps: StepResult<TTools>[] = [];
 
@@ -1021,6 +1038,7 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
           context,
           uiChunks,
           providerExecutedToolResults,
+          spanHandle,
         } = result.value;
         if (step) {
           // The step result is compatible with StepResult<TTools> since we're using the same tools
@@ -1061,18 +1079,22 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
           // If there are client-side tool calls, stop the loop and return them
           // This matches AI SDK behavior: tools without execute pause the agent loop
           if (clientSideToolCalls.length > 0) {
-            // Execute any executable tools that were also called in this step
-            const executableResults = await Promise.all(
-              executableToolCalls.map(
-                (toolCall): Promise<LanguageModelV3ToolResultPart> =>
-                  executeTool(
-                    toolCall,
-                    effectiveTools as ToolSet,
-                    iterMessages,
-                    experimentalContext,
-                    options.experimental_repairToolCall as ToolCallRepairFunction<ToolSet>,
-                    effectiveTelemetry
-                  )
+            // Execute any executable tools that were also called in this step.
+            // Wrap in the outer ai.streamText span context so ai.toolCall spans
+            // parent correctly (context doesn't propagate across yield boundaries).
+            const executableResults = await runInContext(spanHandle, () =>
+              Promise.all(
+                executableToolCalls.map(
+                  (toolCall): Promise<LanguageModelV3ToolResultPart> =>
+                    executeTool(
+                      toolCall,
+                      effectiveTools as ToolSet,
+                      iterMessages,
+                      experimentalContext,
+                      options.experimental_repairToolCall as ToolCallRepairFunction<ToolSet>,
+                      effectiveTelemetry
+                    )
+                )
               )
             );
 
@@ -1112,7 +1134,7 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
               type: 'tool-call' as const,
               toolCallId: tc.toolCallId,
               toolName: tc.toolName,
-              input: safeParseInput(tc.input),
+              input: safeParseToolCallInput(tc.input),
             }));
 
             // Build toolResults only for tools that were executed
@@ -1120,7 +1142,7 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
               type: 'tool-result' as const,
               toolCallId: r.toolCallId,
               toolName: r.toolName,
-              input: safeParseInput(
+              input: safeParseToolCallInput(
                 toolCalls.find((tc) => tc.toolCallId === r.toolCallId)?.input
               ),
               output: 'value' in r.output ? r.output.value : undefined,
@@ -1174,18 +1196,22 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
             };
           }
 
-          // Execute client tools (all have execute functions at this point)
-          const clientToolResults = await Promise.all(
-            nonProviderToolCalls.map(
-              (toolCall): Promise<LanguageModelV3ToolResultPart> =>
-                executeTool(
-                  toolCall,
-                  effectiveTools as ToolSet,
-                  iterMessages,
-                  experimentalContext,
-                  options.experimental_repairToolCall as ToolCallRepairFunction<ToolSet>,
-                  effectiveTelemetry
-                )
+          // Execute client tools (all have execute functions at this point).
+          // Wrap in the outer ai.streamText span context so ai.toolCall spans
+          // parent correctly (context doesn't propagate across yield boundaries).
+          const clientToolResults = await runInContext(spanHandle, () =>
+            Promise.all(
+              nonProviderToolCalls.map(
+                (toolCall): Promise<LanguageModelV3ToolResultPart> =>
+                  executeTool(
+                    toolCall,
+                    effectiveTools as ToolSet,
+                    iterMessages,
+                    experimentalContext,
+                    options.experimental_repairToolCall as ToolCallRepairFunction<ToolSet>,
+                    effectiveTelemetry
+                  )
+              )
             )
           );
 
@@ -1219,13 +1245,13 @@ export class DurableAgent<TBaseTools extends ToolSet = ToolSet> {
             type: 'tool-call' as const,
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
-            input: safeParseInput(tc.input),
+            input: safeParseToolCallInput(tc.input),
           }));
           lastStepToolResults = toolResults.map((r) => ({
             type: 'tool-result' as const,
             toolCallId: r.toolCallId,
             toolName: r.toolName,
-            input: safeParseInput(
+            input: safeParseToolCallInput(
               toolCalls.find((tc) => tc.toolCallId === r.toolCallId)?.input
             ),
             output: 'value' in r.output ? r.output.value : undefined,
@@ -1454,10 +1480,6 @@ async function convertChunksToUIMessages(
 }
 
 /**
- * Safely parse tool call input JSON. Returns the parsed value or the raw string
- * if parsing fails (e.g., for tool calls that were repaired).
- */
-/**
  * Valid `type` values for LanguageModelV3ToolResultOutput.
  * When a tool returns an object whose `type` matches one of these,
  * it is passed through as-is instead of being wrapped in json/text.
@@ -1478,29 +1500,36 @@ function isToolResultOutput(
   return TOOL_RESULT_OUTPUT_TYPES.has((result as { type?: string }).type ?? '');
 }
 
-function safeParseInput(input: string | undefined): unknown {
-  try {
-    return JSON.parse(input || '{}');
-  } catch {
-    return input;
-  }
-}
+function patchToolCallInMessages(
+  messages: LanguageModelV3Prompt,
+  toolCall: LanguageModelV3ToolCall
+): void {
+  const repairedInput = safeParseToolCallInput(toolCall.input);
 
-// Matches AI SDK's getErrorMessage from @ai-sdk/provider-utils
-function getErrorMessage(error: unknown): string {
-  if (error == null) {
-    return 'unknown error';
-  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
 
-  if (typeof error === 'string') {
-    return error;
-  }
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) {
+      continue;
+    }
 
-  if (error instanceof Error) {
-    return error.message;
-  }
+    const toolCallPart = message.content.find(
+      (
+        part
+      ): part is {
+        type: 'tool-call';
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+      } => part.type === 'tool-call' && part.toolCallId === toolCall.toolCallId
+    );
 
-  return JSON.stringify(error);
+    if (toolCallPart) {
+      toolCallPart.toolName = toolCall.toolName;
+      toolCallPart.input = repairedInput;
+      return;
+    }
+  }
 }
 
 function resolveProviderToolResult(
@@ -1581,6 +1610,9 @@ async function executeTool(
           messages,
         });
         if (repairedToolCall) {
+          toolCall.toolName = repairedToolCall.toolName;
+          toolCall.input = repairedToolCall.input;
+          patchToolCallInMessages(messages, repairedToolCall);
           // Retry with repaired tool call
           return executeTool(
             repairedToolCall,
@@ -1606,6 +1638,9 @@ async function executeTool(
         messages,
       });
       if (repairedToolCall) {
+        toolCall.toolName = repairedToolCall.toolName;
+        toolCall.input = repairedToolCall.input;
+        patchToolCallInMessages(messages, repairedToolCall);
         // Retry with repaired tool call
         return executeTool(
           repairedToolCall,
@@ -1631,7 +1666,7 @@ async function executeTool(
         'ai.toolCall.args': toolCall.input,
       }),
     },
-    fn: async () => {
+    fn: async (span) => {
       try {
         // Extract execute function to avoid binding `this` to the tool object.
         // If we called `tool.execute(...)` directly, JavaScript would bind `this`
@@ -1656,6 +1691,13 @@ async function executeTool(
           : typeof toolResult === 'string'
             ? { type: 'text' as const, value: toolResult }
             : { type: 'json' as const, value: toolResult };
+
+        // Record tool result on the span (gated on recordOutputs)
+        if (span && telemetry?.recordOutputs !== false) {
+          span.setAttributes({
+            'ai.toolCall.result': JSON.stringify(output),
+          });
+        }
 
         return {
           type: 'tool-result' as const,

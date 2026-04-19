@@ -1,5 +1,5 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { WorkflowAPIError } from '@workflow/errors';
+import { WorkflowWorldError } from '@workflow/errors';
 import type { SnapshotMetadata, Storage } from '@workflow/world';
 import { getDispatcher } from './http-client.js';
 import { type APIConfig, getHttpConfig } from './utils.js';
@@ -55,7 +55,7 @@ export function createSnapshotsStorage(
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        throw new WorkflowAPIError(
+        throw new WorkflowWorldError(
           `PUT /v2/runs/${runId}/snapshot -> HTTP ${response.status}: ${text}`,
           { url, status: response.status }
         );
@@ -88,7 +88,7 @@ export function createSnapshotsStorage(
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        throw new WorkflowAPIError(
+        throw new WorkflowWorldError(
           `GET /v2/runs/${runId}/snapshot -> HTTP ${response.status}: ${text}`,
           { url, status: response.status }
         );
@@ -131,7 +131,7 @@ export function createSnapshotsStorage(
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        throw new WorkflowAPIError(
+        throw new WorkflowWorldError(
           `DELETE /v2/runs/${runId}/snapshot -> HTTP ${response.status}: ${text}`,
           { url, status: response.status }
         );

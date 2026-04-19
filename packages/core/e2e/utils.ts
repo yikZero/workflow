@@ -56,12 +56,9 @@ export function hasStepSourceMaps(): boolean {
     return false;
   }
 
-  // Vercel production builds don't support step source maps
-  if (process.env.WORKFLOW_VERCEL_ENV === 'production') {
-    return false;
-  }
-
-  // Vercel preview builds have proper source maps for all other frameworks, EXCEPT sveltekit
+  // Vercel deployments (both production and preview) have proper source maps
+  // for all frameworks EXCEPT sveltekit, thanks to ESM step bundles with
+  // inline source maps.
   if (!isLocalDeployment()) {
     return appName !== 'sveltekit';
   }
@@ -391,23 +388,9 @@ export async function getWorkflowMetadata(
     await sleep(manifestRetryIntervalMs);
   }
 
-  // For Vercel deployments, the workflow must be in the manifest. A missing
-  // workflow means the deployment's build didn't include it, so a fallback ID
-  // would just create a run that never executes and times out silently.
-  if (!isLocalDeployment()) {
-    const availableWorkflows = Object.entries(manifest.workflows)
-      .flatMap(([file, fns]) => Object.keys(fns).map((fn) => `${file}:${fn}`))
-      .join(', ');
-    throw new Error(
-      `Workflow "${workflowFn}" not found in manifest for "${workflowFile}" ` +
-        `after ${manifestRetryTimeoutMs}ms. The deployment may not include this workflow. ` +
-        `Available workflows: ${availableWorkflows || '(none)'}`
-    );
-  }
-
-  // For local development, fall back to the deterministic workflow ID format
-  // used by the transform. Deferred discovery can lag behind manifest
-  // publication in staged/out-of-monorepo tests.
+  // Deferred discovery can lag behind manifest publication in staged/out-of-
+  // monorepo tests. Fall back to the deterministic workflow ID format used by
+  // the transform so tests can continue exercising runtime behavior.
   const fallbackWorkflowId = getFallbackWorkflowId(workflowFile, workflowFn);
   console.warn(
     `Workflow "${workflowFn}" not found in manifest for "${workflowFile}" after ${manifestRetryTimeoutMs}ms; ` +
@@ -536,7 +519,7 @@ async function getRunDiagnostics(tracked: TrackedRun): Promise<string> {
   ];
 
   try {
-    const world = getWorld();
+    const world = await getWorld();
     const runData = await world.runs.get(run.runId);
 
     lines.push(`Status:     ${runData.status}`);

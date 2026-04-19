@@ -29,6 +29,33 @@ import type { FormatPrefix } from './types.js';
  */
 export type SerializationMode = 'workflow' | 'step' | 'client';
 
+/**
+ * Options passed to codec serialize/deserialize to support VM-context
+ * serialization and mode-specific type handling.
+ */
+export interface CodecOptions {
+  /**
+   * The global object to use for `instanceof` checks and constructors.
+   * Defaults to `globalThis`. Must be set to the VM's global when
+   * serializing/deserializing data that crosses VM boundaries.
+   */
+  global?: Record<string, any>;
+
+  /**
+   * Additional reducers to merge into the mode's default reducers.
+   * Used by dehydrate/hydrate functions that need stream handling
+   * or other mode-specific type reducers.
+   */
+  extraReducers?: Record<string, (value: any) => any>;
+
+  /**
+   * Additional revivers to merge into the mode's default revivers.
+   * Used by dehydrate/hydrate functions that need stream handling
+   * or other mode-specific type revivers.
+   */
+  extraRevivers?: Record<string, (value: any) => any>;
+}
+
 export interface Codec {
   /** The 4-character format prefix identifier (e.g. "devl", "cbor", "json") */
   readonly formatPrefix: FormatPrefix;
@@ -40,9 +67,14 @@ export interface Codec {
    *
    * @param value - The value to serialize
    * @param mode - The serialization mode
+   * @param options - Optional global, extra reducers/revivers
    * @returns The serialized payload (without format prefix)
    */
-  serialize(value: unknown, mode: SerializationMode): Uint8Array;
+  serialize(
+    value: unknown,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): Uint8Array;
 
   /**
    * Deserialize bytes back to a value.
@@ -51,9 +83,14 @@ export interface Codec {
    *
    * @param data - The serialized payload (without format prefix)
    * @param mode - The serialization mode
+   * @param options - Optional global, extra revivers
    * @returns The deserialized value
    */
-  deserialize(data: Uint8Array, mode: SerializationMode): unknown;
+  deserialize(
+    data: Uint8Array,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): unknown;
 
   /**
    * Deserialize legacy (pre-format-prefix) data.
@@ -62,7 +99,12 @@ export interface Codec {
    *
    * @param data - The legacy data
    * @param mode - The serialization mode
+   * @param options - Optional global, extra revivers
    * @returns The deserialized value
    */
-  deserializeLegacy?(data: unknown, mode: SerializationMode): unknown;
+  deserializeLegacy?(
+    data: unknown,
+    mode: SerializationMode,
+    options?: CodecOptions
+  ): unknown;
 }

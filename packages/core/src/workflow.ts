@@ -1,5 +1,9 @@
 import { runInContext } from 'node:vm';
-import { ERROR_SLUGS, WorkflowRuntimeError } from '@workflow/errors';
+import {
+  ERROR_SLUGS,
+  WorkflowNotRegisteredError,
+  WorkflowRuntimeError,
+} from '@workflow/errors';
 import { withResolvers } from '@workflow/utils';
 import { getPort } from '@workflow/utils/get-port';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
@@ -208,6 +212,7 @@ export async function runWorkflow(
       workflowRunId: workflowRun.runId,
       workflowStartedAt: new vmGlobalThis.Date(+startedAt),
       url,
+      features: { encryption: !!encryptionKey },
     };
 
     // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
@@ -219,7 +224,7 @@ export async function runWorkflow(
     //       For now `fetch` must be explicitly imported from `workflow`.
     vmGlobalThis.fetch = () => {
       throw new vmGlobalThis.Error(
-        `Global "fetch" is unavailable in workflow functions. Use the "fetch" step function from "workflow" to make HTTP requests.\n\nLearn more: https://useworkflow.dev/err/${ERROR_SLUGS.FETCH_IN_WORKFLOW_FUNCTION}`
+        `Global "fetch" is unavailable in workflow functions. Use the "fetch" step function from "workflow" to make HTTP requests.\n\nLearn more: https://workflow-sdk.dev/err/${ERROR_SLUGS.FETCH_IN_WORKFLOW_FUNCTION}`
       );
     };
 
@@ -704,11 +709,7 @@ export async function runWorkflow(
     );
 
     if (typeof workflowFn !== 'function') {
-      throw new ReferenceError(
-        `Workflow ${JSON.stringify(
-          workflowRun.workflowName
-        )} must be a function, but got "${typeof workflowFn}" instead`
-      );
+      throw new WorkflowNotRegisteredError(workflowRun.workflowName);
     }
 
     // Chain workflow argument hydration onto the promiseQueue so that the
