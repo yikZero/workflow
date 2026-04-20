@@ -214,40 +214,31 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [snapshot, replay]
+        # TEMPORARILY restricted to a single framework (nextjs-turbopack)
+        # while we investigate a recursion hazard in the snapshot runtime
+        # that caused an incident on the `fastify` project — `fibonacciWorkflow`
+        # spawned hundreds of thousands of child runs on Vercel. Until the
+        # underlying fix lands (deterministic child runIds + idempotency
+        # keyed child queue messages + preserved seeded PRNG state across
+        # snapshot restore), we restrict Vercel-backed E2E to one framework
+        # to cap blast radius. The local/postgres matrices still run every
+        # framework.
+        #
+        # Other frameworks (preserved for easy re-enablement):
+        #   - example              prj_xWq20Dd860HHAfzMjK2Mb6TPVxMa  example-workflow
+        #   - nextjs-webpack       prj_avRPBF3eWjh6iDNQgmhH4VOg27h0  example-nextjs-workflow-webpack
+        #   - nitro                prj_e7DZirYdLrQKXNrlxg7KmA6ABx8r  workbench-nitro-workflow
+        #   - vite                 prj_uLIcNZNDmETulAvj5h0IcDHi5432  workbench-vite-workflow
+        #   - nuxt                 prj_oTgiz3SGX2fpZuM6E0P38Ts8de6d  workbench-nuxt-workflow
+        #   - sveltekit            prj_MqnBLm71ceXGSnm3Fs8i8gBnI23G  workbench-sveltekit-workflow
+        #   - hono                 prj_p0GIEsfl53L7IwVbosPvi9rPSOYW  workbench-hono-workflow
+        #   - express              prj_cCZjpBy92VRbKHHbarDMhOHtkuIr  workbench-express-workflow
+        #   - fastify              prj_5Yap0VDQ633v998iqQ3L3aQ25Cck  workbench-fastify-workflow
+        #   - astro                prj_YDAXj3K8LM0hgejuIMhioz2yLgTI  workbench-astro-workflow
         app:
-          - name: "example"
-            project-id: "prj_xWq20Dd860HHAfzMjK2Mb6TPVxMa"
-            project-slug: "example-workflow"
           - name: "nextjs-turbopack"
             project-id: "prj_yjkM7UdHliv8bfxZ1sMJQf1pMpdi"
             project-slug: "example-nextjs-workflow-turbopack"
-          - name: "nextjs-webpack"
-            project-id: "prj_avRPBF3eWjh6iDNQgmhH4VOg27h0"
-            project-slug: "example-nextjs-workflow-webpack"
-          - name: "nitro"
-            project-id: "prj_e7DZirYdLrQKXNrlxg7KmA6ABx8r"
-            project-slug: "workbench-nitro-workflow"
-          - name: "vite"
-            project-id: "prj_uLIcNZNDmETulAvj5h0IcDHi5432"
-            project-slug: "workbench-vite-workflow"
-          - name: "nuxt"
-            project-id: "prj_oTgiz3SGX2fpZuM6E0P38Ts8de6d"
-            project-slug: "workbench-nuxt-workflow"
-          - name: "sveltekit"
-            project-id: "prj_MqnBLm71ceXGSnm3Fs8i8gBnI23G"
-            project-slug: "workbench-sveltekit-workflow"
-          - name: "hono"
-            project-id: "prj_p0GIEsfl53L7IwVbosPvi9rPSOYW"
-            project-slug: "workbench-hono-workflow"
-          - name: "express"
-            project-id: "prj_cCZjpBy92VRbKHHbarDMhOHtkuIr"
-            project-slug: "workbench-express-workflow"
-          - name: "fastify"
-            project-id: "prj_5Yap0VDQ633v998iqQ3L3aQ25Cck"
-            project-slug: "workbench-fastify-workflow"
-          - name: "astro"
-            project-id: "prj_YDAXj3K8LM0hgejuIMhioz2yLgTI"
-            project-slug: "workbench-astro-workflow"
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}

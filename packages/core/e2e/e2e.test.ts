@@ -1575,7 +1575,25 @@ describe('e2e', () => {
     }
   );
 
-  test(
+  // DISABLED on Vercel until the recursion-hazard fixes in start()/snapshot
+  // runtime land. This test previously caused an incident where a duplicate
+  // `start()` step execution inside the snapshot runtime spawned a runaway
+  // tree of child workflow runs (hundreds of thousands, nearly identical
+  // createdAt) because:
+  //   1. The host-side `start()` body generates a fresh, non-seeded
+  //      runId on every call (packages/core/src/runtime/start.ts:172), so
+  //      two executions of the same logical step produce TWO child runs.
+  //   2. The child's workflow-invoke queue message is not
+  //      idempotency-keyed, so there is no queue-level dedup either.
+  //   3. In the snapshot runtime, the per-run seeded PRNG state is reset
+  //      to the beginning of the seed sequence on every restore
+  //      (packages/core/src/runtime/snapshot-runtime.ts:419-420,445),
+  //      so VM-side step correlation IDs can drift across invocations and
+  //      the `hasCreatedEvent` dedup guard can miss.
+  // Recursive workflows amplify this exponentially, so the blast radius
+  // on Vercel is unacceptable until the fixes land. Continues to run on
+  // local worlds (postgres / local) where the blast is contained.
+  test.skipIf(!!process.env.WORKFLOW_VERCEL_ENV)(
     'fibonacciWorkflow - recursive workflow composition via start()',
     { timeout: 180_000 },
     async () => {
