@@ -13,7 +13,12 @@
  * resolve/reject promises.
  */
 
-import type { Event, SnapshotMetadata, WorkflowRun } from '@workflow/world';
+import type {
+  Event,
+  RunInput,
+  SnapshotMetadata,
+  WorkflowRun,
+} from '@workflow/world';
 import * as nanoid from 'nanoid';
 import { JSException, QuickJS } from 'quickjs-wasi';
 import seedrandom from 'seedrandom';
@@ -104,6 +109,12 @@ export interface SnapshotRuntimeOptions {
    * takes precedence there.
    */
   port?: number;
+  /**
+   * Fallback workflow input from the queue message's resilient-start
+   * payload. Used when the fetched event log lacks a `run_created` event
+   * (eventually-consistent read after the parent's start() wrote it).
+   */
+  runInput?: RunInput;
 }
 
 // ---- VM Bootstrap Code ----
@@ -505,15 +516,20 @@ export async function runSnapshotWorkflow(
       return extractError(vm, err, 'Workflow evaluation failed');
     }
 
-    // Extract workflow arguments from the run_created event
+    // Extract workflow arguments. Prefer the run_created event; fall back
+    // to the queue message's runInput if the event log is incomplete
+    // (eventually-consistent read after start()). Failing to find input
+    // for a first invocation is fatal — running the workflow function
+    // with no args would silently turn typed arguments into `undefined`
+    // and, for recursive workflows, produce exponential fan-out.
     const runCreatedEvent = events.find((e) => e.eventType === 'run_created');
-    const runInput =
+    const runCreatedInput =
       runCreatedEvent && 'eventData' in runCreatedEvent
         ? (runCreatedEvent.eventData as Record<string, unknown>)?.input
         : undefined;
+    const runInput: unknown =
+      runCreatedInput ?? (options.runInput?.input as unknown);
 
-    // Pass the serialized input into the VM for deserialization.
-    // Decrypt first if encrypted — the VM only understands 'devl' format.
     if (runInput instanceof Uint8Array) {
       const decryptedInput = (await decryptData(
         runInput,
@@ -522,10 +538,23 @@ export async function runSnapshotWorkflow(
       runtimeLogger.debug('Snapshot runtime: run input format', {
         prefix: new TextDecoder().decode(decryptedInput.subarray(0, 4)),
         byteLength: decryptedInput.byteLength,
+        source: runCreatedInput ? 'run_created' : 'queueMessage.runInput',
       });
       const inputHandle = vm.newUint8Array(decryptedInput);
       vm.setProp(vm.global, '__wdk_input', inputHandle);
       inputHandle.dispose();
+    } else if (runInput === undefined && events.length > 0) {
+      // The event log is non-empty (we got run_started or similar) but
+      // no run_created event was found and no queue-provided runInput is
+      // available. This is the race condition observed during the fib
+      // incident — silently dropping arguments would turn `n` into
+      // `undefined` and, for recursive workflows, cause exponential
+      // fan-out. Fail loud so the run goes to `run_failed` and the queue
+      // can retry. Empty `events` is allowed because tests that bootstrap
+      // a workflow with no arguments rely on the old permissive behavior.
+      throw new Error(
+        `Cannot start workflow run "${workflowRun.runId}": no run_created event found and no runInput in the queue payload, but other events are present (likely a read-after-write race during start()).`
+      );
     }
 
     // Set workflow context metadata (for getWorkflowMetadata()).

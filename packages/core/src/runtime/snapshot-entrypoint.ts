@@ -14,6 +14,7 @@ import { getPort } from '@workflow/utils/get-port';
 import { parseWorkflowName } from '@workflow/utils/parse-name';
 import {
   type Event,
+  type RunInput,
   SPEC_VERSION_CURRENT,
   type WorkflowRun,
 } from '@workflow/world';
@@ -45,8 +46,24 @@ export async function runWorkflowWithSnapshots(params: {
   workflowCode: string;
   workflowName: string;
   workflowRun: WorkflowRun;
+  /**
+   * Events returned inline by `events.create('run_started', ...)`. When
+   * present, they are used as the initial event log instead of fetching
+   * via `events.list`, matching the replay runtime's fast path. Crucially,
+   * if the world backfilled a missing `run_created` via the resilient
+   * start path, `preloadedEvents` contains it even when a fresh
+   * `events.list` might not (eventual consistency).
+   */
+  preloadedEvents?: Event[];
+  /**
+   * Run input carried through the queue message on first delivery. Used
+   * as a last-resort fallback for `run_created.eventData.input` when
+   * the event log is incomplete.
+   */
+  runInput?: RunInput;
 }): Promise<{ timeoutSeconds?: number } | void> {
-  const { workflowCode, workflowName, workflowRun } = params;
+  const { workflowCode, workflowName, workflowRun, preloadedEvents, runInput } =
+    params;
   const world = await getWorld();
   const runId = workflowRun.runId;
 
@@ -57,12 +74,17 @@ export async function runWorkflowWithSnapshots(params: {
   // Check for existing snapshot
   const existingSnapshot = await world.snapshots.load(runId);
 
-  // Fetch events — either all (first run) or since last snapshot (restore)
+  // On first invocation (no snapshot), prefer preloadedEvents from the
+  // run_started response — they're guaranteed to include run_created
+  // even if the world's event log is eventually consistent. On restore,
+  // we always fetch delta events via the cursor.
   let events: Event[];
   let lastEventsCursor: string | null =
     existingSnapshot?.metadata.eventsCursor ?? null;
 
-  {
+  if (!existingSnapshot && preloadedEvents && preloadedEvents.length > 0) {
+    events = preloadedEvents;
+  } else {
     const allEvents: Event[] = [];
     let cursor: string | null = lastEventsCursor;
     let hasMore = true;
@@ -158,6 +180,7 @@ export async function runWorkflowWithSnapshots(params: {
     existingSnapshot,
     encryptionKey,
     port,
+    runInput,
   });
 
   runtimeLogger.debug('Snapshot runtime: VM returned', {
