@@ -21,6 +21,7 @@ import {
 import { classifyRunError } from '../classify-error.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
+import { encrypt as encryptSerializedData } from '../serialization/encryption.js';
 import { remapErrorStack } from '../source-map.js';
 import { queueMessage } from './helpers.js';
 import {
@@ -200,14 +201,21 @@ export async function runWorkflowWithSnapshots(params: {
     // Delete the snapshot
     await world.snapshots.delete(runId);
 
-    // Create run_completed event
+    // Create run_completed event.
+    // The VM serializes the workflow result as format-prefixed devalue bytes
+    // ("devl" + devalue) with no encryption (the VM has no access to the
+    // CryptoKey). Host-side encryption is applied here so that `run_completed`
+    // events have the same `encr`-prefixed payload shape that the replay
+    // runtime's `dehydrateWorkflowReturnValue` produces.
     try {
       await world.events.create(runId, {
         eventType: 'run_completed',
         specVersion: SPEC_VERSION_CURRENT,
         eventData: {
-          // result.result is already format-prefixed devalue bytes
-          output: result.completed.result,
+          output: await encryptSerializedData(
+            result.completed.result,
+            encryptionKey
+          ),
         },
       });
     } catch (err) {
@@ -263,7 +271,13 @@ export async function runWorkflowWithSnapshots(params: {
       if (op.type === 'step' && !op.hasCreatedEvent) {
         const step = op as PendingStep;
 
-        // Create step_created event
+        // Create step_created event.
+        // `step.input` is the format-prefixed devalue bytes ("devl" + devalue)
+        // produced by `__wdk_serialize({args, closureVars, thisVal})` inside
+        // the VM. The VM has no access to the CryptoKey, so encryption is
+        // applied here on the host side — matching what
+        // `dehydrateStepArguments` does in the replay runtime (see
+        // `suspension-handler.ts`).
         try {
           await world.events.create(runId, {
             eventType: 'step_created',
@@ -271,8 +285,7 @@ export async function runWorkflowWithSnapshots(params: {
             correlationId: step.correlationId,
             eventData: {
               stepName: step.stepId,
-              // step.input is already format-prefixed devalue bytes
-              input: step.input,
+              input: await encryptSerializedData(step.input, encryptionKey),
             },
           });
         } catch (err) {
@@ -324,14 +337,23 @@ export async function runWorkflowWithSnapshots(params: {
         }
 
         try {
+          // `hook.metadata` is the format-prefixed devalue bytes produced
+          // by `__wdk_serialize(options.metadata)` inside the VM (see
+          // snapshot-runtime.ts `WORKFLOW_CREATE_HOOK`). Encrypt on the
+          // host side before writing — matches `suspension-handler.ts` in
+          // the replay runtime, which runs the metadata through
+          // `dehydrateStepArguments` (devalue + encrypt).
+          const encryptedMetadata =
+            typeof hook.metadata === 'undefined'
+              ? undefined
+              : await encryptSerializedData(hook.metadata, encryptionKey);
           const result = await world.events.create(runId, {
             eventType: 'hook_created',
             specVersion: SPEC_VERSION_CURRENT,
             correlationId: hook.correlationId,
             eventData: {
               token: hook.token,
-              // metadata is already devalue-serialized (Uint8Array) from the VM
-              metadata: hook.metadata,
+              metadata: encryptedMetadata,
               // Always include isWebhook explicitly. Worlds default it to
               // `true` when absent, which would break the public webhook
               // endpoint's 404 guard for hooks created via createHook().
