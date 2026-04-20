@@ -354,7 +354,7 @@ export function workflowEntrypoint(
                       return;
                     } else if (err instanceof WorkflowRuntimeError) {
                       runtimeLogger.error(
-                        'Fatal runtime error during workflow setup',
+                        `Fatal runtime error during workflow setup\n${err.stack}`,
                         { workflowRunId: runId, error: err.message }
                       );
                       try {
@@ -508,7 +508,9 @@ export function workflowEntrypoint(
                         err.waitCount
                       );
                       if (suspensionMessage) {
-                        runtimeLogger.debug(suspensionMessage);
+                        runtimeLogger.debug(suspensionMessage, {
+                          workflowRunId: runId,
+                        });
                       }
 
                       const result = await handleSuspension({
@@ -558,11 +560,14 @@ export function workflowEntrypoint(
                     // everything else is a user code error.
                     const errorCode = classifyRunError(err);
 
-                    runtimeLogger.error(errorStack, {
-                      workflowRunId: runId,
-                      errorCode,
-                      errorName,
-                    });
+                    runtimeLogger.error(
+                      errorStack || 'Unknown error encountered in workflow',
+                      {
+                        workflowRunId: runId,
+                        errorCode,
+                        errorName,
+                      }
+                    );
 
                     // Fail the workflow run via event (event-sourced architecture)
                     try {

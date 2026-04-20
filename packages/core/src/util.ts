@@ -42,7 +42,7 @@ export function buildWorkflowSuspensionMessage(
   }
   const resumeMsg = resumeMsgParts.join(' and ');
 
-  return `[Workflows] "${runId}" - ${parts.join(' and ')} to be enqueued\n  Workflow will suspend and resume when ${resumeMsg}`;
+  return `${parts.join(' and ')} to be enqueued\n  Workflow will suspend and resume when ${resumeMsg}`;
 }
 
 /**
