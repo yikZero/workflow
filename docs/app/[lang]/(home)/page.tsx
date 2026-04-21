@@ -12,12 +12,12 @@ import { UseCases } from './components/use-cases-server';
 import { FeatureGridExtended } from './components/vercel-com-visuals/feature-grid';
 import { VercelSection } from './components/vercel-com-visuals/vercel-section';
 
-const title = 'Make any TypeScript Function Durable';
+const title = 'React for the backend';
 const description =
-  '"use workflow" brings durability, reliability, and observability to async JavaScript. Build apps and AI Agents that can suspend, resume, and maintain state with ease.';
+  'Workflow SDK lets you build and distribute long-running, durable, reliable and observable workflows and AI agents that can suspend, resume and maintain state.';
 
 export const metadata: Metadata = {
-  title: 'Workflow SDK - Make any TypeScript Function Durable',
+  title: 'Workflow SDK - React for the backend',
   description,
   alternates: {
     canonical: '/',
