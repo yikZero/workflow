@@ -36,6 +36,7 @@ export function createRunsStorage(
       const result = await paginatedFileSystemQuery({
         directory: path.join(basedir, 'runs'),
         schema: WorkflowRunSchema,
+        fileIdFilter: params?.fileIdFilter,
         filter: (run) => {
           if (
             params?.workflowName &&
