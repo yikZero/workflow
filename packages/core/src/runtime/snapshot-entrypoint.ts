@@ -21,7 +21,10 @@ import {
 import { classifyRunError } from '../classify-error.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
-import { encrypt as encryptSerializedData } from '../serialization/encryption.js';
+import {
+  decrypt as decryptSerializedData,
+  encrypt as encryptSerializedData,
+} from '../serialization/encryption.js';
 import { remapErrorStack } from '../source-map.js';
 import { queueMessage } from './helpers.js';
 import {
@@ -72,8 +75,24 @@ export async function runWorkflowWithSnapshots(params: {
   // (e.g. "workflow//./workflows/1_simple//simple")
   const workflowId = workflowName;
 
-  // Check for existing snapshot
-  const existingSnapshot = await world.snapshots.load(runId);
+  // Resolve the encryption key up front. Needed before loading the
+  // snapshot (to decrypt it) and before saving (to encrypt it).
+  const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
+  const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
+
+  // Check for existing snapshot, decrypting if it was written with
+  // encryption. Plaintext snapshots (written before this change, or on
+  // runs without encryption configured) pass through unchanged.
+  const loadedSnapshot = await world.snapshots.load(runId);
+  const existingSnapshot = loadedSnapshot
+    ? {
+        data: (await decryptSerializedData(
+          loadedSnapshot.data,
+          encryptionKey
+        )) as Uint8Array,
+        metadata: loadedSnapshot.metadata,
+      }
+    : null;
 
   // On first invocation (no snapshot), prefer preloadedEvents from the
   // run_started response — they're guaranteed to include run_created
@@ -154,10 +173,6 @@ export async function runWorkflowWithSnapshots(params: {
       }
     }
   }
-
-  // Resolve the encryption key for this run's deployment
-  const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
-  const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
 
   // Resolve the workflow server port so `getWorkflowMetadata().url` inside
   // the VM matches what the step-side handler reports. Skipped on Vercel —
@@ -250,16 +265,23 @@ export async function runWorkflowWithSnapshots(params: {
       })),
     });
 
-    // Save the snapshot
+    // Save the snapshot, encrypting if a key is available. When
+    // encryption is disabled, encrypt() passes the bytes through
+    // unchanged.
+    const snapshotToStore = (await encryptSerializedData(
+      snapshot,
+      encryptionKey
+    )) as Uint8Array;
     runtimeLogger.debug('Snapshot runtime: saving snapshot', {
       workflowRunId: runId,
-      snapshotType: typeof snapshot,
-      snapshotIsUint8Array: snapshot instanceof Uint8Array,
-      snapshotLength: snapshot?.length,
-      snapshotByteLength: snapshot?.byteLength,
+      snapshotType: typeof snapshotToStore,
+      snapshotIsUint8Array: snapshotToStore instanceof Uint8Array,
+      snapshotLength: snapshotToStore?.length,
+      snapshotByteLength: snapshotToStore?.byteLength,
+      encrypted: !!encryptionKey,
       eventsCursor: lastEventsCursor,
     });
-    await world.snapshots.save(runId, snapshot, {
+    await world.snapshots.save(runId, snapshotToStore, {
       eventsCursor: lastEventsCursor,
       createdAt: new Date(),
     });
