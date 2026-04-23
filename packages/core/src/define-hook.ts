@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Hook as HookEntity } from '@workflow/world';
+import { NotInWorkflowContextError } from './context-errors.js';
 import type { Hook, HookOptions } from './create-hook.js';
 import { resumeHook } from './runtime/resume-hook.js';
 
@@ -74,8 +75,9 @@ export function defineHook<TInput, TOutput = TInput>({
 } = {}): TypedHook<TInput, TOutput> {
   return {
     create(_options?: HookOptions): Hook<TOutput> {
-      throw new Error(
-        '`defineHook().create()` can only be called inside a workflow function.'
+      throw new NotInWorkflowContextError(
+        'defineHook().create()',
+        'defineHook(): https://workflow-sdk.dev/docs/api-reference/workflow/define-hook'
       );
     },
     async resume(token: string, payload: TInput): Promise<HookEntity> {

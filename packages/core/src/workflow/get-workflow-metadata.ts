@@ -39,6 +39,10 @@ export function getWorkflowMetadata(): WorkflowMetadata {
   // Inside the workflow VM, the context is stored in the globalThis object behind a symbol
   const ctx = (globalThis as any)[WORKFLOW_CONTEXT_SYMBOL] as WorkflowMetadata;
   if (!ctx) {
+    // Avoid importing NotInWorkflowOrStepContextError here — that module
+    // imports from this file, so bringing it in eagerly would create a
+    // module-init cycle. The companion step/get-workflow-metadata.ts uses
+    // the structured class.
     throw new Error(
       '`getWorkflowMetadata()` can only be called inside a workflow or step function'
     );

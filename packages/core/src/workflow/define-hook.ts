@@ -1,4 +1,5 @@
 import type { Hook as HookEntity } from '@workflow/world';
+import { UnavailableInWorkflowContextError } from '../context-errors.js';
 import type { Hook, HookOptions } from '../create-hook.js';
 import { createHook } from './create-hook.js';
 
@@ -12,8 +13,9 @@ export function defineHook<TInput, TOutput = TInput>() {
     },
 
     resume(_token: string, _payload: TInput): Promise<HookEntity | null> {
-      throw new Error(
-        '`defineHook().resume()` can only be called from external contexts (e.g. API routes).'
+      throw new UnavailableInWorkflowContextError(
+        'defineHook().resume()',
+        'resuming hooks: https://workflow-sdk.dev/docs/api-reference/workflow-api/resume-hook'
       );
     },
   };

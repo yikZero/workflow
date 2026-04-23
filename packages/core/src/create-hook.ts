@@ -1,3 +1,4 @@
+import { NotInWorkflowContextError } from './context-errors.js';
 import type { Serializable } from './schemas.js';
 
 /**
@@ -177,8 +178,9 @@ export interface WebhookOptions
  */
 // @ts-expect-error `options` is here for types/docs
 export function createHook<T = any>(options?: HookOptions): Hook<T> {
-  throw new Error(
-    '`createHook()` can only be called inside a workflow function'
+  throw new NotInWorkflowContextError(
+    'createHook()',
+    'createHook(): https://workflow-sdk.dev/docs/api-reference/workflow/create-hook'
   );
 }
 
@@ -197,7 +199,8 @@ export function createWebhook(
   // @ts-expect-error `options` is here for types/docs
   options?: WebhookOptions
 ): Webhook<Request> | Webhook<RequestWithResponse> {
-  throw new Error(
-    '`createWebhook()` can only be called inside a workflow function'
+  throw new NotInWorkflowContextError(
+    'createWebhook()',
+    'createWebhook(): https://workflow-sdk.dev/docs/api-reference/workflow/create-webhook'
   );
 }
