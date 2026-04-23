@@ -456,6 +456,152 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
 }
 
 /**
+ * Maximum consecutive reconnect attempts for a single framed stream session.
+ * At workflow-server's 2-minute max-duration-per-connection, 50 reconnects
+ * cover ~100 minutes of uninterrupted streaming — enough headroom for
+ * long-lived workflow streams without looping forever on genuine failures.
+ */
+const FRAMED_STREAM_MAX_RECONNECTS = 50;
+
+/**
+ * Wraps the length-prefix-framed byte stream emitted by workflow-server
+ * (via WorkflowServerWritableStream → getSerializeStream) with transparent
+ * auto-reconnect.
+ *
+ * Every fully-decoded outer frame corresponds to exactly one server-side
+ * chunk (the serialize transform enqueues one frame per workflow write, and
+ * the writable buffers one frame per chunk when multi-writing). The wrapper
+ * counts completed frames and, on upstream error, reopens the connection
+ * with `startIndex = resolvedStartIndex + consumedFrames`. Partial-frame
+ * bytes buffered before the cut are discarded — the server will resend the
+ * in-flight chunk in full from the new startIndex.
+ *
+ * A clean upstream close (EOF with no error) signals the stream is truly
+ * done; we close the wrapper and do not reconnect.
+ *
+ * Negative `startIndex` values (last-N semantics) skip the reconnect
+ * machinery because we cannot compute an absolute resume position without
+ * a tail-index lookup — the returned stream behaves as a single-shot read.
+ */
+export function createReconnectingFramedStream(
+  name: string,
+  startIndex?: number
+): ReadableStream<Uint8Array> {
+  const reconnectSupported = startIndex === undefined || startIndex >= 0;
+  let currentStartIndex = startIndex ?? 0;
+  let consumedFrames = 0;
+  let reconnectCount = 0;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let buffer = new Uint8Array(0);
+
+  async function connect(): Promise<void> {
+    const world = getWorld();
+    const effectiveStartIndex = reconnectSupported
+      ? currentStartIndex + consumedFrames
+      : startIndex;
+    const stream = await world.readFromStream(name, effectiveStartIndex);
+    reader = stream.getReader();
+  }
+
+  async function reconnect(): Promise<void> {
+    reconnectCount++;
+    if (reconnectCount > FRAMED_STREAM_MAX_RECONNECTS) {
+      throw new Error(
+        `Stream "${name}" exceeded maximum reconnection attempts (${FRAMED_STREAM_MAX_RECONNECTS})`
+      );
+    }
+    if (reader) {
+      await reader.cancel().catch(() => {});
+      reader = undefined;
+    }
+    currentStartIndex += consumedFrames;
+    consumedFrames = 0;
+    buffer = new Uint8Array(0);
+    await connect();
+  }
+
+  return new ReadableStream<Uint8Array>({
+    pull: async (controller) => {
+      // Loop until we emit something, hit EOF, or fatally error. Reads that
+      // only extend the in-flight-frame buffer don't enqueue anything — we
+      // keep reading rather than returning empty-handed.
+      for (;;) {
+        if (!reader) {
+          try {
+            await connect();
+          } catch (err) {
+            controller.error(err);
+            return;
+          }
+        }
+
+        let result: { done: boolean; value?: Uint8Array };
+        try {
+          // biome-ignore lint/style/noNonNullAssertion: connect() guarantees reader
+          result = await reader!.read();
+        } catch (err) {
+          if (!reconnectSupported) {
+            controller.error(err);
+            return;
+          }
+          try {
+            await reconnect();
+          } catch (reconnectErr) {
+            controller.error(reconnectErr);
+            return;
+          }
+          continue;
+        }
+
+        if (result.done || !result.value) {
+          // Clean EOF — stream is truly complete. Drop any partial-frame
+          // bytes (there shouldn't be any; a well-formed stream ends on a
+          // frame boundary).
+          reader = undefined;
+          controller.close();
+          return;
+        }
+
+        // Append to buffer and emit all complete frames.
+        const incoming = result.value;
+        if (incoming.length > 0) {
+          const combined = new Uint8Array(buffer.length + incoming.length);
+          combined.set(buffer, 0);
+          combined.set(incoming, buffer.length);
+          buffer = combined;
+        }
+
+        let emitted = false;
+        while (buffer.length >= FRAME_HEADER_SIZE) {
+          const frameLength = new DataView(
+            buffer.buffer,
+            buffer.byteOffset,
+            buffer.byteLength
+          ).getUint32(0, false);
+          const total = FRAME_HEADER_SIZE + frameLength;
+          if (buffer.length < total) break;
+          // Forward the entire framed chunk (header + payload) to the
+          // downstream deserializer, which already expects this layout.
+          controller.enqueue(buffer.slice(0, total));
+          buffer = buffer.slice(total);
+          consumedFrames++;
+          emitted = true;
+        }
+
+        if (emitted) return;
+        // Only partial bytes — read more.
+      }
+    },
+    cancel: async () => {
+      if (reader) {
+        await reader.cancel().catch(() => {});
+        reader = undefined;
+      }
+    },
+  });
+}
+
+/**
  * Default flush interval in milliseconds for buffered stream writes.
  * Chunks are accumulated and flushed together to reduce network overhead.
  */
@@ -1209,12 +1355,15 @@ export function getExternalRevivers(
         return response.body;
       }
 
-      const readable = new WorkflowServerReadableStream(
-        value.name,
-        value.startIndex
-      );
       if (value.type === 'bytes') {
-        // For byte streams, use flushable pipe with lock polling
+        // For byte streams, use flushable pipe with lock polling. No
+        // auto-reconnect here: raw byte streams have no wire framing, so
+        // the caller owns its own reconnect strategy if it needs one (see
+        // WorkflowChatTransport for an app-level example).
+        const readable = new WorkflowServerReadableStream(
+          value.name,
+          value.startIndex
+        );
         const state = createFlushableState();
         ops.push(state.promise);
 
@@ -1232,6 +1381,13 @@ export function getExternalRevivers(
 
         return userReadable;
       } else {
+        // Non-byte streams carry length-prefixed frames, so we can count
+        // completed frames and transparently reconnect across a
+        // workflow-server max-duration abort.
+        const readable = createReconnectingFramedStream(
+          value.name,
+          value.startIndex
+        );
         const transform = getDeserializeStream(
           getExternalRevivers(global, ops, runId, cryptoKey),
           cryptoKey
