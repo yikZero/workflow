@@ -2144,7 +2144,9 @@ describe('step function serialization', () => {
 
     expect(err).toBeDefined();
     expect(err?.message).toContain('Step function "nonExistentStep" not found');
-    expect(err?.message).toContain('Make sure the step function is registered');
+    expect(err?.message).toContain(
+      'Make sure the step file is included in your build'
+    );
   });
 
   it('should dehydrate step function passed as argument to a step', async () => {

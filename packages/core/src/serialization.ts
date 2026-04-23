@@ -1,5 +1,5 @@
 import { types } from 'node:util';
-import { WorkflowRuntimeError } from '@workflow/errors';
+import { SerializationError, WorkflowRuntimeError } from '@workflow/errors';
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from '@workflow/serde';
 import { DevalueError, parse, stringify, unflatten } from 'devalue';
 import { monotonicFactory } from 'ulid';
@@ -103,7 +103,7 @@ export function encodeWithFormatPrefix(
 
   const prefixBytes = formatEncoder.encode(format);
   if (prefixBytes.length !== FORMAT_PREFIX_LENGTH) {
-    throw new Error(
+    throw new WorkflowRuntimeError(
       `Format identifier must be exactly ${FORMAT_PREFIX_LENGTH} ASCII characters, got "${format}" (${prefixBytes.length} bytes)`
     );
   }
@@ -167,7 +167,7 @@ export function decodeFormatPrefix(data: Uint8Array | unknown): {
   }
 
   if (data.length < FORMAT_PREFIX_LENGTH) {
-    throw new Error(
+    throw new WorkflowRuntimeError(
       `Data too short to contain format prefix: expected at least ${FORMAT_PREFIX_LENGTH} bytes, got ${data.length}`
     );
   }
@@ -199,7 +199,10 @@ const defaultUlid = monotonicFactory();
  * Extracts path, value, and reason from devalue's DevalueError when available.
  * Logs the problematic value to the console for better debugging.
  */
-function formatSerializationError(context: string, error: unknown): string {
+function formatSerializationError(
+  context: string,
+  error: unknown
+): { message: string; hint: string } {
   // Use "returning" for return values, "passing" for arguments/inputs
   const verb = context.includes('return value') ? 'returning' : 'passing';
 
@@ -208,7 +211,7 @@ function formatSerializationError(context: string, error: unknown): string {
   if (error instanceof DevalueError && error.path) {
     message += ` at path "${error.path}"`;
   }
-  message += `. Ensure you're ${verb} serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`;
+  const hint = `Ensure you're ${verb} serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`;
 
   // Log the problematic value for debugging
   if (error instanceof DevalueError && error.value !== undefined) {
@@ -218,7 +221,7 @@ function formatSerializationError(context: string, error: unknown): string {
     });
   }
 
-  return message;
+  return { message, hint };
 }
 
 /**
@@ -286,11 +289,12 @@ export function getSerializeStream(
         frame.set(prefixed, FRAME_HEADER_SIZE);
         controller.enqueue(frame);
       } catch (error) {
+        const { message, hint } = formatSerializationError(
+          'stream chunk',
+          error
+        );
         controller.error(
-          new WorkflowRuntimeError(
-            formatSerializationError('stream chunk', error),
-            { slug: 'serialization-failed', cause: error }
-          )
+          new SerializationError(message, { hint, cause: error })
         );
       }
     },
@@ -417,7 +421,7 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
 
   constructor(runId: string, name: string, startIndex?: number) {
     if (typeof name !== 'string' || name.length === 0) {
-      throw new Error(`"name" is required, got "${name}"`);
+      throw new WorkflowRuntimeError(`"name" is required, got "${name}"`);
     }
     super({
       // @ts-expect-error Not sure why TypeScript is complaining about this
@@ -431,7 +435,7 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
           reader = this.#reader = stream.getReader();
         }
         if (!reader) {
-          controller.error(new Error('Failed to get reader'));
+          controller.error(new WorkflowRuntimeError('Failed to get reader'));
           return;
         }
 
@@ -464,10 +468,12 @@ const STREAM_FLUSH_INTERVAL_MS = 10;
 export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
   constructor(runId: string, name: string) {
     if (typeof runId !== 'string') {
-      throw new Error(`"runId" must be a string, got "${typeof runId}"`);
+      throw new WorkflowRuntimeError(
+        `"runId" must be a string, got "${typeof runId}"`
+      );
     }
     if (typeof name !== 'string' || name.length === 0) {
-      throw new Error(`"name" is required, got "${name}"`);
+      throw new WorkflowRuntimeError(`"name" is required, got "${name}"`);
     }
     const worldPromise = getWorld();
 
@@ -584,7 +590,7 @@ export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
         // unsettled promise because the cleared timer will never fire.
         const waiters = flushWaiters;
         flushWaiters = [];
-        const abortError = reason ?? new Error('Stream aborted');
+        const abortError = reason ?? new WorkflowRuntimeError('Stream aborted');
         for (const w of waiters) w.reject(abortError);
       },
     });
@@ -731,8 +737,11 @@ function getCommonReducers(global: Record<string, any> = globalThis) {
       // Get the classId from the static class property (set by SWC plugin)
       const classId = cls.classId;
       if (typeof classId !== 'string') {
-        throw new Error(
-          `Class "${cls.name}" with ${String(WORKFLOW_SERIALIZE)} must have a static "classId" property.`
+        throw new SerializationError(
+          `Class "${cls.name}" with ${String(WORKFLOW_SERIALIZE)} must have a static "classId" property.`,
+          {
+            hint: `Add a unique string "classId" to the class so the SDK can look it up on deserialization. The SWC plugin usually injects this — check your compiler setup if it's missing.`,
+          }
         );
       }
 
@@ -888,7 +897,12 @@ export function getExternalReducers(
 
       // Stream must not be locked when passing across execution boundary
       if (value.locked) {
-        throw new Error('ReadableStream is locked');
+        throw new SerializationError(
+          'ReadableStream is locked and cannot be passed across a workflow boundary.',
+          {
+            hint: 'Pass the stream before calling .getReader() / .pipeThrough() / .pipeTo(), or tee it with .tee() and pass one of the branches.',
+          }
+        );
       }
 
       const streamId = ((global as any)[STABLE_ULID] || defaultUlid)();
@@ -958,7 +972,7 @@ export function getWorkflowReducers(
 
       const name = value[STREAM_NAME_SYMBOL];
       if (!name) {
-        throw new Error('ReadableStream `name` is not set');
+        throw new WorkflowRuntimeError('ReadableStream `name` is not set');
       }
       const s: SerializableSpecial['ReadableStream'] = { name };
       const type = value[STREAM_TYPE_SYMBOL];
@@ -969,7 +983,7 @@ export function getWorkflowReducers(
       if (!(value instanceof global.WritableStream)) return false;
       const name = value[STREAM_NAME_SYMBOL];
       if (!name) {
-        throw new Error('WritableStream `name` is not set');
+        throw new WorkflowRuntimeError('WritableStream `name` is not set');
       }
       return { name };
     },
@@ -999,7 +1013,12 @@ function getStepReducers(
 
       // Stream must not be locked when passing across execution boundary
       if (value.locked) {
-        throw new Error('ReadableStream is locked');
+        throw new SerializationError(
+          'ReadableStream is locked and cannot be passed across a workflow boundary.',
+          {
+            hint: 'Pass the stream before calling .getReader() / .pipeThrough() / .pipeTo(), or tee it with .tee() and pass one of the branches.',
+          }
+        );
       }
 
       // Check if the stream already has the name symbol set, in which case
@@ -1124,9 +1143,9 @@ export function getCommonRevivers(global: Record<string, any> = globalThis) {
       // on the VM's global rather than the host's globalThis
       const cls = getSerializationClass(classId, global);
       if (!cls) {
-        throw new Error(
-          `Class "${classId}" not found. Make sure the class is registered with registerSerializationClass.`
-        );
+        throw new SerializationError(`Class "${classId}" not found.`, {
+          hint: `Register the class with registerSerializationClass(classId, Class) before a value of this type flows across a workflow boundary.`,
+        });
       }
       return cls;
     },
@@ -1140,16 +1159,19 @@ export function getCommonRevivers(global: Record<string, any> = globalThis) {
       const cls = getSerializationClass(classId, global);
 
       if (!cls) {
-        throw new Error(
-          `Class "${classId}" not found. Make sure the class is registered with registerSerializationClass.`
-        );
+        throw new SerializationError(`Class "${classId}" not found.`, {
+          hint: `Register the class with registerSerializationClass(classId, Class) before a value of this type flows across a workflow boundary.`,
+        });
       }
 
       // Get the deserializer from the class
       const deserialize = (cls as any)[WORKFLOW_DESERIALIZE];
       if (typeof deserialize !== 'function') {
-        throw new Error(
-          `Class "${classId}" does not have a static ${String(WORKFLOW_DESERIALIZE)} method.`
+        throw new SerializationError(
+          `Class "${classId}" does not have a static ${String(WORKFLOW_DESERIALIZE)} method.`,
+          {
+            hint: `Implement a static ${String(WORKFLOW_DESERIALIZE)}(data) method on the class that rebuilds an instance from the data returned by ${String(WORKFLOW_SERIALIZE)}.`,
+          }
         );
       }
 
@@ -1198,16 +1220,22 @@ export function getExternalRevivers(
 
     // StepFunction should not be returned from workflows to clients
     StepFunction: () => {
-      throw new Error(
-        'Step functions cannot be deserialized in client context. Step functions should not be returned from workflows.'
+      throw new SerializationError(
+        'Step functions cannot be deserialized in client context. Step functions should not be returned from workflows.',
+        {
+          hint: `Return the step's result — a plain, serializable value — from your workflow instead of the step function itself.`,
+        }
       );
     },
 
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: `Import start() from @workflow/core and call start(workflowFn, args) to kick off a workflow run.`,
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -1340,7 +1368,7 @@ export function getWorkflowRevivers(
       const closureVars = value.closureVars;
 
       if (!useStep) {
-        throw new Error(
+        throw new WorkflowRuntimeError(
           'WORKFLOW_USE_STEP not found on global object. Step functions cannot be deserialized outside workflow context.'
         );
       }
@@ -1358,8 +1386,11 @@ export function getWorkflowRevivers(
         (value as any)[WEBHOOK_RESPONSE_WRITABLE] = responseWritable;
         delete value.responseWritable;
         (value as any).respondWith = () => {
-          throw new Error(
-            '`respondWith()` must be called from within a step function'
+          throw new SerializationError(
+            '`respondWith()` must be called from within a step function.',
+            {
+              hint: `Move the respondWith() call into a step (a function with "use step") — webhook responses can only be written from the step handler.`,
+            }
           );
         };
       }
@@ -1370,8 +1401,11 @@ export function getWorkflowRevivers(
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: `Import start() from @workflow/core and call start(workflowFn, args) to kick off a workflow run.`,
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -1441,9 +1475,9 @@ function getStepRevivers(
 
       const stepFn = getStepFunction(stepId);
       if (!stepFn) {
-        throw new Error(
-          `Step function "${stepId}" not found. Make sure the step function is registered.`
-        );
+        throw new SerializationError(`Step function "${stepId}" not found.`, {
+          hint: `Make sure the step file is included in your build and that every step function declaration is marked with "use step".`,
+        });
       }
 
       // If closure variables were serialized, return a wrapper function
@@ -1454,7 +1488,7 @@ function getStepRevivers(
           const currentContext = contextStorage.getStore();
 
           if (!currentContext) {
-            throw new Error(
+            throw new WorkflowRuntimeError(
               'Cannot call step function with closure variables outside step context'
             );
           }
@@ -1492,8 +1526,11 @@ function getStepRevivers(
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: `Import start() from @workflow/core and call start(workflowFn, args) to kick off a workflow run.`,
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -1700,10 +1737,11 @@ export async function dehydrateWorkflowArguments(
     // Encrypt if world supports encryption
     return maybeEncrypt(serialized, key);
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError('workflow arguments', error),
-      { slug: 'serialization-failed', cause: error }
+    const { message, hint } = formatSerializationError(
+      'workflow arguments',
+      error
     );
+    throw new SerializationError(message, { hint, cause: error });
   }
 }
 
@@ -1749,7 +1787,7 @@ export async function hydrateWorkflowArguments(
     return obj;
   }
 
-  throw new Error(`Unsupported serialization format: ${format}`);
+  throw new WorkflowRuntimeError(`Unsupported serialization format: ${format}`);
 }
 
 /**
@@ -1782,10 +1820,11 @@ export async function dehydrateWorkflowReturnValue(
     // Encrypt if world supports encryption
     return maybeEncrypt(serialized, key);
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError('workflow return value', error),
-      { slug: 'serialization-failed', cause: error }
+    const { message, hint } = formatSerializationError(
+      'workflow return value',
+      error
     );
+    throw new SerializationError(message, { hint, cause: error });
   }
 }
 
@@ -1834,7 +1873,7 @@ export async function hydrateWorkflowReturnValue(
     return obj;
   }
 
-  throw new Error(`Unsupported serialization format: ${format}`);
+  throw new WorkflowRuntimeError(`Unsupported serialization format: ${format}`);
 }
 
 /**
@@ -1870,10 +1909,8 @@ export async function dehydrateStepArguments(
     // Encrypt if world supports encryption
     return maybeEncrypt(serialized, key);
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError('step arguments', error),
-      { slug: 'serialization-failed', cause: error }
-    );
+    const { message, hint } = formatSerializationError('step arguments', error);
+    throw new SerializationError(message, { hint, cause: error });
   }
 }
 
@@ -1921,7 +1958,7 @@ export async function hydrateStepArguments(
     return obj;
   }
 
-  throw new Error(`Unsupported serialization format: ${format}`);
+  throw new WorkflowRuntimeError(`Unsupported serialization format: ${format}`);
 }
 
 /**
@@ -1959,10 +1996,11 @@ export async function dehydrateStepReturnValue(
     // Encrypt if world supports encryption
     return maybeEncrypt(serialized, key);
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError('step return value', error),
-      { slug: 'serialization-failed', cause: error }
+    const { message, hint } = formatSerializationError(
+      'step return value',
+      error
     );
+    throw new SerializationError(message, { hint, cause: error });
   }
 }
 
@@ -2007,5 +2045,5 @@ export async function hydrateStepReturnValue(
     });
   }
 
-  throw new Error(`Unsupported serialization format: ${format}`);
+  throw new WorkflowRuntimeError(`Unsupported serialization format: ${format}`);
 }

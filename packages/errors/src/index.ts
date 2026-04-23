@@ -219,6 +219,46 @@ export class WorkflowRuntimeError extends WorkflowError {
   }
 }
 
+interface SerializationErrorOptions extends ErrorOptions {
+  /**
+   * An optional actionable hint appended to the main message, explaining how
+   * the user can resolve the failure (e.g. "register the class with…" or
+   * "move this call inside a step").
+   */
+  hint?: string;
+}
+
+/**
+ * Thrown when a value cannot be serialized into or deserialized out of the
+ * workflow event log.
+ *
+ * This usually indicates a user-facing mistake: passing a non-serializable
+ * value (class without `WORKFLOW_SERIALIZE`, locked stream, direct workflow
+ * function reference) into a step boundary, or an unregistered class
+ * returning from a step.
+ *
+ * Internal invariants (corrupted buffers, unknown format bytes) should use
+ * `WorkflowRuntimeError` instead — this class is scoped to things the user
+ * can fix in their own code.
+ */
+export class SerializationError extends WorkflowError {
+  readonly hint?: string;
+
+  constructor(message: string, options?: SerializationErrorOptions) {
+    const body = options?.hint ? `${message}\n\n${options.hint}` : message;
+    super(body, {
+      slug: ERROR_SLUGS.SERIALIZATION_FAILED,
+      cause: options?.cause,
+    });
+    this.name = 'SerializationError';
+    this.hint = options?.hint;
+  }
+
+  static is(value: unknown): value is SerializationError {
+    return isError(value) && value.name === 'SerializationError';
+  }
+}
+
 /**
  * Thrown when a step function is not registered in the current deployment.
  *
