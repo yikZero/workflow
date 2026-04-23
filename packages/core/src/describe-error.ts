@@ -35,6 +35,32 @@ export interface ErrorDescription {
   hint?: string;
 }
 
+/**
+ * Error signal fields carried on persisted failure events (e.g.
+ * `run_failed` / `step_failed`). The shape is intentionally loose:
+ *
+ * - `errorCode` is typed as `string` rather than `RunErrorCode` because
+ *   the value comes from stored JSON/CBOR and may predate the current
+ *   enum — callers should not narrow on it blindly. Values that don't
+ *   match a known `RUN_ERROR_CODES` entry fall through to USER_ERROR.
+ * - `errorName` is the thrown `Error#name`. It is not universally
+ *   persisted today; callers that have access to it (either via an
+ *   in-memory throw or a richer payload) can pass it in to sharpen
+ *   the attribution and hint. When absent, `describeRunError` still
+ *   returns a sensible attribution from `errorCode` alone.
+ */
+export interface PersistedErrorSignal {
+  errorCode?: string;
+  errorName?: string;
+}
+
+const CONTEXT_ERROR_NAMES = new Set([
+  'NotInWorkflowContextError',
+  'NotInStepContextError',
+  'NotInWorkflowOrStepContextError',
+  'UnavailableInWorkflowContextError',
+]);
+
 function isContextViolationError(err: unknown): boolean {
   return (
     err instanceof NotInWorkflowContextError ||
@@ -42,6 +68,60 @@ function isContextViolationError(err: unknown): boolean {
     err instanceof NotInWorkflowOrStepContextError ||
     err instanceof UnavailableInWorkflowContextError
   );
+}
+
+const SERIALIZATION_ERROR_HINT =
+  'A value passed across a workflow/step boundary could not be serialized. See the error message for the offending path and the Learn More link for details.';
+const CONTEXT_ERROR_HINT =
+  'A workflow-only or step-only API was called from the wrong context. The error message includes the exact API and how to move the call.';
+const RUNTIME_ERROR_HINT =
+  'This is an internal workflow SDK error, not a bug in your code. If it keeps happening, please report it with the stack trace and the runId.';
+const REPLAY_TIMEOUT_HINT =
+  'The workflow replay took too long. This usually means the event log is unusually large or the workflow function is doing heavy synchronous work between step boundaries.';
+const MAX_DELIVERIES_HINT =
+  'The workflow queue exceeded its max-delivery budget. This usually indicates a persistent runtime failure — check the most recent stack traces for the underlying cause.';
+
+function normalizeErrorCode(code: string | undefined): RunErrorCode {
+  // Values read back from persisted events are `string | undefined` — we
+  // only trust codes that match a known entry in `RUN_ERROR_CODES`.
+  const known = Object.values(RUN_ERROR_CODES) as readonly string[];
+  if (code && known.includes(code)) {
+    return code as RunErrorCode;
+  }
+  return RUN_ERROR_CODES.USER_ERROR;
+}
+
+/**
+ * Data-driven variant of {@link describeError} that works from persisted
+ * event fields instead of a live `Error` instance. Intended for CLI/web
+ * renderers that read failure events and no longer have the original
+ * thrown object.
+ */
+export function describeRunError(
+  signal: PersistedErrorSignal
+): ErrorDescription {
+  const errorCode = normalizeErrorCode(signal.errorCode);
+  const name = signal.errorName;
+
+  if (name === 'SerializationError') {
+    return { attribution: 'user', errorCode, hint: SERIALIZATION_ERROR_HINT };
+  }
+  if (name && CONTEXT_ERROR_NAMES.has(name)) {
+    return { attribution: 'user', errorCode, hint: CONTEXT_ERROR_HINT };
+  }
+  if (name === 'WorkflowRuntimeError' || name === 'StepNotRegisteredError') {
+    return { attribution: 'sdk', errorCode, hint: RUNTIME_ERROR_HINT };
+  }
+  if (errorCode === RUN_ERROR_CODES.REPLAY_TIMEOUT) {
+    return { attribution: 'sdk', errorCode, hint: REPLAY_TIMEOUT_HINT };
+  }
+  if (errorCode === RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED) {
+    return { attribution: 'sdk', errorCode, hint: MAX_DELIVERIES_HINT };
+  }
+  if (errorCode === RUN_ERROR_CODES.RUNTIME_ERROR) {
+    return { attribution: 'sdk', errorCode, hint: RUNTIME_ERROR_HINT };
+  }
+  return { attribution: 'user', errorCode };
 }
 
 /**
@@ -75,7 +155,7 @@ export function describeError(
     return {
       attribution: 'user',
       errorCode: effectiveCode,
-      hint: 'A value passed across a workflow/step boundary could not be serialized. See the error message for the offending path and the Learn More link for details.',
+      hint: SERIALIZATION_ERROR_HINT,
     };
   }
 
@@ -83,7 +163,7 @@ export function describeError(
     return {
       attribution: 'user',
       errorCode: effectiveCode,
-      hint: 'A workflow-only or step-only API was called from the wrong context. The error message includes the exact API and how to move the call.',
+      hint: CONTEXT_ERROR_HINT,
     };
   }
 
@@ -91,7 +171,7 @@ export function describeError(
     return {
       attribution: 'sdk',
       errorCode: effectiveCode,
-      hint: 'This is an internal workflow SDK error, not a bug in your code. If it keeps happening, please report it with the stack trace and the runId.',
+      hint: RUNTIME_ERROR_HINT,
     };
   }
 
@@ -99,7 +179,7 @@ export function describeError(
     return {
       attribution: 'sdk',
       errorCode: effectiveCode,
-      hint: 'The workflow replay took too long. This usually means the event log is unusually large or the workflow function is doing heavy synchronous work between step boundaries.',
+      hint: REPLAY_TIMEOUT_HINT,
     };
   }
 
@@ -107,7 +187,7 @@ export function describeError(
     return {
       attribution: 'sdk',
       errorCode: effectiveCode,
-      hint: 'The workflow queue exceeded its max-delivery budget. This usually indicates a persistent runtime failure — check the most recent stack traces for the underlying cause.',
+      hint: MAX_DELIVERIES_HINT,
     };
   }
 

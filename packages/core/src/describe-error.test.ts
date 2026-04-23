@@ -9,7 +9,7 @@ import {
   NotInStepContextError,
   NotInWorkflowContextError,
 } from './context-errors.js';
-import { describeError } from './describe-error.js';
+import { describeError, describeRunError } from './describe-error.js';
 
 describe('describeError', () => {
   test('plain user errors are attributed to the user with no hint', () => {
@@ -96,5 +96,74 @@ describe('describeError', () => {
     );
     expect(result.errorCode).toBe(RUN_ERROR_CODES.REPLAY_TIMEOUT);
     expect(result.attribution).toBe('sdk');
+  });
+});
+
+describe('describeRunError', () => {
+  test('plain user error event fields are attributed to the user with no hint', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.USER_ERROR,
+      errorName: 'Error',
+    });
+    expect(result.attribution).toBe('user');
+    expect(result.hint).toBeUndefined();
+  });
+
+  test('SerializationError by name is attributed to the user with a hint', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.USER_ERROR,
+      errorName: 'SerializationError',
+    });
+    expect(result.attribution).toBe('user');
+    expect(result.hint).toContain('serialized');
+  });
+
+  test('context-violation error names are attributed to the user', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.USER_ERROR,
+      errorName: 'NotInWorkflowContextError',
+    });
+    expect(result.attribution).toBe('user');
+    expect(result.hint).toContain('wrong context');
+  });
+
+  test('WorkflowRuntimeError name is attributed to the SDK', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.RUNTIME_ERROR,
+      errorName: 'WorkflowRuntimeError',
+    });
+    expect(result.attribution).toBe('sdk');
+    expect(result.hint).toContain('internal workflow SDK error');
+  });
+
+  test('REPLAY_TIMEOUT errorCode is attributed to the SDK', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.REPLAY_TIMEOUT,
+    });
+    expect(result.attribution).toBe('sdk');
+    expect(result.hint).toContain('replay took too long');
+  });
+
+  test('MAX_DELIVERIES_EXCEEDED errorCode is attributed to the SDK', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED,
+    });
+    expect(result.attribution).toBe('sdk');
+    expect(result.hint).toContain('max-delivery budget');
+  });
+
+  test('RUNTIME_ERROR code without errorName still lands as SDK', () => {
+    const result = describeRunError({
+      errorCode: RUN_ERROR_CODES.RUNTIME_ERROR,
+    });
+    expect(result.attribution).toBe('sdk');
+    expect(result.hint).toContain('internal workflow SDK error');
+  });
+
+  test('missing errorCode defaults to USER_ERROR', () => {
+    const result = describeRunError({});
+    expect(result.attribution).toBe('user');
+    expect(result.errorCode).toBe(RUN_ERROR_CODES.USER_ERROR);
+    expect(result.hint).toBeUndefined();
   });
 });
