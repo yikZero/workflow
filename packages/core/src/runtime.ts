@@ -137,10 +137,14 @@ export function workflowEntrypoint(
         // of the workflow events, etc. We simply attempt to mark the run as failed
         // and if that fails, the message is still consumed but with adequate logging
         // that an error occurred preventing us from failing the run.
+        // Scoped logger for this run — attaches runId/workflowName to every
+        // log line and child loggers below, so callers don't repeat it.
+        const runLogger = runtimeLogger.forRun(runId, workflowName);
+
         if (metadata.attempt > MAX_QUEUE_DELIVERIES) {
-          runtimeLogger.error(
+          runLogger.error(
             `Workflow handler exceeded max deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
-            { workflowRunId: runId, workflowName, attempt: metadata.attempt }
+            { attempt: metadata.attempt }
           );
           try {
             const world = await getWorld();
@@ -163,16 +167,17 @@ export function workflowEntrypoint(
               // Run already finished, consume the message silently
               return;
             }
-            runtimeLogger.error(
+            runLogger.error(
               `Failed to mark run as failed after ${metadata.attempt} delivery attempts. ` +
                 `A persistent error is preventing the run from being terminated. ` +
                 `The run will remain in its current state until manually resolved. ` +
                 `This is most likely due to a persistent outage of the workflow backend ` +
                 `or a bug in the workflow runtime and should be reported to the Workflow team.`,
               {
-                workflowRunId: runId,
-                error: err instanceof Error ? err.message : String(err),
                 attempt: metadata.attempt,
+                errorName: err instanceof Error ? err.name : 'UnknownError',
+                errorMessage: err instanceof Error ? err.message : String(err),
+                errorStack: err instanceof Error ? err.stack : undefined,
               }
             );
           }
@@ -188,18 +193,28 @@ export function workflowEntrypoint(
         let replayTimeout: NodeJS.Timeout | undefined;
         if (process.env.VERCEL_URL !== undefined) {
           replayTimeout = setTimeout(async () => {
-            runtimeLogger.error('Workflow replay exceeded timeout', {
-              workflowRunId: runId,
-              timeoutMs: REPLAY_TIMEOUT_MS,
-              attempt: metadata.attempt,
-              maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
-            });
-
             // Allow a few retries before permanently failing the run.
             // On early attempts, just exit so the queue retries the message.
             if (metadata.attempt <= REPLAY_TIMEOUT_MAX_RETRIES) {
+              runLogger.warn(
+                'Workflow replay exceeded timeout but will be re-attempted (attempt < maxRetries)',
+                {
+                  timeoutMs: REPLAY_TIMEOUT_MS,
+                  attempt: metadata.attempt,
+                  maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+                }
+              );
               process.exit(1);
             }
+
+            runLogger.error(
+              'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
+              {
+                timeoutMs: REPLAY_TIMEOUT_MS,
+                attempt: metadata.attempt,
+                maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+              }
+            );
 
             try {
               const world = await getWorld();
@@ -217,8 +232,19 @@ export function workflowEntrypoint(
                 },
                 { requestId }
               );
-            } catch {
-              // Best effort — process exits regardless
+            } catch (err) {
+              // Best effort — process exits regardless. Surface why so
+              // operators can diagnose repeat timeouts against the backend.
+              runLogger.warn(
+                'Unable to mark run as failed. The queue will continue to retry',
+                {
+                  attempt: metadata.attempt,
+                  errorName: err instanceof Error ? err.name : 'UnknownError',
+                  errorMessage:
+                    err instanceof Error ? err.message : String(err),
+                  errorStack: err instanceof Error ? err.stack : undefined,
+                }
+              );
             }
             // Note that this also prevents the runtime from acking the queue message,
             // so the queue will call back once, after which a 410 will get it to exit early.
@@ -327,15 +353,22 @@ export function workflowEntrypoint(
                       // completed/failed/cancelled during setup.
                       // RunExpiredError: run already in terminal state.
                       // In both cases, skip processing this message.
-                      runtimeLogger.info(
+                      runLogger.info(
                         'Run already finished during setup, skipping',
-                        { workflowRunId: runId, message: err.message }
+                        { errorName: err.name, errorMessage: err.message }
                       );
                       return;
                     } else if (err instanceof WorkflowRuntimeError) {
-                      runtimeLogger.error(
-                        'Fatal runtime error during workflow setup',
-                        { workflowRunId: runId, error: err.message }
+                      // Include the stack directly in the message so it
+                      // surfaces in stdout even when structured logging is
+                      // being flattened (e.g. Vercel log drain).
+                      runLogger.error(
+                        `Fatal runtime error during workflow setup\n${err.stack}`,
+                        {
+                          errorName: err.name,
+                          errorMessage: err.message,
+                          errorStack: err.stack,
+                        }
                       );
                       try {
                         await world.events.create(
@@ -377,10 +410,9 @@ export function workflowEntrypoint(
 
                   if (workflowRun.status !== 'running') {
                     // Workflow has already completed or failed, so we can skip it
-                    runtimeLogger.info(
+                    runLogger.info(
                       'Workflow already completed or failed, skipping',
                       {
-                        workflowRunId: runId,
                         status: workflowRun.status,
                       }
                     );
@@ -440,8 +472,9 @@ export function workflowEntrypoint(
                       events.push(result.event!);
                     } catch (err) {
                       if (EntityConflictError.is(err)) {
-                        runtimeLogger.info('Wait already completed, skipping', {
-                          workflowRunId: runId,
+                        // Another replay/worker already recorded wait_completed
+                        // for the same correlationId — idempotent, ignore.
+                        runLogger.info('Wait already completed, skipping', {
                           correlationId: waitEvent.correlationId,
                         });
                         continue;
@@ -482,13 +515,12 @@ export function workflowEntrypoint(
                     // WorkflowSuspension is normal control flow — not an error
                     if (WorkflowSuspension.is(err)) {
                       const suspensionMessage = buildWorkflowSuspensionMessage(
-                        runId,
                         err.stepCount,
                         err.hookCount,
                         err.waitCount
                       );
                       if (suspensionMessage) {
-                        runtimeLogger.debug(suspensionMessage);
+                        runLogger.debug(suspensionMessage);
                       }
 
                       const result = await handleSuspension({
@@ -538,12 +570,16 @@ export function workflowEntrypoint(
                     // everything else is a user code error.
                     const errorCode = classifyRunError(err);
 
-                    runtimeLogger.error('Error while running workflow', {
-                      workflowRunId: runId,
-                      errorCode,
-                      errorName,
-                      errorStack,
-                    });
+                    // Use the stack as the primary message so it shows up
+                    // in flattened logs without structured metadata.
+                    runLogger.error(
+                      errorStack || 'Unknown error encountered in workflow',
+                      {
+                        errorCode,
+                        errorName,
+                        errorMessage,
+                      }
+                    );
 
                     // Fail the workflow run via event (event-sourced architecture)
                     try {
@@ -567,11 +603,14 @@ export function workflowEntrypoint(
                         EntityConflictError.is(failErr) ||
                         RunExpiredError.is(failErr)
                       ) {
-                        runtimeLogger.info(
+                        // Run already transitioned to a terminal state via
+                        // another path (duplicate delivery, cancellation).
+                        // Nothing to do — just drop the failure event.
+                        runLogger.info(
                           'Tried failing workflow run, but run has already finished.',
                           {
-                            workflowRunId: runId,
-                            message: failErr.message,
+                            errorName: failErr.name,
+                            errorMessage: failErr.message,
                           }
                         );
                         span?.setAttributes({
@@ -616,11 +655,13 @@ export function workflowEntrypoint(
                       EntityConflictError.is(err) ||
                       RunExpiredError.is(err)
                     ) {
-                      runtimeLogger.info(
+                      // Run already completed/failed elsewhere — idempotent,
+                      // drop the completion event.
+                      runLogger.info(
                         'Tried completing workflow run, but run has already finished.',
                         {
-                          workflowRunId: runId,
-                          message: err.message,
+                          errorName: err.name,
+                          errorMessage: err.message,
                         }
                       );
                       return;

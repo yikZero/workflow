@@ -82,13 +82,19 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
       // of the step details, etc. We simply attempt to mark the step as failed
       // and enqueue the workflow once, and if either of those fails, the message
       // is still consumed but with adequate logging that an error occurred.
+      // Scoped logger for this step invocation — attaches run/step context to
+      // every log line below so callers don't repeat it.
+      const stepNameFromQueue = metadata.queueName.slice('__wkf_step_'.length);
+      const stepRuntimeLogger = runtimeLogger.forRun(
+        workflowRunId,
+        workflowName,
+        { stepId, stepName: stepNameFromQueue }
+      );
+
       if (metadata.attempt > MAX_QUEUE_DELIVERIES) {
-        runtimeLogger.error(
+        stepRuntimeLogger.error(
           `Step handler exceeded max deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
           {
-            workflowRunId,
-            stepId,
-            stepName: metadata.queueName.slice('__wkf_step_'.length),
             attempt: metadata.attempt,
           }
         );
@@ -118,17 +124,17 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
           }
           // Can't even mark the step as failed. Consume the message to stop
           // further retries. The run will remain in its current state.
-          runtimeLogger.error(
+          stepRuntimeLogger.error(
             `Failed to mark step as failed after ${metadata.attempt} delivery attempts. ` +
               `A persistent error is preventing the step from being terminated. ` +
               `The run will remain in its current state until manually resolved. ` +
               `This is most likely due to a persistent outage of the workflow backend ` +
               `or a bug in the workflow runtime and should be reported to the Workflow team.`,
             {
-              workflowRunId,
-              stepId,
               attempt: metadata.attempt,
-              error: err instanceof Error ? err.message : String(err),
+              errorName: err instanceof Error ? err.name : 'UnknownError',
+              errorMessage: err instanceof Error ? err.message : String(err),
+              errorStack: err instanceof Error ? err.stack : undefined,
             }
           );
         }
@@ -205,7 +211,7 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                   1,
                   typeof err.retryAfter === 'number' ? err.retryAfter : 1
                 );
-                runtimeLogger.info(
+                stepRuntimeLogger.info(
                   'Throttled again on retry, deferring to queue',
                   {
                     retryAfterSeconds: retryRetryAfter,
@@ -214,19 +220,22 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 return { timeoutSeconds: retryRetryAfter };
               }
               if (RunExpiredError.is(err)) {
-                runtimeLogger.info(
-                  `Workflow run "${workflowRunId}" has already completed, skipping step "${stepId}": ${err.message}`
+                // Expected when a run is cancelled while a step is in-flight.
+                stepRuntimeLogger.info(
+                  'Workflow run has already completed, skipping step',
+                  { errorName: err.name, errorMessage: err.message }
                 );
                 return;
               }
               if (EntityConflictError.is(err)) {
-                runtimeLogger.debug(
+                // Step already in a terminal state — another worker finished
+                // it or it was retried to completion. Re-enqueue the parent
+                // workflow so it can observe the outcome.
+                stepRuntimeLogger.debug(
                   'Step in terminal state, re-enqueuing workflow',
                   {
-                    stepName,
-                    stepId,
-                    workflowRunId,
-                    error: err.message,
+                    errorName: err.name,
+                    errorMessage: err.message,
                   }
                 );
                 span?.setAttributes({
@@ -258,11 +267,9 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                   'delay.reason': 'retry_after_not_reached',
                   'delay.timeout_seconds': timeoutSeconds,
                 });
-                runtimeLogger.debug(
+                stepRuntimeLogger.debug(
                   'Step retryAfter timestamp not yet reached',
                   {
-                    stepName,
-                    stepId,
                     retryAfterSeconds: err.retryAfter,
                     timeoutSeconds,
                   }
@@ -273,9 +280,7 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
               throw err;
             }
 
-            runtimeLogger.debug('Step execution details', {
-              stepName,
-              stepId: step.stepId,
+            stepRuntimeLogger.debug('Step execution details', {
               status: step.status,
               attempt: step.attempt,
             });
@@ -291,13 +296,12 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
             if (!stepFn || typeof stepFn !== 'function') {
               const err = new StepNotRegisteredError(stepName);
 
-              runtimeLogger.error(
+              stepRuntimeLogger.error(
                 'Step function not registered, failing step (not run)',
                 {
-                  workflowRunId,
-                  stepName,
-                  stepId,
-                  error: err.message,
+                  errorName: err.name,
+                  errorMessage: err.message,
+                  errorStack: err.stack,
                 }
               );
 
@@ -319,13 +323,13 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 );
               } catch (stepFailErr) {
                 if (EntityConflictError.is(stepFailErr)) {
-                  runtimeLogger.info(
+                  // Step already transitioned to a terminal state — duplicate
+                  // delivery or concurrent cancellation. Drop silently.
+                  stepRuntimeLogger.info(
                     'Tried failing step for missing function, but step has already finished.',
                     {
-                      workflowRunId,
-                      stepId,
-                      stepName,
-                      message: stepFailErr.message,
+                      errorName: stepFailErr.name,
+                      errorMessage: stepFailErr.message,
                     }
                   );
                   return;
@@ -365,6 +369,8 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
               const errorMessage = `Step "${stepName}" exceeded max retries (${retryCount} ${pluralize('retry', 'retries', retryCount)})`;
               stepLogger.error('Step exceeded max retries', {
                 workflowRunId,
+                workflowName,
+                stepId,
                 stepName,
                 retryCount,
               });
@@ -385,13 +391,13 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 );
               } catch (err) {
                 if (EntityConflictError.is(err)) {
-                  runtimeLogger.info(
+                  // Step already transitioned to a terminal state — duplicate
+                  // delivery or concurrent completion. Drop silently.
+                  stepRuntimeLogger.info(
                     'Tried failing step, but step has already finished.',
                     {
-                      workflowRunId,
-                      stepId,
-                      stepName,
-                      message: err.message,
+                      errorName: err.name,
+                      errorMessage: err.message,
                     }
                   );
                   return;
@@ -425,10 +431,8 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
 
             if (!step.startedAt) {
               const errorMessage = `Step "${stepId}" has no "startedAt" timestamp`;
-              runtimeLogger.error('Fatal runtime error during step setup', {
-                workflowRunId,
-                stepId,
-                error: errorMessage,
+              stepRuntimeLogger.error('Fatal runtime error during step setup', {
+                errorMessage,
               });
               try {
                 await world.events.create(
@@ -614,13 +618,12 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                   );
                 } catch (stepFailErr) {
                   if (EntityConflictError.is(stepFailErr)) {
-                    runtimeLogger.info(
+                    // Step already in terminal state — idempotent.
+                    stepRuntimeLogger.info(
                       'Tried failing step, but step has already finished.',
                       {
-                        workflowRunId,
-                        stepId,
-                        stepName,
-                        message: stepFailErr.message,
+                        errorName: stepFailErr.name,
+                        errorMessage: stepFailErr.message,
                       }
                     );
                     return;
@@ -651,9 +654,13 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                     'Max retries reached, bubbling error to parent workflow',
                     {
                       workflowRunId,
+                      workflowName,
+                      stepId,
                       stepName,
                       attempt: step.attempt,
                       retryCount,
+                      errorName: normalizedError.name,
+                      errorMessage: normalizedError.message,
                       errorStack: normalizedStack,
                     }
                   );
@@ -675,13 +682,12 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                     );
                   } catch (stepFailErr) {
                     if (EntityConflictError.is(stepFailErr)) {
-                      runtimeLogger.info(
+                      // Step already in terminal state — idempotent.
+                      stepRuntimeLogger.info(
                         'Tried failing step, but step has already finished.',
                         {
-                          workflowRunId,
-                          stepId,
-                          stepName,
-                          message: stepFailErr.message,
+                          errorName: stepFailErr.name,
+                          errorMessage: stepFailErr.message,
                         }
                       );
                       return;
@@ -700,16 +706,24 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                       'Encountered RetryableError, step will be retried',
                       {
                         workflowRunId,
+                        workflowName,
+                        stepId,
                         stepName,
                         attempt: currentAttempt,
-                        message: err.message,
+                        errorName: err.name,
+                        errorMessage: err.message,
+                        errorStack: normalizedStack,
                       }
                     );
                   } else {
                     stepLogger.info('Encountered Error, step will be retried', {
                       workflowRunId,
+                      workflowName,
+                      stepId,
                       stepName,
                       attempt: currentAttempt,
+                      errorName: normalizedError.name,
+                      errorMessage: normalizedError.message,
                       errorStack: normalizedStack,
                     });
                   }
@@ -734,13 +748,12 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                     );
                   } catch (stepRetryErr) {
                     if (EntityConflictError.is(stepRetryErr)) {
-                      runtimeLogger.info(
+                      // Step already in terminal state — idempotent.
+                      stepRuntimeLogger.info(
                         'Tried retrying step, but step has already finished.',
                         {
-                          workflowRunId,
-                          stepId,
-                          stepName,
-                          message: stepRetryErr.message,
+                          errorName: stepRetryErr.name,
+                          errorMessage: stepRetryErr.message,
                         }
                       );
                       return;
@@ -839,13 +852,12 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 )
                 .catch((err: unknown) => {
                   if (EntityConflictError.is(err)) {
-                    runtimeLogger.info(
+                    // Step already in terminal state — idempotent.
+                    stepRuntimeLogger.info(
                       'Tried completing step, but step has already finished.',
                       {
-                        workflowRunId,
-                        stepId,
-                        stepName,
-                        message: err.message,
+                        errorName: err.name,
+                        errorMessage: err.message,
                       }
                     );
                     stepCompleted409 = true;
