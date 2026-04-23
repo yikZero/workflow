@@ -21,6 +21,20 @@ export interface ModuleOptions {
    * @example "nodejs24.x"
    */
   runtime?: string;
+
+  /**
+   * Sourcemap mode for generated workflow bundles. Accepts the same values
+   * as esbuild's `sourcemap` option: `true` / `'linked'`, `'inline'`,
+   * `'external'`, `'both'`, or `false`.
+   *
+   * If unset, the value of the `WORKFLOW_SOURCEMAP` environment variable is
+   * consulted. If neither is set, the builder's default (`'inline'`) is used.
+   *
+   * Setting this to `false` can dramatically reduce the generated function
+   * bundle size when deploying to Vercel (useful for staying under the 250MB
+   * function size limit).
+   */
+  sourcemap?: boolean | 'inline' | 'linked' | 'external' | 'both';
 }
 
 declare module 'nitro/types' {

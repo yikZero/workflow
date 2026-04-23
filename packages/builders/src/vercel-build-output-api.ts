@@ -79,11 +79,13 @@ export class VercelBuildOutputAPIBuilder extends BaseBuilder {
       tsconfigPath,
     });
 
-    // Create package.json and .vc-config.json for steps function
+    // Create package.json and .vc-config.json for steps function.
+    // Only enable sourcemap support on the Vercel runtime when we're actually
+    // emitting sourcemaps — enabling it otherwise just adds runtime overhead.
     await this.createPackageJson(stepsFuncDir, 'module');
     await this.createVcConfig(stepsFuncDir, {
       handler: 'index.mjs',
-      shouldAddSourcemapSupport: true,
+      shouldAddSourcemapSupport: this.sourcemapsEnabled,
       maxDuration: 'max',
       experimentalTriggers: [STEP_QUEUE_TRIGGER],
       runtime: this.config.runtime,

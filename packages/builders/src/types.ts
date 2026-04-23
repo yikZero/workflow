@@ -9,6 +9,19 @@ export const validBuildTargets = [
 export type BuildTarget = (typeof validBuildTargets)[number];
 
 /**
+ * Sourcemap mode for generated workflow bundles. Matches the values
+ * accepted by esbuild's `sourcemap` option.
+ *
+ * - `true` / `'linked'` — emit a separate `.map` file and append a
+ *   `//# sourceMappingURL=` comment pointing to it.
+ * - `'inline'` — inline the sourcemap as a base64 data URL in the bundle.
+ * - `'external'` — emit a separate `.map` file without a reference comment.
+ * - `'both'` — inline *and* emit a separate `.map` file.
+ * - `false` — do not emit a sourcemap at all.
+ */
+export type SourcemapMode = boolean | 'inline' | 'linked' | 'external' | 'both';
+
+/**
  * Common configuration options shared across all builder types.
  */
 interface BaseWorkflowConfig {
@@ -48,6 +61,24 @@ interface BaseWorkflowConfig {
 
   // Node.js runtime version for Vercel Functions (e.g., "nodejs22.x", "nodejs24.x")
   runtime?: string;
+
+  /**
+   * Sourcemap mode for generated workflow bundles (steps, workflows, webhook).
+   *
+   * Accepts the same values as esbuild's `sourcemap` option:
+   * `true` / `'linked'`, `'inline'`, `'external'`, `'both'`, or `false`.
+   *
+   * If unset, the value of the `WORKFLOW_SOURCEMAP` environment variable is
+   * consulted (valid values: `true`, `false`, `inline`, `linked`, `external`,
+   * `both`). If neither is set, sourcemaps default to `'inline'` so stack
+   * traces from step and workflow VM execution include original file names
+   * and line numbers.
+   *
+   * Setting this to `false` can dramatically reduce the generated function
+   * bundle size, which is useful for hitting Vercel's 250MB function size
+   * limit.
+   */
+  sourcemap?: SourcemapMode;
 }
 
 /**
