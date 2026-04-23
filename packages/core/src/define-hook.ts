@@ -92,7 +92,21 @@ export function defineHook<TInput, TOutput = TInput>({
 
       // if the `issues` field exists, the validation failed
       if (result.issues) {
-        throw new Error(JSON.stringify(result.issues, null, 2));
+        const lines = result.issues.map((issue) => {
+          const path = issue.path
+            ?.map((segment) =>
+              typeof segment === 'object' && segment !== null
+                ? String((segment as { key: PropertyKey }).key)
+                : String(segment)
+            )
+            .join('.');
+          return path
+            ? `  at "${path}": ${issue.message}`
+            : `  ${issue.message}`;
+        });
+        throw new Error(
+          `Hook payload did not match the defined schema:\n${lines.join('\n')}`
+        );
       }
 
       return await resumeHook<TOutput>(token, result.value);
