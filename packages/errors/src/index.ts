@@ -219,6 +219,42 @@ export class WorkflowRuntimeError extends WorkflowError {
   }
 }
 
+interface WorkflowBuildErrorOptions extends ErrorOptions {
+  /**
+   * An optional actionable hint appended to the main message, explaining how
+   * the user can resolve the failure. Shown after a blank line.
+   */
+  hint?: string;
+}
+
+/**
+ * Thrown when the workflow build pipeline (esbuild, SWC transform, file
+ * discovery, bundler integration) fails in a way the user can act on.
+ *
+ * This is distinct from `WorkflowRuntimeError` (which is raised at runtime
+ * by the workflow engine) — `WorkflowBuildError` fires during `pnpm build`,
+ * `next build`, or equivalent, before any workflow has started executing.
+ *
+ * Prefer attaching a short, actionable `hint` (e.g. `run \`pnpm install workflow\``)
+ * as plain text — the rendering layer is responsible for any styling or
+ * "hint:" label. Keeping `hint` plain keeps it useful in non-TTY contexts
+ * (CI logs, structured error serialization) where ANSI escapes are noise.
+ */
+export class WorkflowBuildError extends WorkflowError {
+  readonly hint?: string;
+
+  constructor(message: string, options?: WorkflowBuildErrorOptions) {
+    const body = options?.hint ? `${message}\n\n${options.hint}` : message;
+    super(body, { cause: options?.cause });
+    this.name = 'WorkflowBuildError';
+    this.hint = options?.hint;
+  }
+
+  static is(value: unknown): value is WorkflowBuildError {
+    return isError(value) && value.name === 'WorkflowBuildError';
+  }
+}
+
 interface SerializationErrorOptions extends ErrorOptions {
   /**
    * An optional actionable hint appended to the main message, explaining how
