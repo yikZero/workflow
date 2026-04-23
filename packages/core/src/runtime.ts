@@ -1,5 +1,6 @@
 import {
   EntityConflictError,
+  HookNotFoundError,
   RUN_ERROR_CODES,
   RunExpiredError,
   WorkflowRuntimeError,
@@ -125,6 +126,7 @@ export function workflowEntrypoint(
           traceCarrier: traceContext,
           requestedAt,
           runInput,
+          hookInput,
         } = WorkflowInvokePayloadSchema.parse(message_);
         const { requestId } = metadata;
         // Extract the workflow name from the topic name
@@ -447,6 +449,85 @@ export function workflowEntrypoint(
                         continue;
                       }
                       throw err;
+                    }
+                  }
+
+                  // --- Resilient resume: materialize missing hook_received ---
+                  // When `resumeHook()` fires its hook_received event write and
+                  // queue dispatch in parallel, the event write may fail with
+                  // a transient 429/5xx while the queue dispatch succeeds.
+                  // In that case `hookInput` is present on the queue payload,
+                  // carrying the dehydrated payload + a client-minted
+                  // idempotency key (`resumeId`). If no existing hook_received
+                  // event already carries that `resumeId`, we materialize one
+                  // here so the workflow replay sees the payload. Mirrors
+                  // `start()`'s resilient path for run_created → run_started.
+                  if (hookInput) {
+                    const alreadyMaterialized = events.some(
+                      (e) =>
+                        e.eventType === 'hook_received' &&
+                        e.correlationId === hookInput.hookId &&
+                        (e.eventData as { resumeId?: string } | undefined)
+                          ?.resumeId === hookInput.resumeId
+                    );
+                    if (!alreadyMaterialized) {
+                      try {
+                        const result = await world.events.create(
+                          runId,
+                          {
+                            eventType: 'hook_received',
+                            specVersion:
+                              workflowRun.specVersion ?? SPEC_VERSION_CURRENT,
+                            correlationId: hookInput.hookId,
+                            eventData: {
+                              payload: hookInput.payload as any,
+                              resumeId: hookInput.resumeId,
+                            },
+                          },
+                          { requestId }
+                        );
+                        if (result.event) {
+                          events.push(result.event);
+                        }
+                        runtimeLogger.warn(
+                          'Materialized hook_received event from queue payload (resilient resume)',
+                          {
+                            workflowRunId: runId,
+                            hookId: hookInput.hookId,
+                            resumeId: hookInput.resumeId,
+                          }
+                        );
+                        span?.setAttributes({
+                          ...Attribute.HookResilientResumeMaterialized(true),
+                        });
+                      } catch (err) {
+                        if (EntityConflictError.is(err)) {
+                          // Another queue delivery already materialized this
+                          // hook_received event — safe to ignore.
+                          runtimeLogger.info(
+                            'Hook resilient-resume materialization skipped (already exists)',
+                            {
+                              workflowRunId: runId,
+                              hookId: hookInput.hookId,
+                              resumeId: hookInput.resumeId,
+                            }
+                          );
+                        } else if (HookNotFoundError.is(err)) {
+                          // The hook was disposed between resumeHook() and
+                          // this queue delivery. Drop the resume — there is
+                          // no active awaiter to deliver it to.
+                          runtimeLogger.warn(
+                            'Hook was disposed before resilient resume could materialize — dropping payload',
+                            {
+                              workflowRunId: runId,
+                              hookId: hookInput.hookId,
+                              resumeId: hookInput.resumeId,
+                            }
+                          );
+                        } else {
+                          throw err;
+                        }
+                      }
                     }
                   }
 

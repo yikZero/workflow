@@ -1,3 +1,4 @@
+import { ThrottleError, WorkflowWorldError } from '@workflow/errors';
 import type {
   Event,
   HealthCheckPayload,
@@ -16,6 +17,22 @@ import * as Attribute from '../telemetry/semantic-conventions.js';
 import { getSpanKind, trace } from '../telemetry.js';
 import { version as workflowCoreVersion } from '../version.js';
 import { getWorld } from './world.js';
+
+/**
+ * Checks if an error from events.create() is retryable via the queue-payload
+ * fallback path. Used by `start()` (resilient start — run_created → run_started
+ * fallback) and `resumeHook()` (resilient resume — hook_received fallback
+ * materialized by the workflow runtime from `hookInput` on the queue message).
+ *
+ * - ThrottleError (429): rate limited, will likely succeed later
+ * - WorkflowWorldError with status >= 500: transient server error
+ */
+export function isRetryableEventError(err: unknown): boolean {
+  if (ThrottleError.is(err)) return true;
+  if (WorkflowWorldError.is(err) && err.status && err.status >= 500)
+    return true;
+  return false;
+}
 
 /** Default timeout for health checks in milliseconds */
 const DEFAULT_HEALTH_CHECK_TIMEOUT = 30_000;

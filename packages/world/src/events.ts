@@ -165,6 +165,14 @@ const HookReceivedEventSchema = BaseEventSchema.extend({
   correlationId: z.string(),
   eventData: z.object({
     payload: SerializedDataSchema,
+    /**
+     * Optional idempotency key used by the resilient resumeHook() path.
+     * When present, the workflow runtime uses this to dedup a hook_received
+     * event that may have been written both directly (by resumeHook) and by
+     * the runtime's queue-payload fallback. Matches `HookInput.resumeId` on
+     * the WorkflowInvokePayload.
+     */
+    resumeId: z.string().optional(),
   }),
 });
 

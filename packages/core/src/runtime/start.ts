@@ -1,10 +1,5 @@
 import { waitUntil } from '@vercel/functions';
-import {
-  EntityConflictError,
-  ThrottleError,
-  WorkflowRuntimeError,
-  WorkflowWorldError,
-} from '@workflow/errors';
+import { EntityConflictError, WorkflowRuntimeError } from '@workflow/errors';
 import type { WorkflowInvokePayload, World } from '@workflow/world';
 import {
   isLegacySpecVersion,
@@ -20,7 +15,7 @@ import * as Attribute from '../telemetry/semantic-conventions.js';
 import { serializeTraceCarrier, trace } from '../telemetry.js';
 import { waitedUntil } from '../util.js';
 import { version as workflowCoreVersion } from '../version.js';
-import { getWorkflowQueueName } from './helpers.js';
+import { getWorkflowQueueName, isRetryableEventError } from './helpers.js';
 import { Run } from './run.js';
 import { getWorld } from './world.js';
 
@@ -269,7 +264,7 @@ export async function start<TArgs extends unknown[], TResult>(
           // the run creation call gets a cold start or other slowdown, and the queue
           // + run_started call completes faster. We expect this to be <=1% of cases.
           // In this case, we can safely return.
-        } else if (isRetryableStartError(err)) {
+        } else if (isRetryableEventError(err)) {
           // 429 (ThrottleError) and 5xx (WorkflowWorldError with status >= 500)
           // are retryable — the run was accepted via the queue and creation
           // will be re-tried by the runtime when it calls run_started.
@@ -320,17 +315,4 @@ export async function start<TArgs extends unknown[], TResult>(
       return new Run<TResult>(runId, { resilientStart });
     });
   });
-}
-
-/**
- * Checks if an error from events.create (run_created) is retryable,
- * meaning the queue can re-try creation later via the run_started path.
- * - ThrottleError (429): rate limited, will succeed later
- * - WorkflowWorldError with status >= 500: server error, will succeed later
- */
-function isRetryableStartError(err: unknown): boolean {
-  if (ThrottleError.is(err)) return true;
-  if (WorkflowWorldError.is(err) && err.status && err.status >= 500)
-    return true;
-  return false;
 }

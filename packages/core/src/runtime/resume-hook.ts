@@ -9,11 +9,14 @@ import {
   isLegacySpecVersion,
   SPEC_VERSION_CURRENT,
   SPEC_VERSION_LEGACY,
+  SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
   type WorkflowInvokePayload,
   type WorkflowRun,
 } from '@workflow/world';
+import { monotonicFactory } from 'ulid';
 import { getRunCapabilities } from '../capabilities.js';
 import { type CryptoKey, importKey } from '../encryption.js';
+import { runtimeLogger } from '../logger.js';
 import {
   dehydrateStepReturnValue,
   hydrateStepArguments,
@@ -23,8 +26,11 @@ import { WEBHOOK_RESPONSE_WRITABLE } from '../symbols.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 import { getSpanContextForTraceCarrier, trace } from '../telemetry.js';
 import { waitedUntil } from '../util.js';
-import { getWorkflowQueueName } from './helpers.js';
+import { getWorkflowQueueName, isRetryableEventError } from './helpers.js';
 import { getWorld } from './world.js';
+
+/** ULID generator for client-side resumeId generation */
+const ulid = monotonicFactory();
 
 /**
  * Internal helper that returns the hook, the associated workflow run,
@@ -63,15 +69,51 @@ export async function getHookByToken(token: string): Promise<Hook> {
 }
 
 /**
+ * A hook returned by {@link resumeHook}. Extends the base {@link Hook} entity
+ * with a transient flag indicating whether the resume took the resilient
+ * fallback path.
+ */
+export type ResumedHook = Hook & {
+  /**
+   * When `true`, the direct `hook_received` event write failed with a
+   * transient error (429/5xx) but the queue dispatch succeeded. The resume
+   * will still land via the workflow runtime's queue-payload fallback path
+   * (the runtime materializes the missing `hook_received` event from
+   * `hookInput` on the queue message). Callers can treat this as "accepted,
+   * will deliver eventually" — the same way `start()` returns a `Run` with
+   * `resilientStart` set when `run_created` failed.
+   *
+   * When `false` or absent, both the direct event write and the queue
+   * dispatch succeeded normally.
+   */
+  resilientResume?: boolean;
+};
+
+/**
  * Resumes a workflow run by sending a payload to a hook identified by its token.
  *
  * This function is called externally (e.g., from an API route or server action)
  * to send data to a hook and resume the associated workflow run.
  *
+ * ## Resilient resume
+ *
+ * `resumeHook()` fires the `hook_received` event creation and the workflow
+ * queue dispatch in parallel. If the event creation fails with a retryable
+ * error (429/5xx) but the queue dispatch succeeds, the workflow runtime will
+ * materialize the missing `hook_received` event from the payload carried on
+ * the queue message — the returned hook has `resilientResume: true` to
+ * signal this fallback path was taken. This mirrors the resilient-start
+ * behavior of {@link start}.
+ *
+ * Both write paths carry the same client-minted `resumeId` as an idempotency
+ * key; the runtime uses it to avoid double-delivering the payload.
+ *
  * @param tokenOrHook - The unique token identifying the hook, or the hook object itself
  * @param payload - The data payload to send to the hook
- * @returns Promise resolving to the hook
- * @throws Error if the hook is not found or if there's an error during the process
+ * @returns Promise resolving to the hook, with `resilientResume: true` when
+ *   the resilient fallback path was taken.
+ * @throws Error if the hook is not found, if the queue dispatch fails, or if
+ *   there's a non-retryable error during event creation.
  *
  * @example
  *
@@ -95,7 +137,7 @@ export async function resumeHook<T = any>(
   tokenOrHook: string | Hook,
   payload: T,
   encryptionKeyOverride?: CryptoKey
-): Promise<Hook> {
+): Promise<ResumedHook> {
   return await waitedUntil(() => {
     return trace('hook.resume', async (span) => {
       const world = await getWorld();
@@ -156,20 +198,6 @@ export async function resumeHook<T = any>(
           })
         );
 
-        // Create a hook_received event with the payload
-        await world.events.create(
-          hook.runId,
-          {
-            eventType: 'hook_received',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: hook.hookId,
-            eventData: {
-              payload: dehydratedPayload,
-            },
-          },
-          { v1Compat }
-        );
-
         span?.setAttributes({
           ...Attribute.WorkflowName(workflowRun.workflowName),
         });
@@ -183,8 +211,63 @@ export async function resumeHook<T = any>(
           }
         }
 
-        // Re-trigger the workflow against the deployment ID associated
-        // with the workflow run that the hook belongs to
+        // Mint a client-side idempotency key. When the resilient path fires
+        // (events.create fails but queue succeeds), both the direct write
+        // and the runtime's queue-payload fallback use this key so the
+        // runtime can dedup any hook_received event that already carries it.
+        const resumeId = ulid();
+
+        // Only carry `hookInput` on the queue payload for runs whose
+        // deployment supports the CBOR queue transport. Older deployments
+        // use JSON-only transport which cannot carry binary payloads
+        // (Uint8Array). For such deployments, fall back to today's behavior
+        // where the runtime cannot materialize hook_received from the queue.
+        const runSpecVersion = workflowRun.specVersion ?? SPEC_VERSION_LEGACY;
+        const canCarryHookInput =
+          runSpecVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT;
+
+        // First, attempt the direct hook_received event write. This is
+        // sequential (not parallel with queue dispatch) to avoid a race
+        // where the queue handler processes the message before the event
+        // write has committed, which would otherwise cause the runtime
+        // fallback to materialize a duplicate hook_received event.
+        //
+        // - If the write succeeds, we queue WITHOUT `hookInput` — the
+        //   runtime has nothing to materialize and will just replay the run.
+        // - If the write fails with a retryable error (429/5xx) on a
+        //   CBOR-capable deployment, we queue WITH `hookInput` so the
+        //   runtime can materialize the missing event (resilient resume).
+        // - If the write fails with any other error, we propagate.
+        let eventWriteFailed = false;
+        let eventWriteError: unknown;
+        try {
+          await world.events.create(
+            hook.runId,
+            {
+              eventType: 'hook_received',
+              specVersion: SPEC_VERSION_CURRENT,
+              correlationId: hook.hookId,
+              eventData: {
+                payload: dehydratedPayload,
+                // Include the idempotency key so the runtime's fallback
+                // path can dedup on re-delivery of the queue message.
+                ...(canCarryHookInput ? { resumeId } : {}),
+              },
+            },
+            { v1Compat }
+          );
+        } catch (err) {
+          if (!canCarryHookInput || !isRetryableEventError(err)) {
+            // Non-retryable, or legacy spec version (no fallback available).
+            throw err;
+          }
+          eventWriteFailed = true;
+          eventWriteError = err;
+        }
+
+        // Re-trigger the workflow. Attach `hookInput` only when the direct
+        // event write failed — otherwise the runtime's fallback path has
+        // nothing to materialize and we avoid the dedup race.
         await world.queue(
           getWorkflowQueueName(workflowRun.workflowName),
           {
@@ -192,14 +275,46 @@ export async function resumeHook<T = any>(
             // attach the trace carrier from the workflow run
             traceCarrier:
               workflowRun.executionContext?.traceCarrier ?? undefined,
+            ...(eventWriteFailed && canCarryHookInput
+              ? {
+                  hookInput: {
+                    hookId: hook.hookId,
+                    resumeId,
+                    payload: dehydratedPayload,
+                  },
+                }
+              : {}),
           } satisfies WorkflowInvokePayload,
           {
             deploymentId: workflowRun.deploymentId,
-            specVersion: workflowRun.specVersion ?? SPEC_VERSION_LEGACY,
+            specVersion: runSpecVersion,
           }
         );
 
-        return hook;
+        if (eventWriteFailed) {
+          runtimeLogger.warn(
+            'Hook event creation failed, but the workflow was re-triggered via the queue. ' +
+              'The hook_received event will be materialized by the runtime via the resilient resume path.',
+            {
+              workflowRunId: hook.runId,
+              hookId: hook.hookId,
+              resumeId,
+              error:
+                eventWriteError instanceof Error
+                  ? eventWriteError.message
+                  : String(eventWriteError),
+            }
+          );
+        }
+
+        span?.setAttributes({
+          ...Attribute.HookResilientResume(eventWriteFailed),
+        });
+
+        if (eventWriteFailed) {
+          return { ...hook, resilientResume: true } satisfies ResumedHook;
+        }
+        return hook satisfies ResumedHook;
       } catch (err) {
         span?.setAttributes({
           ...Attribute.HookToken(
