@@ -12,6 +12,7 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { classifyRunError } from './classify-error.js';
+import { describeError } from './describe-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
@@ -362,12 +363,18 @@ export function workflowEntrypoint(
                       // Include the stack directly in the message so it
                       // surfaces in stdout even when structured logging is
                       // being flattened (e.g. Vercel log drain).
+                      const description = describeError(err);
                       runLogger.error(
                         `Fatal runtime error during workflow setup\n${err.stack}`,
                         {
+                          errorCode: description.errorCode,
+                          errorAttribution: description.attribution,
                           errorName: err.name,
                           errorMessage: err.message,
                           errorStack: err.stack,
+                          ...(description.hint
+                            ? { hint: description.hint }
+                            : {}),
                         }
                       );
                       try {
@@ -569,15 +576,22 @@ export function workflowEntrypoint(
                     // internal issue (corrupted event log, missing data);
                     // everything else is a user code error.
                     const errorCode = classifyRunError(err);
+                    const description = describeError(err);
+                    const framing =
+                      description.attribution === 'sdk'
+                        ? `Workflow "${workflowName}" failed due to an SDK runtime error`
+                        : `Workflow "${workflowName}" threw`;
 
                     // Use the stack as the primary message so it shows up
                     // in flattened logs without structured metadata.
                     runLogger.error(
-                      errorStack || 'Unknown error encountered in workflow',
+                      `${framing}\n${errorStack || 'Unknown error encountered in workflow'}`,
                       {
                         errorCode,
+                        errorAttribution: description.attribution,
                         errorName,
                         errorMessage,
+                        ...(description.hint ? { hint: description.hint } : {}),
                       }
                     );
 

@@ -13,6 +13,7 @@ import {
 import { pluralize } from '@workflow/utils';
 import { getPort } from '@workflow/utils/get-port';
 import { SPEC_VERSION_CURRENT, StepInvokePayloadSchema } from '@workflow/world';
+import { describeError } from '../describe-error.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger, stepLogger } from '../logger.js';
 import { getStepFunction } from '../private.js';
@@ -593,12 +594,19 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
               });
 
               if (isFatal) {
+                const description = describeError(err);
                 stepLogger.error(
-                  'Encountered FatalError while executing step, bubbling up to parent workflow',
+                  description.attribution === 'sdk'
+                    ? `Step "${stepName}" failed with a FatalError from the SDK runtime — bubbling up to parent workflow`
+                    : `Step "${stepName}" threw a FatalError — bubbling up to parent workflow`,
                   {
                     workflowRunId,
                     stepName,
+                    errorAttribution: description.attribution,
+                    errorName: normalizedError.name,
+                    errorMessage: normalizedError.message,
                     errorStack: normalizedStack,
+                    ...(description.hint ? { hint: description.hint } : {}),
                   }
                 );
                 // Fail the step via event (event-sourced architecture)
@@ -650,8 +658,11 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 if (currentAttempt >= maxRetries + 1) {
                   // Max retries reached
                   const retryCount = step.attempt - 1;
+                  const description = describeError(err);
                   stepLogger.error(
-                    'Max retries reached, bubbling error to parent workflow',
+                    description.attribution === 'sdk'
+                      ? `Step "${stepName}" hit max retries on an SDK runtime error — bubbling to parent workflow`
+                      : `Step "${stepName}" hit max retries — bubbling error thrown by your step to the parent workflow`,
                     {
                       workflowRunId,
                       workflowName,
@@ -659,9 +670,11 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                       stepName,
                       attempt: step.attempt,
                       retryCount,
+                      errorAttribution: description.attribution,
                       errorName: normalizedError.name,
                       errorMessage: normalizedError.message,
                       errorStack: normalizedStack,
+                      ...(description.hint ? { hint: description.hint } : {}),
                     }
                   );
                   const errorMessage = `Step "${stepName}" failed after ${maxRetries} ${pluralize('retry', 'retries', maxRetries)}: ${normalizedError.message}`;
