@@ -143,9 +143,20 @@ export function workflowEntrypoint(
         const runLogger = runtimeLogger.forRun(runId, workflowName);
 
         if (metadata.attempt > MAX_QUEUE_DELIVERIES) {
+          const maxDeliveriesDescription = describeError(
+            undefined,
+            RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED
+          );
           runLogger.error(
             `Workflow handler exceeded max deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
-            { attempt: metadata.attempt }
+            {
+              attempt: metadata.attempt,
+              errorCode: maxDeliveriesDescription.errorCode,
+              errorAttribution: maxDeliveriesDescription.attribution,
+              ...(maxDeliveriesDescription.hint
+                ? { hint: maxDeliveriesDescription.hint }
+                : {}),
+            }
           );
           try {
             const world = await getWorld();
@@ -208,12 +219,21 @@ export function workflowEntrypoint(
               process.exit(1);
             }
 
+            const replayTimeoutDescription = describeError(
+              undefined,
+              RUN_ERROR_CODES.REPLAY_TIMEOUT
+            );
             runLogger.error(
               'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
               {
                 timeoutMs: REPLAY_TIMEOUT_MS,
                 attempt: metadata.attempt,
                 maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+                errorCode: replayTimeoutDescription.errorCode,
+                errorAttribution: replayTimeoutDescription.attribution,
+                ...(replayTimeoutDescription.hint
+                  ? { hint: replayTimeoutDescription.hint }
+                  : {}),
               }
             );
 
@@ -576,7 +596,7 @@ export function workflowEntrypoint(
                     // internal issue (corrupted event log, missing data);
                     // everything else is a user code error.
                     const errorCode = classifyRunError(err);
-                    const description = describeError(err);
+                    const description = describeError(err, errorCode);
                     const framing =
                       description.attribution === 'sdk'
                         ? `Workflow "${workflowName}" failed due to an SDK runtime error`

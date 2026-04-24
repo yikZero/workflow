@@ -1,5 +1,5 @@
 ---
-'@workflow/core': patch
+"@workflow/core": patch
 ---
 
 Add presentation-only `describeError` helper that computes user vs SDK error

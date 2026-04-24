@@ -5,6 +5,12 @@ import {
   WorkflowRuntimeError,
 } from '@workflow/errors';
 import { classifyRunError } from './classify-error.js';
+import {
+  NotInStepContextError,
+  NotInWorkflowContextError,
+  NotInWorkflowOrStepContextError,
+  UnavailableInWorkflowContextError,
+} from './context-errors.js';
 
 /**
  * Attribution of a workflow/step failure for presentation.
@@ -29,12 +35,14 @@ export interface ErrorDescription {
   hint?: string;
 }
 
-const CONTEXT_ERROR_NAMES = new Set([
-  'NotInWorkflowContextError',
-  'NotInStepContextError',
-  'NotInWorkflowOrStepContextError',
-  'UnavailableInWorkflowContextError',
-]);
+function isContextViolationError(err: unknown): boolean {
+  return (
+    err instanceof NotInWorkflowContextError ||
+    err instanceof NotInStepContextError ||
+    err instanceof NotInWorkflowOrStepContextError ||
+    err instanceof UnavailableInWorkflowContextError
+  );
+}
 
 /**
  * Describe an error for user-facing presentation. Purely informational —
@@ -50,23 +58,31 @@ const CONTEXT_ERROR_NAMES = new Set([
  *   describe a user mistake.
  * - `WorkflowRuntimeError` (and subclasses like `StepNotRegisteredError`)
  *   indicates an internal SDK invariant broke — surface that as `sdk`.
+ *
+ * @param err The error value thrown by the workflow / step.
+ * @param errorCode Optional precomputed error code. Callers that already
+ *   know the code (e.g. `REPLAY_TIMEOUT` or `MAX_DELIVERIES_EXCEEDED`, which
+ *   `classifyRunError` can't derive from the error alone) should pass it so
+ *   the attribution and hint reflect the actual failure category.
  */
-export function describeError(err: unknown): ErrorDescription {
-  const errorCode = classifyRunError(err);
-  const name = err instanceof Error ? err.name : undefined;
+export function describeError(
+  err: unknown,
+  errorCode?: RunErrorCode
+): ErrorDescription {
+  const effectiveCode = errorCode ?? classifyRunError(err);
 
   if (SerializationError.is(err)) {
     return {
       attribution: 'user',
-      errorCode,
+      errorCode: effectiveCode,
       hint: 'A value passed across a workflow/step boundary could not be serialized. See the error message for the offending path and the Learn More link for details.',
     };
   }
 
-  if (name && CONTEXT_ERROR_NAMES.has(name)) {
+  if (isContextViolationError(err)) {
     return {
       attribution: 'user',
-      errorCode,
+      errorCode: effectiveCode,
       hint: 'A workflow-only or step-only API was called from the wrong context. The error message includes the exact API and how to move the call.',
     };
   }
@@ -74,26 +90,26 @@ export function describeError(err: unknown): ErrorDescription {
   if (err instanceof WorkflowRuntimeError) {
     return {
       attribution: 'sdk',
-      errorCode,
+      errorCode: effectiveCode,
       hint: 'This is an internal workflow SDK error, not a bug in your code. If it keeps happening, please report it with the stack trace and the runId.',
     };
   }
 
-  if (errorCode === RUN_ERROR_CODES.REPLAY_TIMEOUT) {
+  if (effectiveCode === RUN_ERROR_CODES.REPLAY_TIMEOUT) {
     return {
       attribution: 'sdk',
-      errorCode,
+      errorCode: effectiveCode,
       hint: 'The workflow replay took too long. This usually means the event log is unusually large or the workflow function is doing heavy synchronous work between step boundaries.',
     };
   }
 
-  if (errorCode === RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED) {
+  if (effectiveCode === RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED) {
     return {
       attribution: 'sdk',
-      errorCode,
+      errorCode: effectiveCode,
       hint: 'The workflow queue exceeded its max-delivery budget. This usually indicates a persistent runtime failure — check the most recent stack traces for the underlying cause.',
     };
   }
 
-  return { attribution: 'user', errorCode };
+  return { attribution: 'user', errorCode: effectiveCode };
 }

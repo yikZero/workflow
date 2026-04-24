@@ -68,4 +68,33 @@ describe('describeError', () => {
     expect(result.attribution).toBe('sdk');
     expect(result.errorCode).toBe(RUN_ERROR_CODES.RUNTIME_ERROR);
   });
+
+  test('REPLAY_TIMEOUT via precomputed errorCode is attributed to the SDK', () => {
+    const result = describeError(undefined, RUN_ERROR_CODES.REPLAY_TIMEOUT);
+    expect(result.attribution).toBe('sdk');
+    expect(result.errorCode).toBe(RUN_ERROR_CODES.REPLAY_TIMEOUT);
+    expect(result.hint).toContain('replay took too long');
+  });
+
+  test('MAX_DELIVERIES_EXCEEDED via precomputed errorCode is attributed to the SDK', () => {
+    const result = describeError(
+      undefined,
+      RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED
+    );
+    expect(result.attribution).toBe('sdk');
+    expect(result.errorCode).toBe(RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED);
+    expect(result.hint).toContain('max-delivery budget');
+  });
+
+  test('precomputed errorCode wins over classifyRunError when both are provided', () => {
+    // A plain Error would classify as USER_ERROR, but passing REPLAY_TIMEOUT
+    // explicitly overrides that — useful for callers that know the failure
+    // category from the surrounding runtime context.
+    const result = describeError(
+      new Error('something'),
+      RUN_ERROR_CODES.REPLAY_TIMEOUT
+    );
+    expect(result.errorCode).toBe(RUN_ERROR_CODES.REPLAY_TIMEOUT);
+    expect(result.attribution).toBe('sdk');
+  });
 });
