@@ -1,5 +1,5 @@
 ---
-'@workflow/core': patch
+"@workflow/core": patch
 ---
 
 Cosmetic consistency pass on remaining `throw new Error(...)` call sites.
