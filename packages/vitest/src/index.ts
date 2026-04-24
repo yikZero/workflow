@@ -206,6 +206,10 @@ export async function setupWorkflowTests(
     createLazyHandler(join(outDir, 'steps.mjs'))
   );
 
+  // Handlers must be registered before start(): if recoverActiveRuns is ever
+  // re-enabled here (or plumbed through from a caller), start() re-enqueues
+  // pending runs and the queue begins dispatching. Registering after start
+  // would race handler installation against that dispatch.
   await world.start?.();
   setWorld(world);
 }

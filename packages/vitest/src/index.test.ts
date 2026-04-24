@@ -1,7 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createLocalWorld = vi.fn();
@@ -105,7 +104,7 @@ describe('@workflow/vitest', () => {
       path.join(os.tmpdir(), 'workflow-vitest-build-')
     );
     tempDirs.push(rootDir);
-    const cwd = '/repo/app';
+    const cwd = path.resolve('/repo/app');
 
     await buildWorkflowTests({ cwd, rootDir });
 
@@ -180,10 +179,10 @@ describe('@workflow/vitest', () => {
   });
 
   it('provides project-scoped directory options without mutating process env', async () => {
-    const rootDir = '/tmp/workflow-vitest-root';
-    const dataDir = '/tmp/workflow-vitest-data';
-    const outDir = '/tmp/workflow-vitest-out';
-    const cwd = '/repo/app';
+    const rootDir = path.resolve('/tmp/workflow-vitest-root');
+    const dataDir = path.resolve('/tmp/workflow-vitest-data');
+    const outDir = path.resolve('/tmp/workflow-vitest-out');
+    const cwd = path.resolve('/repo/app');
 
     const { workflow } = await loadModule();
     const plugins = workflow({ cwd, rootDir, dataDir, outDir });
@@ -218,25 +217,30 @@ describe('@workflow/vitest', () => {
       buildWorkflowTests,
     }));
 
+    const cwd = path.resolve('/repo/app');
+    const rootDir = path.join(cwd, 'test-root');
+    const dataDir = path.join(rootDir, '.workflow-data');
+    const outDir = path.join(rootDir, '.workflow-vitest');
+
     const { setup } = await import('./global-setup.js');
     await setup({
       config: {
         provide: {
           __workflowVitestOptions: {
-            cwd: '/repo/app',
-            rootDir: '/repo/app/test-root',
-            dataDir: '/repo/app/test-root/.workflow-data',
-            outDir: '/repo/app/test-root/.workflow-vitest',
+            cwd,
+            rootDir,
+            dataDir,
+            outDir,
           },
         },
       },
     } as any);
 
     expect(buildWorkflowTests).toHaveBeenCalledWith({
-      cwd: '/repo/app',
-      rootDir: '/repo/app/test-root',
-      dataDir: '/repo/app/test-root/.workflow-data',
-      outDir: '/repo/app/test-root/.workflow-vitest',
+      cwd,
+      rootDir,
+      dataDir,
+      outDir,
     });
   });
 
@@ -245,13 +249,18 @@ describe('@workflow/vitest', () => {
     const setupWorkflowTests = vi.fn(async () => {});
     const teardownWorkflowTests = vi.fn(async () => {});
 
+    const cwd = path.resolve('/repo/app');
+    const rootDir = path.join(cwd, 'test-root');
+    const dataDir = path.join(rootDir, '.workflow-data');
+    const outDir = path.join(rootDir, '.workflow-vitest');
+
     vi.doMock('vitest', () => ({
       afterAll,
       inject: vi.fn(() => ({
-        cwd: resolve('/repo/app'),
-        rootDir: resolve('/repo/app', 'test-root'),
-        dataDir: resolve('/repo/app', 'test-root/.workflow-data'),
-        outDir: resolve('/repo/app', 'test-root/.workflow-vitest'),
+        cwd,
+        rootDir,
+        dataDir,
+        outDir,
       })),
     }));
     vi.doMock('./index.js', () => ({
@@ -262,10 +271,10 @@ describe('@workflow/vitest', () => {
     await import('./setup-file.js');
 
     expect(setupWorkflowTests).toHaveBeenCalledWith({
-      cwd: '/repo/app',
-      rootDir: '/repo/app/test-root',
-      dataDir: '/repo/app/test-root/.workflow-data',
-      outDir: '/repo/app/test-root/.workflow-vitest',
+      cwd,
+      rootDir,
+      dataDir,
+      outDir,
     });
     expect(afterAll).toHaveBeenCalledTimes(1);
 

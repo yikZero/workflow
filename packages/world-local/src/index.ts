@@ -84,11 +84,11 @@ export function createLocalWorld(args?: Partial<Config>): LocalWorld {
       const recoveryRuns = tag
         ? {
             ...storage.runs,
-            list: ((params?: any) =>
+            list: ((params) =>
               storage.runs.list({
                 ...params,
-                fileIdFilter: (fileId: string) => hasTag(fileId, tag),
-              } as any)) as typeof storage.runs.list,
+                fileIdFilter: (fileId) => hasTag(fileId, tag),
+              })) as typeof storage.runs.list,
           }
         : storage.runs;
       await reenqueueActiveRuns(recoveryRuns, queue.queue, 'world-local');
