@@ -1,5 +1,5 @@
 ---
-'@workflow/core': patch
+"@workflow/core": patch
 ---
 
 Improve workflow runtime error logging:
