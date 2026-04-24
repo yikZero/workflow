@@ -56,6 +56,11 @@ export function code(str: string): string {
   return chalk.italic(`${chalk.dim('`')}${str}${chalk.dim('`')}`);
 }
 
+/** Apply dim styling to a string (used for de-emphasizing separators). */
+export function dim(str: string): string {
+  return chalk.dim(str);
+}
+
 /**
  * Frame a title with one or more continuation lines, drawn with
  * box-drawing characters. The last content uses `╰▶`, others use `├▶`.
@@ -117,14 +122,18 @@ function buildUnderline(markers: Marker[]): string {
   const parts: string[] = [];
   let pos = 0;
   for (const marker of markers) {
-    const textLen = marker.endCol - marker.startCol;
+    // Treat zero-length markers as length 1 so we always emit a `┬` anchor
+    // for the explanation line and avoid a negative `String.repeat` count.
+    const textLen = Math.max(1, marker.endCol - marker.startCol);
     const midPoint = Math.floor(textLen / 2);
 
     if (marker.startCol > pos) {
       parts.push(' '.repeat(marker.startCol - pos));
       pos = marker.startCol;
     }
-    const segment = `${'─'.repeat(midPoint)}┬${'─'.repeat(textLen - midPoint - 1)}`;
+    const leftFill = '─'.repeat(midPoint);
+    const rightFill = '─'.repeat(Math.max(0, textLen - midPoint - 1));
+    const segment = `${leftFill}┬${rightFill}`;
     const colorFn = marker.color ?? identity;
     parts.push(colorFn(segment));
     pos += textLen;

@@ -1,3 +1,5 @@
+import { Ansi } from '@workflow/errors';
+
 export interface WorkflowMetadata {
   /**
    * The name of the workflow.
@@ -41,10 +43,18 @@ export function getWorkflowMetadata(): WorkflowMetadata {
   if (!ctx) {
     // Avoid importing NotInWorkflowOrStepContextError here — that module
     // imports from this file, so bringing it in eagerly would create a
-    // module-init cycle. The companion step/get-workflow-metadata.ts uses
-    // the structured class.
+    // module-init cycle. Render the same Ansi framing inline to match the
+    // sibling `step/get-workflow-metadata.ts` path which uses the structured
+    // class.
     throw new Error(
-      '`getWorkflowMetadata()` can only be called inside a workflow or step function'
+      Ansi.frame(
+        `${Ansi.code('getWorkflowMetadata()')} can only be called inside a workflow or step function`,
+        [
+          Ansi.note(
+            'Read more about getWorkflowMetadata(): https://workflow-sdk.dev/docs/api-reference/workflow/get-workflow-metadata'
+          ),
+        ]
+      )
     );
   }
   return ctx;

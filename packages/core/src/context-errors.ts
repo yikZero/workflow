@@ -1,6 +1,5 @@
 import { Ansi } from '@workflow/errors';
 import {
-  getWorkflowMetadata,
   WORKFLOW_CONTEXT_SYMBOL,
   type WorkflowMetadata,
 } from './workflow/get-workflow-metadata.js';
@@ -12,9 +11,11 @@ import {
  */
 type DocLink = `${string}: https://${string}`;
 
-/** Apply dim styling to the `workflow//` / `step//` separators in a name. */
+/** Apply dim styling to the `workflow/` / `step/` prefixes in a qualified name. */
 function ansifyName(name: string): string {
-  return name;
+  return name
+    .replace(/^workflow\//, `${Ansi.dim('workflow/')}`)
+    .replace(/^step\//, `${Ansi.dim('step/')}`);
 }
 
 /**
@@ -119,7 +120,3 @@ export class UnavailableInWorkflowContextError extends Error {
     );
   }
 }
-
-// Keep `getWorkflowMetadata` import live for future use (the error message
-// currently reads the symbol directly to avoid a circular throw).
-void getWorkflowMetadata;
