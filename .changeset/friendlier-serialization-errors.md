@@ -1,6 +1,6 @@
 ---
-'@workflow/core': patch
-'@workflow/errors': patch
+"@workflow/core": patch
+"@workflow/errors": patch
 ---
 
 Add `SerializationError` (with optional `hint` and docs link) and apply it to
