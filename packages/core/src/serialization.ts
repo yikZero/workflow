@@ -464,9 +464,8 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
 const FRAMED_STREAM_MAX_RECONNECTS = 10;
 
 /**
- * Wraps the length-prefix-framed byte stream emitted by workflow-server
- * (via WorkflowServerWritableStream → getSerializeStream) with transparent
- * auto-reconnect.
+ * Wraps the length-prefix-framed byte WorkflowServerReadableStream
+ * with transparent auto-reconnect.
  *
  * Every fully-decoded outer frame corresponds to exactly one server-side
  * chunk (the serialize transform enqueues one frame per workflow write, and
