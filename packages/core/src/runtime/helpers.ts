@@ -63,9 +63,10 @@ export interface HealthCheckResult {
   specVersion?: number;
   /**
    * `@workflow/core` version of the responding deployment, used for
-   * capability detection (see `getRunCapabilities`). Absent when the
-   * responding deployment is too old to advertise it (specVersion < 3
-   * health check responses are plain text without this field).
+   * capability detection (see `getRunCapabilities`). Omitted when the
+   * responding deployment did not provide the field as a string —
+   * for example, an older `@workflow/core` that predates this field,
+   * or a non-JSON plain-text health response.
    */
   workflowCoreVersion?: string;
 }

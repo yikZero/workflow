@@ -128,13 +128,16 @@ describe('healthCheck response parsing', () => {
     expect(result.workflowCoreVersion).toBe('5.0.0-beta.7');
   });
 
-  it('omits workflowCoreVersion when the response is missing the field (older deployments)', async () => {
+  it('omits workflowCoreVersion when the response does not include the field', async () => {
+    // Independent of specVersion — the field is omitted by any responder
+    // running an older `@workflow/core` that predates the addition of
+    // `workflowCoreVersion` to the health response payload.
     const world = makeWorldWithResponse(
       JSON.stringify({
         healthy: true,
         endpoint: 'workflow',
-        specVersion: 2,
-        // No workflowCoreVersion — simulates a deployment older than this PR
+        specVersion: 3,
+        // No workflowCoreVersion field
         timestamp: Date.now(),
       })
     );
@@ -142,7 +145,7 @@ describe('healthCheck response parsing', () => {
     const result = await healthCheck(world, 'workflow', { timeout: 1000 });
 
     expect(result.healthy).toBe(true);
-    expect(result.specVersion).toBe(2);
+    expect(result.specVersion).toBe(3);
     expect(result.workflowCoreVersion).toBeUndefined();
   });
 
@@ -165,10 +168,10 @@ describe('healthCheck response parsing', () => {
     expect(result.workflowCoreVersion).toBeUndefined();
   });
 
-  it('returns healthy with no fields for plain-text responses (legacy specVersion < 3)', async () => {
-    // Old deployments respond with plain text like
+  it('returns healthy with no fields for non-JSON plain-text responses', async () => {
+    // Some deployments respond with plain text like
     // 'Workflow SDK "..." endpoint is healthy'. The parser treats any
-    // non-empty text as healthy, with no version metadata.
+    // non-empty non-JSON text as healthy, with no version metadata.
     const world = makeWorldWithResponse(
       'Workflow SDK "workflow" endpoint is healthy'
     );
