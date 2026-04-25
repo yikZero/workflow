@@ -34,6 +34,7 @@ import { contextStorage } from './step/context-storage.js';
 import {
   BODY_INIT_SYMBOL,
   STABLE_ULID,
+  STREAM_FRAMING_SYMBOL,
   STREAM_NAME_SYMBOL,
   STREAM_TYPE_SYMBOL,
   WEBHOOK_RESPONSE_WRITABLE,
@@ -412,6 +413,144 @@ export function getDeserializeStream(
   return stream;
 }
 
+// ============================================================================
+// Byte-stream wire framing
+// ============================================================================
+//
+// Byte streams (`type: 'bytes'` ReadableStreams passed across boundaries)
+// are written to the underlying world's stream transport one user chunk at
+// a time. Without an in-band envelope, the reader sees a flat stream of
+// bytes — there is no way to tell where one user chunk ends and the next
+// begins, which makes mid-stream reconnect impossible (we don't know how
+// many server-side chunks have been consumed).
+//
+// To enable transparent reconnect, this PR introduces an opt-in wire
+// envelope that wraps each user chunk in a length-prefix:
+//
+//   [4-byte big-endian length][user payload bytes]
+//
+// The envelope is identical in shape to `getSerializeStream`'s framing,
+// but the payload here is *raw user bytes* — there is no inner
+// format-prefix, no devalue, no encryption. A framed byte stream stays
+// semantically a byte stream end-to-end; the framing is purely transport.
+//
+// The decision to use framing for a given stream is recorded in the
+// serialized stream ref (`framing: 'framed-v1'`), so both sides agree on
+// the wire format without runtime negotiation. Producers that target a
+// run whose deployment doesn't support framing (see `getRunCapabilities`
+// in capabilities.ts) emit raw bytes and a ref without the field — which
+// the reader treats as legacy raw bytes for backwards compatibility.
+
+/**
+ * Wire-framing format identifier carried in the serialized
+ * `ReadableStream` ref's `framing` field.
+ *
+ * - absent / `'raw'`: chunks are written to the transport verbatim
+ *   (legacy format — no auto-reconnect support).
+ * - `'framed-v1'`: each chunk is wrapped in a 4-byte big-endian length
+ *   prefix, allowing the reader to identify chunk boundaries and
+ *   transparently reconnect on transient stream errors.
+ */
+export type ByteStreamFraming = 'raw' | 'framed-v1';
+
+/**
+ * Wraps each chunk of a byte stream in a 4-byte big-endian length
+ * prefix. Used by the producer side of a framed byte-stream pipe.
+ *
+ * Empty chunks (length 0) are dropped — the resulting `[0x00 0x00 0x00 0x00]`
+ * frame would be ambiguous with the legacy "looks framed" detection in
+ * `getDeserializeStream`, and it carries no information.
+ */
+export function getByteFramingStream(): TransformStream<
+  Uint8Array,
+  Uint8Array
+> {
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      if (chunk.length === 0) return;
+      const frame = new Uint8Array(FRAME_HEADER_SIZE + chunk.length);
+      new DataView(frame.buffer).setUint32(0, chunk.length, false);
+      frame.set(chunk, FRAME_HEADER_SIZE);
+      controller.enqueue(frame);
+    },
+  });
+}
+
+/**
+ * Unwraps length-prefixed byte-stream frames back into the original user
+ * chunks. Used by the consumer side of a framed byte-stream pipe.
+ *
+ * Buffers across read boundaries — the transport may split a single
+ * frame across multiple reads (header in one chunk, payload in another)
+ * or coalesce multiple frames into a single read. The transform emits
+ * whole user chunks regardless of transport chunking.
+ *
+ * Errors the stream if the length header advertises a frame larger than
+ * `MAX_FRAME_SIZE` bytes, since that almost certainly indicates a
+ * misframed wire (e.g. a raw byte stream being fed through this transform
+ * by mistake) and we don't want to allocate an enormous buffer.
+ */
+export function getByteUnframingStream(): TransformStream<
+  Uint8Array,
+  Uint8Array
+> {
+  // Sanity cap: 100MB per chunk. Workflow byte chunks are typically far
+  // smaller; anything bigger almost certainly means we got a non-framed
+  // wire fed through this transform by mistake (e.g. legacy raw bytes
+  // routed to a framed reader).
+  const MAX_FRAME_SIZE = 100_000_000;
+  let buffer = new Uint8Array(0);
+
+  function appendToBuffer(data: Uint8Array) {
+    const next = new Uint8Array(buffer.length + data.length);
+    next.set(buffer, 0);
+    next.set(data, buffer.length);
+    buffer = next;
+  }
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      if (chunk.length > 0) appendToBuffer(chunk);
+
+      while (buffer.length >= FRAME_HEADER_SIZE) {
+        const frameLength = new DataView(
+          buffer.buffer,
+          buffer.byteOffset,
+          buffer.byteLength
+        ).getUint32(0, false);
+
+        if (frameLength > MAX_FRAME_SIZE) {
+          controller.error(
+            new WorkflowRuntimeError(
+              `Byte-stream frame length ${frameLength} exceeds maximum (${MAX_FRAME_SIZE}). ` +
+                `This usually means a non-framed byte stream is being read as framed.`,
+              { slug: 'serialization-failed' }
+            )
+          );
+          return;
+        }
+
+        const total = FRAME_HEADER_SIZE + frameLength;
+        if (buffer.length < total) break;
+
+        controller.enqueue(buffer.slice(FRAME_HEADER_SIZE, total));
+        buffer = buffer.slice(total);
+      }
+    },
+    flush(controller) {
+      if (buffer.length > 0) {
+        controller.error(
+          new WorkflowRuntimeError(
+            `Byte-stream ended with ${buffer.length} bytes of incomplete frame data. ` +
+              `The stream was truncated mid-frame.`,
+            { slug: 'serialization-failed' }
+          )
+        );
+      }
+    },
+  });
+}
+
 export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
   #reader?: ReadableStreamDefaultReader<Uint8Array>;
 
@@ -614,7 +753,21 @@ export interface SerializableSpecial {
   Int32Array: string; // base64 string
   Map: [any, any][];
   ReadableStream:
-    | { name: string; type?: 'bytes'; startIndex?: number }
+    | {
+        name: string;
+        type?: 'bytes';
+        startIndex?: number;
+        /**
+         * Wire-framing format for byte streams. See {@link ByteStreamFraming}
+         * and {@link getByteFramingStream} / {@link getByteUnframingStream}.
+         *
+         * Only meaningful when `type === 'bytes'`. Absent on object streams
+         * (which always use length-prefixed devalue framing) and on legacy
+         * byte streams written by SDKs that predate framing support — those
+         * are interpreted as `'raw'` by the consumer.
+         */
+        framing?: ByteStreamFraming;
+      }
     | { bodyInit: any };
   RegExp: { source: string; flags: string };
   Request: {
@@ -872,13 +1025,21 @@ function getCommonReducers(global: Record<string, any> = globalThis) {
  *
  * @param global
  * @param ops
+ * @param runId
+ * @param cryptoKey
+ * @param framedByteStreams - When `true`, byte streams (`type: 'bytes'`)
+ *   are wrapped in length-prefixed frames on the wire so the consumer
+ *   can reconnect on transient errors. Should match the target run's
+ *   capability — see `getRunCapabilities` in `capabilities.ts`. Defaults
+ *   to `false` for backwards compatibility with older runs.
  * @returns
  */
 export function getExternalReducers(
   global: Record<string, any> = globalThis,
   ops: Promise<void>[],
   runId: string,
-  cryptoKey: EncryptionKeyParam
+  cryptoKey: EncryptionKeyParam,
+  framedByteStreams = false
 ): Reducers {
   return {
     ...getCommonReducers(global),
@@ -897,13 +1058,23 @@ export function getExternalReducers(
 
       const writable = new WorkflowServerWritableStream(runId, name);
       if (type === 'bytes') {
-        ops.push(value.pipeTo(writable));
+        if (framedByteStreams) {
+          ops.push(value.pipeThrough(getByteFramingStream()).pipeTo(writable));
+        } else {
+          ops.push(value.pipeTo(writable));
+        }
       } else {
         ops.push(
           value
             .pipeThrough(
               getSerializeStream(
-                getExternalReducers(global, ops, runId, cryptoKey),
+                getExternalReducers(
+                  global,
+                  ops,
+                  runId,
+                  cryptoKey,
+                  framedByteStreams
+                ),
                 cryptoKey
               )
             )
@@ -913,6 +1084,7 @@ export function getExternalReducers(
 
       const s: SerializableSpecial['ReadableStream'] = { name };
       if (type) s.type = type;
+      if (type === 'bytes' && framedByteStreams) s.framing = 'framed-v1';
       return s;
     },
 
@@ -963,6 +1135,9 @@ export function getWorkflowReducers(
       const s: SerializableSpecial['ReadableStream'] = { name };
       const type = value[STREAM_TYPE_SYMBOL];
       if (type) s.type = type;
+      const framing: ByteStreamFraming | undefined =
+        value[STREAM_FRAMING_SYMBOL];
+      if (framing) s.framing = framing;
       return s;
     },
     WritableStream: (value) => {
@@ -989,7 +1164,8 @@ function getStepReducers(
   global: Record<string, any> = globalThis,
   ops: Promise<void>[],
   runId: string,
-  cryptoKey: EncryptionKeyParam
+  cryptoKey: EncryptionKeyParam,
+  framedByteStreams = false
 ): Reducers {
   return {
     ...getCommonReducers(global),
@@ -1007,21 +1183,40 @@ function getStepReducers(
       // name and type.
       let name = value[STREAM_NAME_SYMBOL];
       let type = value[STREAM_TYPE_SYMBOL];
+      // The framing symbol is set when a workflow VM revives a stream
+      // handle from a previous step (see `getWorkflowRevivers`). When
+      // present we must propagate the same framing choice on the way
+      // back out, since the bytes already on the server's stream are in
+      // that format — switching format mid-stream would corrupt them.
+      let framing: ByteStreamFraming | undefined = value[STREAM_FRAMING_SYMBOL];
 
       if (!name) {
         const streamId = ((global as any)[STABLE_ULID] || defaultUlid)();
         name = `strm_${streamId}`;
         type = getStreamType(value);
+        framing = type === 'bytes' && framedByteStreams ? 'framed-v1' : framing;
 
         const writable = new WorkflowServerWritableStream(runId, name);
         if (type === 'bytes') {
-          ops.push(value.pipeTo(writable));
+          if (framing === 'framed-v1') {
+            ops.push(
+              value.pipeThrough(getByteFramingStream()).pipeTo(writable)
+            );
+          } else {
+            ops.push(value.pipeTo(writable));
+          }
         } else {
           ops.push(
             value
               .pipeThrough(
                 getSerializeStream(
-                  getStepReducers(global, ops, runId, cryptoKey),
+                  getStepReducers(
+                    global,
+                    ops,
+                    runId,
+                    cryptoKey,
+                    framedByteStreams
+                  ),
                   cryptoKey
                 )
               )
@@ -1032,6 +1227,7 @@ function getStepReducers(
 
       const s: SerializableSpecial['ReadableStream'] = { name };
       if (type) s.type = type;
+      if (framing) s.framing = framing;
       return s;
     },
 
@@ -1246,13 +1442,19 @@ export function getExternalRevivers(
         value.startIndex
       );
       if (value.type === 'bytes') {
-        // For byte streams, use flushable pipe with lock polling
+        // For byte streams, use flushable pipe with lock polling.
+        // If the producer wrote framed bytes (framing === 'framed-v1'),
+        // unwrap the length-prefix envelope before handing chunks to
+        // the user. Absent / 'raw' framing means legacy raw bytes —
+        // pipe through unchanged for backwards compatibility.
         const state = createFlushableState();
         ops.push(state.promise);
 
-        // Create an identity transform to give the user a readable
+        // Create an identity (or unframing) transform to give the user a readable
         const { readable: userReadable, writable } =
-          new global.TransformStream();
+          value.framing === 'framed-v1'
+            ? getByteUnframingStream()
+            : new global.TransformStream();
 
         // Start the flushable pipe in the background
         flushablePipe(readable, writable, state).catch(() => {
@@ -1402,6 +1604,15 @@ export function getWorkflowRevivers(
           value: value.type,
           writable: false,
         },
+        // Carry the wire-framing decision through the workflow VM so
+        // that when the handle is later passed to a step (which reads
+        // the actual bytes from the server) we know whether to unframe.
+        // Defaults to undefined for streams whose serialized ref didn't
+        // carry the field — those are treated as legacy raw bytes.
+        [STREAM_FRAMING_SYMBOL]: {
+          value: value.framing,
+          writable: false,
+        },
       });
     },
     WritableStream: (value) => {
@@ -1537,13 +1748,19 @@ function getStepRevivers(
 
       const readable = new WorkflowServerReadableStream(runId, value.name);
       if (value.type === 'bytes') {
-        // For byte streams, use flushable pipe with lock polling
+        // For byte streams, use flushable pipe with lock polling.
+        // If the producer wrote framed bytes (framing === 'framed-v1'),
+        // unwrap the length-prefix envelope before handing chunks to
+        // the user step. Absent / 'raw' framing means legacy raw bytes —
+        // pipe through unchanged for backwards compatibility.
         const state = createFlushableState();
         ops.push(state.promise);
 
-        // Create an identity transform to give the user a readable
+        // Create an identity (or unframing) transform to give the user a readable
         const { readable: userReadable, writable } =
-          new global.TransformStream();
+          value.framing === 'framed-v1'
+            ? getByteUnframingStream()
+            : new global.TransformStream();
 
         // Start the flushable pipe in the background
         flushablePipe(readable, writable, state).catch(() => {
@@ -1676,6 +1893,10 @@ export async function maybeDecrypt(
  * @param ops - Promise array for stream operations
  * @param global - Global object for serialization context
  * @param v1Compat - Enable legacy v1 compatibility mode
+ * @param framedByteStreams - Whether the target run can decode wire-framed
+ *   byte streams. Should match the target deployment's capability — see
+ *   `getRunCapabilities` in `capabilities.ts`. Defaults to `false` for
+ *   backwards compatibility with older runs.
  * @returns The dehydrated value as binary data (Uint8Array) with format prefix
  */
 export async function dehydrateWorkflowArguments(
@@ -1684,10 +1905,14 @@ export async function dehydrateWorkflowArguments(
   key: CryptoKey | undefined,
   ops: Promise<void>[] = [],
   global: Record<string, any> = globalThis,
-  v1Compat = false
+  v1Compat = false,
+  framedByteStreams = false
 ): Promise<Uint8Array | unknown> {
   try {
-    const str = stringify(value, getExternalReducers(global, ops, runId, key));
+    const str = stringify(
+      value,
+      getExternalReducers(global, ops, runId, key, framedByteStreams)
+    );
     if (v1Compat) {
       return revive(str);
     }
@@ -1935,6 +2160,10 @@ export async function hydrateStepArguments(
  * @param ops - Promise array for stream operations
  * @param global - Global object for serialization context
  * @param v1Compat - Enable legacy v1 compatibility mode
+ * @param framedByteStreams - Whether the target run can decode wire-framed
+ *   byte streams. Should match the target deployment's capability — see
+ *   `getRunCapabilities` in `capabilities.ts`. Defaults to `false` for
+ *   backwards compatibility with older runs.
  * @returns The dehydrated value as binary data (Uint8Array) with format prefix
  */
 export async function dehydrateStepReturnValue(
@@ -1943,10 +2172,14 @@ export async function dehydrateStepReturnValue(
   key: CryptoKey | undefined,
   ops: Promise<any>[] = [],
   global: Record<string, any> = globalThis,
-  v1Compat = false
+  v1Compat = false,
+  framedByteStreams = false
 ): Promise<Uint8Array | unknown> {
   try {
-    const str = stringify(value, getStepReducers(global, ops, runId, key));
+    const str = stringify(
+      value,
+      getStepReducers(global, ops, runId, key, framedByteStreams)
+    );
     if (v1Compat) {
       return revive(str);
     }
