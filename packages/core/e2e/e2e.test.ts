@@ -1653,10 +1653,15 @@ describe('e2e', () => {
         timeout: 30000,
       });
       expect(workflowResult.healthy).toBe(true);
+      // The deployed app advertises its `@workflow/core` version so
+      // callers can derive capability metadata (see `getRunCapabilities`
+      // in `capabilities.ts`).
+      expect(typeof workflowResult.workflowCoreVersion).toBe('string');
 
       // Test step endpoint health check
       const stepResult = await healthCheck(world, 'step', { timeout: 30000 });
       expect(stepResult.healthy).toBe(true);
+      expect(typeof stepResult.workflowCoreVersion).toBe('string');
     }
   );
 
