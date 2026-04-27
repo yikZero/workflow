@@ -458,10 +458,10 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
 /**
  * Maximum consecutive reconnect attempts for a single framed stream session.
  * On serverfull backends, reconnects should only happen during transient errors.
- * For serverless backends, we set this constant so that we cover at least 10 minutes
- * even if the server would be limited to e.g. 1 minute per session.
+ * For serverless backends, we set this constant high enough to cover at least
+ * 10 minutes even if the server would be limited to e.g. 1 minute per session.
  */
-const FRAMED_STREAM_MAX_RECONNECTS = 10;
+const FRAMED_STREAM_MAX_RECONNECTS = 50;
 
 /**
  * Wraps the length-prefix-framed byte WorkflowServerReadableStream
@@ -594,7 +594,7 @@ export function createReconnectingFramedStream(
     cancel: async () => {
       if (reader) {
         await reader.cancel().catch((err) => {
-          console.warn("Error closing ReadableStream reader:", err)
+          console.warn('Error closing ReadableStream reader:', err);
         });
         reader = undefined;
       }
