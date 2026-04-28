@@ -70,17 +70,22 @@ const compilerOptions: ts.CompilerOptions = {
     // have "require" conditions that TS picks up incorrectly with Bundler resolution.
     workflow: [path.join(repoRoot, 'packages/workflow/dist/index')],
     'workflow/api': [path.join(repoRoot, 'packages/workflow/dist/api')],
+    'workflow/runtime': [path.join(repoRoot, 'packages/workflow/dist/runtime')],
     'workflow/errors': [
       path.join(repoRoot, 'packages/workflow/dist/internal/errors'),
     ],
     'workflow/observability': [
       path.join(repoRoot, 'packages/workflow/dist/observability'),
     ],
+    'workflow/next': [path.join(repoRoot, 'packages/workflow/dist/next.d.cts')],
     '@workflow/core': [path.join(repoRoot, 'packages/core/dist/index')],
     '@workflow/core/serialization-format': [
       path.join(repoRoot, 'packages/core/dist/serialization-format'),
     ],
     '@workflow/utils': [path.join(repoRoot, 'packages/utils/dist/index')],
+    '@workflow/utils/parse-name': [
+      path.join(repoRoot, 'packages/utils/dist/parse-name'),
+    ],
     '@workflow/ai': [path.join(repoRoot, 'packages/ai/dist/index')],
     '@workflow/ai/agent': [
       path.join(repoRoot, 'packages/ai/dist/agent/durable-agent'),

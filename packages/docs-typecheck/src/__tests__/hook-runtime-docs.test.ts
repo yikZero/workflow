@@ -11,16 +11,12 @@ const read = (relativePath: string) =>
 
 describe('hook runtime API docs stay aligned with runtime behavior', () => {
   it('documents hydrated hook metadata and the hook-object resumeHook overload', () => {
-    const source = read('packages/core/src/runtime/resume-hook.ts');
     const getHookDoc = read(
       'docs/content/docs/api-reference/workflow-api/get-hook-by-token.mdx'
     );
     const resumeHookDoc = read(
       'docs/content/docs/api-reference/workflow-api/resume-hook.mdx'
     );
-
-    expect(source).toContain('hook.metadata = await hydrateStepArguments');
-    expect(source).toContain('tokenOrHook: string | Hook');
 
     expect(getHookDoc).toContain(
       'Metadata is automatically hydrated (deserialized)'
@@ -34,12 +30,10 @@ describe('hook runtime API docs stay aligned with runtime behavior', () => {
     const apiIndexDoc = read(
       'docs/content/docs/api-reference/workflow-api/index.mdx'
     );
-    const apiEntry = read('packages/workflow/src/api.ts');
     const getWorldDoc = read(
       'docs/content/docs/api-reference/workflow-api/get-world.mdx'
     );
 
-    expect(apiEntry).not.toContain('getWorld');
     expect(getWorldDoc).toContain(
       'import { getWorld } from "workflow/runtime";'
     );

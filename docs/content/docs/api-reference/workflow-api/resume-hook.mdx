@@ -21,7 +21,7 @@ It creates a `hook_received` event and re-queues the workflow so execution can c
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
-import { HookNotFoundError } from "workflow/internal/errors";
+import { HookNotFoundError } from "workflow/errors";
 
 export async function POST(request: Request) {
   const { token, data } = await request.json();
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
 <TSDoc
 definition={`
 import { resumeHook } from "workflow/api";
-import { HookNotFoundError } from "workflow/internal/errors";
+import { HookNotFoundError } from "workflow/errors";
 export default resumeHook;`}
 showSections={["parameters"]}
 />
@@ -103,7 +103,7 @@ Using `resumeHook` in a basic API route to resume a hook:
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
-import { HookNotFoundError } from "workflow/internal/errors";
+import { HookNotFoundError } from "workflow/errors";
 
 export async function POST(request: Request) {
   const { token, data } = await request.json();
@@ -130,7 +130,7 @@ Defining a payload type and using `resumeHook` to resume a hook with type safety
 
 ```typescript lineNumbers
 import { resumeHook } from "workflow/api";
-import { HookNotFoundError } from "workflow/internal/errors";
+import { HookNotFoundError } from "workflow/errors";
 
 type ApprovalPayload = {
   approved: boolean;
@@ -164,7 +164,7 @@ Using `resumeHook` in Next.js server actions to resume a hook:
 "use server";
 
 import { resumeHook } from "workflow/api";
-import { HookNotFoundError } from "workflow/internal/errors";
+import { HookNotFoundError } from "workflow/errors";
 
 export async function approveRequest(token: string, approved: boolean) {
   try {
@@ -182,6 +182,7 @@ Instead of a token string, you can pass a `Hook` object directly (e.g. one retur
 
 ```typescript lineNumbers
 import { getHookByToken, resumeHook } from "workflow/api";
+import { HookNotFoundError } from "workflow/errors";
 
 export async function POST(request: Request) {
   const { token, data } = await request.json();
