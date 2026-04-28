@@ -202,14 +202,16 @@ When using a negative `initialStartIndex`, the reconnection endpoint **must** re
 `WorkflowChatTransport` shapes its POST body differently than the default AI SDK transport. If you need custom fields in the request body (such as a model selector, temperature, or session metadata), use the `prepareSendMessagesRequest` hook to override the request:
 
 ```typescript
+import { WorkflowChatTransport } from "@workflow/ai";
+
 new WorkflowChatTransport({
   prepareSendMessagesRequest: async (config) => ({
     ...config,
-    body: JSON.stringify({
-      ...JSON.parse(config.body as string),
+    body: {
+      ...config.body,
       model: "anthropic/claude-haiku-4.5",
       temperature: 0.7,
-    }),
+    },
   }),
 })
 ```

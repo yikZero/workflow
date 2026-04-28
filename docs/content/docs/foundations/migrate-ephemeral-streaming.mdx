@@ -16,6 +16,8 @@ If your AI app streams responses over a single HTTP connection, a page reload or
 
 This guide shows how to move from ephemeral streaming to durable streaming with Workflow DevKit. After this migration, the workflow keeps running when the client disconnects, and the client reconnects to the same in-progress run.
 
+If you are starting a new agent from scratch, start with [Building Durable AI Agents](/docs/ai). Use this guide when you already have a single-connection streaming route and want the smallest migration path to reconnectable streams.
+
 ## What changes
 
 | | Ephemeral streaming | Durable streaming |
@@ -53,7 +55,7 @@ export async function POST(req: Request) {
     messages,
   });
 
-  return result.toDataStreamResponse();
+  return result.toUIMessageStreamResponse();
 }
 ```
 
@@ -158,8 +160,14 @@ export async function GET(
 
   const run = getRun(id); // [!code highlight]
   const stream = run.getReadable({ startIndex }); // [!code highlight]
+  const tailIndex = await stream.getTailIndex(); // [!code highlight]
 
-  return createUIMessageStreamResponse({ stream });
+  return createUIMessageStreamResponse({
+    stream,
+    headers: { // [!code highlight]
+      "x-workflow-stream-tail-index": String(tailIndex), // [!code highlight]
+    }, // [!code highlight]
+  });
 }
 ```
 
@@ -228,13 +236,15 @@ Verify reconnection by starting a long response, refreshing the page mid-stream,
 `WorkflowChatTransport` shapes its POST body differently than the default AI SDK transport. If you need custom fields in the request body, use the `prepareSendMessagesRequest` hook:
 
 ```typescript
+import { WorkflowChatTransport } from "@workflow/ai";
+
 new WorkflowChatTransport({
   prepareSendMessagesRequest: async (config) => ({
     ...config,
-    body: JSON.stringify({
-      ...JSON.parse(config.body as string),
+    body: {
+      ...config.body,
       customField: "value",
-    }),
+    },
   }),
 })
 ```

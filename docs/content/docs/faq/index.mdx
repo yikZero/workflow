@@ -26,13 +26,15 @@ The step debugger shows the state of each step, including failures that do not s
 `WorkflowChatTransport` shapes its POST body differently than the default AI SDK transport. To add custom fields, use the `prepareSendMessagesRequest` hook:
 
 ```typescript
+import { WorkflowChatTransport } from "@workflow/ai";
+
 new WorkflowChatTransport({
   prepareSendMessagesRequest: async (config) => ({
     ...config,
-    body: JSON.stringify({
-      ...JSON.parse(config.body as string),
+    body: {
+      ...config.body,
       customField: "value",
-    }),
+    },
   }),
 })
 ```
