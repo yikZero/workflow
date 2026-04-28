@@ -61,8 +61,8 @@ Also check that the `startIndex` query parameter is not set beyond the number of
 
 The core changes are:
 
-1. Add `"use workflow"` and `"use step"` directives to your route handler
-2. Wrap your generation call inside a step function
+1. Move generation into a workflow function
+2. Stream through `DurableAgent` and `getWritable()`
 3. Return the `runId` in the response headers
 4. Add a reconnection endpoint using `getRun()`
 5. Use `WorkflowChatTransport` on the client
