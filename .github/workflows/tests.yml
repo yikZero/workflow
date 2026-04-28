@@ -643,7 +643,10 @@ jobs:
         run: |
           cd workbench/nextjs-turbopack
           $logFile = "$env:GITHUB_WORKSPACE/nextjs-server.log"
-          $job = Start-Job -ScriptBlock { Set-Location $using:PWD; $env:WORKFLOW_RUNTIME = $using:MATRIX_RUNTIME; pnpm dev *>&1 | Tee-Object -FilePath $using:logFile }
+          # `$using:` only resolves PowerShell variables, not env vars, so
+          # copy MATRIX_RUNTIME into a session variable before Start-Job.
+          $matrixRuntime = $env:MATRIX_RUNTIME
+          $job = Start-Job -ScriptBlock { Set-Location $using:PWD; $env:WORKFLOW_RUNTIME = $using:matrixRuntime; pnpm dev *>&1 | Tee-Object -FilePath $using:logFile }
           Start-Sleep -Seconds 15
           cd ../..
           pnpm vitest run packages/core/e2e/dev.test.ts
