@@ -190,8 +190,12 @@ jobs:
           APP_NAME: "nextjs-turbopack"
 
   vitest-plugin:
-    name: Vitest Plugin Tests
+    name: Vitest Plugin Tests (${{ matrix.runtime }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [snapshot, replay]
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
@@ -212,6 +216,8 @@ jobs:
       - name: Run Vitest Plugin Tests
         run: pnpm test
         working-directory: workbench/vitest
+        env:
+          WORKFLOW_RUNTIME: ${{ matrix.runtime }}
 
   e2e-vercel-prod:
     name: E2E Vercel Prod Tests (${{ matrix.app.name }} - ${{ matrix.runtime }})
