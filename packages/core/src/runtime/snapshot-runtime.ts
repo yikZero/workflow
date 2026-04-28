@@ -205,22 +205,53 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
   return fn;
 };
 
+// Parses an "ms" library style duration string into milliseconds.
+// Supports the same units as the replay runtime (which uses the "ms"
+// package): ms / s / m / h / d / w / y, with verbose aliases
+// (seconds, minutes, ...).
+globalThis.__parseDurationMs = function(str) {
+  str = String(str);
+  if (str.length > 100) return undefined;
+  var match = str.match(
+    /^(-?(?:\\d+)?\\.?\\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i
+  );
+  if (!match) return undefined;
+  var n = parseFloat(match[1]);
+  var type = (match[2] || "ms").toLowerCase();
+  var s = 1000, m = 60 * s, h = 60 * m, d = 24 * h, w = 7 * d, y = 365.25 * d;
+  switch (type) {
+    case "years": case "year": case "yrs": case "yr": case "y": return n * y;
+    case "weeks": case "week": case "w": return n * w;
+    case "days": case "day": case "d": return n * d;
+    case "hours": case "hour": case "hrs": case "hr": case "h": return n * h;
+    case "minutes": case "minute": case "mins": case "min": case "m": return n * m;
+    case "seconds": case "second": case "secs": case "sec": case "s": return n * s;
+    case "milliseconds": case "millisecond": case "msecs": case "msec": case "ms": return n;
+    default: return undefined;
+  }
+};
+
 globalThis[Symbol.for("WORKFLOW_SLEEP")] = function(param) {
   var correlationId = "wait_" + globalThis.__generateUlid();
   var resumeAt;
   if (typeof param === "number") {
     resumeAt = new Date(Date.now() + param).toISOString();
   } else if (typeof param === "string") {
-    var match = param.match(/^(\\d+)([smhd])$/);
-    if (match) {
-      var value = parseInt(match[1]);
-      var unit = match[2];
-      var ms = value * (unit === "s" ? 1000 : unit === "m" ? 60000 : unit === "h" ? 3600000 : 86400000);
+    var ms = globalThis.__parseDurationMs(param);
+    if (typeof ms === "number" && isFinite(ms)) {
       resumeAt = new Date(Date.now() + ms).toISOString();
     } else {
-      resumeAt = new Date(param).toISOString();
+      // Not a duration string — try as an absolute date string.
+      var date = new Date(param);
+      if (isNaN(date.getTime())) {
+        throw new Error("Invalid sleep parameter: " + param);
+      }
+      resumeAt = date.toISOString();
     }
   } else if (param instanceof Date) {
+    if (isNaN(param.getTime())) {
+      throw new Error("Invalid sleep parameter: " + param);
+    }
     resumeAt = param.toISOString();
   } else {
     throw new Error("Invalid sleep parameter: " + param);
