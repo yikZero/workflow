@@ -1348,6 +1348,30 @@ describe('DurableAgent (ToolLoopAgent compat)', () => {
           }
         `);
       });
+
+      it('should expose finishReason and totalUsage on the stream result', async () => {
+        const agent = new DurableAgent({
+          model: asModelFactory(mockModel),
+        });
+
+        const { writable } = createMockWritable();
+        const result = await agent.stream({
+          messages: [{ role: 'user' as const, content: 'test' }],
+          writable,
+        });
+
+        expect({
+          finishReason: result.finishReason,
+          inputTokens: result.totalUsage.inputTokens,
+          outputTokens: result.totalUsage.outputTokens,
+        }).toMatchInlineSnapshot(`
+          {
+            "finishReason": "stop",
+            "inputTokens": 3,
+            "outputTokens": 10,
+          }
+        `);
+      });
     });
   });
 
