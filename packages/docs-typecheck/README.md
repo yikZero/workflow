@@ -79,6 +79,7 @@ For code samples that intentionally show errors:
 The docs test suite includes:
 - `docs/content/docs/**/*.mdx`
 - `packages/*/README.md`
+- `skills/**/SKILL.md`
 
 Within those files, fenced `ts` / `typescript` samples are type-checked exactly as written. The tool does **not** auto-insert or infer imports.
 
