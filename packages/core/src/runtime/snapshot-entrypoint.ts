@@ -354,15 +354,19 @@ export async function runWorkflowWithSnapshots(params: {
         : {}),
     });
 
-    // Save the snapshot, encrypting if a key is available. Runs in
-    // parallel with the per-pending-op event/queue dispatch below
-    // (Promise.all at the end of this block) so the round-trip to
-    // blob/db storage doesn't block step queueing. The snapshot is an
-    // optimization — if save fails or lags, the next workflow
-    // invocation simply replays from events. Wrapped in a child span
-    // so operators can drill into serialize / encrypt / persist
-    // latency separately.
-    const snapshotSavePromise = trace('snapshot.save', async (saveSpan) => {
+    // Save the snapshot, encrypting if a key is available. The save
+    // must complete before any step is queued so that subsequent
+    // workflow invocations always observe a snapshot at-or-newer-than
+    // the events they will process — pipelining save with queueMessage
+    // creates a window where a step can complete and re-invoke the
+    // workflow handler, which then loads a stale (or missing) snapshot
+    // and replays a coroutine state that doesn't match the latest
+    // events. Per-pending-op events.create + queueMessage calls below
+    // ARE parallelized via Promise.all, which gives the bulk of the
+    // wall-clock reduction without the ordering hazard. Wrapped in a
+    // child span so operators can drill into serialize / encrypt /
+    // persist latency separately.
+    await trace('snapshot.save', async (saveSpan) => {
       const plaintextBytes = snapshot.byteLength;
       saveSpan?.setAttributes({
         ...Attribute.SnapshotSavePlaintextBytes(plaintextBytes),
@@ -567,8 +571,9 @@ export async function runWorkflowWithSnapshots(params: {
       }
     }
 
-    // Snapshot save runs concurrently with the per-op dispatch.
-    await Promise.all([snapshotSavePromise, ...opsPromises]);
+    // Per-op dispatch runs in parallel; snapshot.save above already
+    // completed.
+    await Promise.all(opsPromises);
 
     // Handle pending waits — both newly created and pre-existing from the
     // snapshot. For each wait, either create a wait_completed event (if
