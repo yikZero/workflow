@@ -466,7 +466,23 @@ export async function runSnapshotWorkflow(
 
   const startedAt = workflowRun.startedAt ? +workflowRun.startedAt : Date.now();
 
-  const seed = `${workflowRun.runId}:${workflowRun.workflowName}:${startedAt}`;
+  // Mix the snapshot's events cursor into the PRNG seed so that each
+  // resumption draws from a different point in the sequence. Without this,
+  // every restore re-initialized the RNG from the same `runId:name:startedAt`
+  // seed and replayed the first-N draws, producing identical correlationIds
+  // across resumptions and breaking the hasCreatedEvent dedup guard.
+  // The cursor is stable for retries of the same resumption (idempotent
+  // within a single resume) but advances across resumes — exactly the
+  // determinism boundary we want.
+  const seedParts = [
+    workflowRun.runId,
+    workflowRun.workflowName,
+    String(startedAt),
+  ];
+  if (existingSnapshot?.metadata.eventsCursor) {
+    seedParts.push(existingSnapshot.metadata.eventsCursor);
+  }
+  const seed = seedParts.join(':');
   const rng = seedrandom(seed);
 
   let vm: QuickJS;
