@@ -203,36 +203,6 @@ describe('snapshot save/load pipeline (compress → encrypt → decrypt → deco
     );
   });
 
-  it('decompress falls through for legacy snapshots saved before compression was added', async () => {
-    // Old snapshots written by a previous version of the SDK have no
-    // compression format prefix. The new load pipeline must still
-    // accept them: decrypt() returns the bytes unchanged (no `encr`
-    // prefix), and decompress() also returns them unchanged (no
-    // gzip/zstd prefix).
-    const key = await makeKey();
-    const legacySnapshot = bytesOf(
-      'pretend this is a QuickJS heap saved before compression was added'
-    );
-
-    // Pre-compression-era code wrote: encrypt(plain) — no compression.
-    const encrypted = (await encryptSerializedData(
-      legacySnapshot,
-      key
-    )) as Uint8Array;
-
-    // New load pipeline.
-    const decrypted = (await decryptSerializedData(
-      encrypted,
-      key
-    )) as Uint8Array;
-    const restored = decompress(decrypted) as Uint8Array;
-
-    // Same reference — decompress() short-circuits on non-prefixed
-    // input, so no copy is made.
-    expect(restored).toBe(decrypted);
-    expect(Array.from(restored)).toEqual(Array.from(legacySnapshot));
-  });
-
   it('saves use the preferred codec format prefix', () => {
     const snapshot = fakeSnapshot(8 * 1024);
     const compressed = compress(snapshot) as Uint8Array;

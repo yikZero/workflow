@@ -1,4 +1,3 @@
-import { gunzipSync } from 'node:zlib';
 import { WorkflowWorldError } from '@workflow/errors';
 import type { SnapshotMetadata, Storage } from '@workflow/world';
 import { request as undiciRequest } from 'undici';
@@ -21,18 +20,11 @@ function headersToRecord(headers: Headers): Record<string, string> {
 /**
  * Create snapshot storage backed by the workflow-server API.
  *
- * Compression and encryption are now handled by `@workflow/core`'s
+ * Compression and encryption are handled by `@workflow/core`'s
  * snapshot entrypoint (`compress(snapshot) → encrypt → save`). This
- * world layer treats the bytes as opaque — it does NOT add its own
- * gzip wrapper, since the bytes arriving here are already encrypted
- * (and encryption produces ciphertext that doesn't compress).
- *
- * For backward compatibility, the load path still honors the
- * `X-Snapshot-Content-Encoding: gzip` response header that older
- * stored blobs were written with — those will be gunzipped on the
- * way out. New blobs from the current SDK arrive without any
- * Content-Encoding metadata, so the gunzip step is skipped and the
- * bytes are returned verbatim for the core to decrypt + decompress.
+ * world layer transports the bytes opaquely — it does not compress
+ * (encryption produces ciphertext that doesn't compress) and it does
+ * not encrypt.
  *
  * Snapshot endpoints use raw binary transfer:
  *   - PUT  /v2/runs/:runId/snapshot — binary body, metadata in headers
@@ -52,11 +44,8 @@ export function createSnapshotsStorage(
       const { baseUrl, headers } = await getHttpConfig(config);
       const url = `${baseUrl}/v2/runs/${encodeURIComponent(runId)}/snapshot`;
 
-      // Bytes arrive opaquely from the core (compress(plain) → encrypt
-      // pipeline). Don't compress again — encrypted bytes don't
-      // compress, and the core is responsible for the codec choice.
-      // Don't set X-Snapshot-Content-Encoding either; old blobs
-      // written under that scheme can still be loaded back below.
+      // Bytes arrive opaquely from the core's
+      // `compress → encrypt` pipeline. Forward verbatim.
       headers.set('Content-Type', 'application/octet-stream');
       headers.set('X-Snapshot-Events-Cursor', metadata.eventsCursor ?? '');
       headers.set('X-Snapshot-Created-At', metadata.createdAt.toISOString());
@@ -160,25 +149,7 @@ export function createSnapshotsStorage(
       }
 
       const buffer = await response.arrayBuffer();
-      const wireBytes = buffer.byteLength;
-      let data = new Uint8Array(buffer);
-
-      // BACKWARD COMPAT: older blobs were saved with the SDK applying
-      // its own gzip + an `X-Snapshot-Content-Encoding: gzip` header.
-      // New blobs (current SDK) arrive opaque — already
-      // compressed+encrypted by the core — and have no
-      // Content-Encoding metadata. When this header is present we
-      // gunzip; otherwise we pass bytes through verbatim and let the
-      // core's `decompress()` handle the modern format-prefix
-      // (gzip/zstd) on the inner payload.
-      const contentEncoding =
-        response.headers.get('X-Snapshot-Content-Encoding') || null;
-      let gunzipDurationMs: number | undefined;
-      if (contentEncoding === 'gzip') {
-        const gunzipStart = performance.now();
-        data = gunzipSync(data);
-        gunzipDurationMs = Math.round(performance.now() - gunzipStart);
-      }
+      const data = new Uint8Array(buffer);
 
       const eventsCursor =
         response.headers.get('X-Snapshot-Events-Cursor') || null;
@@ -186,22 +157,18 @@ export function createSnapshotsStorage(
       const createdAt = createdAtStr ? new Date(createdAtStr) : new Date();
 
       // CI-visible diagnostic: actual on-the-wire snapshot bytes and
-      // gunzip cost. Same format/pairing as the save side above so the
-      // entire snapshot save/load lifecycle is grep-able from Vercel
-      // function logs by runId.
+      // HTTP-GET cost. Same format/pairing as the save side above so
+      // the entire snapshot save/load lifecycle is grep-able from
+      // Vercel function logs by runId.
       console.warn('[Workflow] WORLD_SNAPSHOT_DIAG', {
         op: 'load',
         runId,
         outcome: 'ok',
-        // On-the-wire body size returned by the workflow-server.
-        wireBytes,
-        // After gunzip (if applicable). Equal to wireBytes when the
-        // server returns plaintext (no Content-Encoding header).
-        decompressedBytes: data.byteLength,
-        compressionRatio:
-          wireBytes > 0 ? +(data.byteLength / wireBytes).toFixed(2) : 0,
+        // Bytes returned by the workflow-server (already
+        // compressed+encrypted by core; this layer transports them
+        // opaquely).
+        wireBytes: data.byteLength,
         getDurationMs,
-        gunzipDurationMs,
         totalDurationMs: Math.round(performance.now() - t0),
       });
 
