@@ -90,9 +90,37 @@ export async function runWorkflowWithSnapshots(params: {
   } = params;
   const world = await getWorld();
   const runId = workflowRun.runId;
+  const invocationStart = tick();
+  // Per-invocation diagnostic id so checkpoint logs can be correlated even
+  // if the same runId is processed by overlapping invocations on different
+  // function instances.
+  const invocationId = `inv_${Math.random().toString(36).slice(2, 10)}`;
+
+  // Single high-volume diagnostic helper: emits a single-line structured
+  // record to stderr that survives Vercel function-log collection and is
+  // grep-friendly by runId. Always-on (warn level) so it shows up in
+  // production logs without DEBUG. Use sparingly — one record per
+  // invocation checkpoint.
+  const wfdiag = (checkpoint: string, fields: Record<string, unknown>) => {
+    runtimeLogger.warn('SNAPSHOT_DIAG', {
+      checkpoint,
+      runId,
+      invocationId,
+      tElapsedMs: Math.round(tick() - invocationStart),
+      ...fields,
+    });
+  };
 
   parentSpan?.setAttributes({
     ...Attribute.SnapshotRuntime('snapshot'),
+  });
+
+  wfdiag('enter', {
+    workflowName,
+    hasPreloadedEvents:
+      Array.isArray(preloadedEvents) && preloadedEvents.length > 0,
+    preloadedEventCount: preloadedEvents?.length ?? 0,
+    hasRunInput: !!runInput,
   });
 
   // The workflowName from the queue topic is already the full workflow ID
@@ -155,6 +183,12 @@ export async function runWorkflowWithSnapshots(params: {
     ...Attribute.SnapshotInvocationKind(existingSnapshot ? 'restore' : 'first'),
   });
 
+  wfdiag('snapshot_loaded', {
+    invocationKind: existingSnapshot ? 'restore' : 'first',
+    snapshotBytes: existingSnapshot?.data.byteLength ?? 0,
+    eventsCursor: existingSnapshot?.metadata.eventsCursor ?? null,
+  });
+
   // On first invocation (no snapshot), prefer preloadedEvents from the
   // run_started response — they're guaranteed to include run_created
   // even if the world's event log is eventually consistent. On restore,
@@ -209,6 +243,16 @@ export async function runWorkflowWithSnapshots(params: {
     eventCount: events.length,
     isRestore: !!existingSnapshot,
     eventsCursor: lastEventsCursor,
+  });
+
+  wfdiag('events_fetched', {
+    eventCount: events.length,
+    eventsFetchedPages,
+    eventsCursor: lastEventsCursor,
+    eventTypes: events.reduce<Record<string, number>>((acc, e) => {
+      acc[e.eventType] = (acc[e.eventType] ?? 0) + 1;
+      return acc;
+    }, {}),
   });
 
   // Check for elapsed waits
@@ -279,6 +323,25 @@ export async function runWorkflowWithSnapshots(params: {
     pendingOpsCount: result.suspended?.pendingOperations?.length,
   });
 
+  wfdiag('vm_returned', {
+    outcome: result.completed
+      ? 'completed'
+      : result.suspended
+        ? 'suspended'
+        : result.failed
+          ? 'failed'
+          : 'unknown',
+    pendingOpsCount: result.suspended?.pendingOperations?.length ?? 0,
+    pendingOpSummary: result.suspended?.pendingOperations?.map((p) => ({
+      type: p.type,
+      correlationId: p.correlationId,
+      hasCreatedEvent: p.hasCreatedEvent,
+      ...(p.type === 'step' ? { stepId: (p as PendingStep).stepId } : {}),
+    })),
+    failureMessage: result.failed?.message,
+    failureName: result.failed?.name,
+  });
+
   if (result.completed) {
     // Workflow completed
     runtimeLogger.info('Snapshot runtime: workflow completed', {
@@ -314,14 +377,20 @@ export async function runWorkflowWithSnapshots(params: {
           ),
         },
       });
+      wfdiag('exit_completed', { result: 'run_completed_written' });
     } catch (err) {
       if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
         runtimeLogger.warn(
           'Workflow already finished, skipping run_completed',
           { workflowRunId: runId }
         );
+        wfdiag('exit_completed', { result: 'already_finished' });
         return;
       }
+      wfdiag('exit_completed_error', {
+        errorName: (err as Error)?.name,
+        errorMessage: (err as Error)?.message,
+      });
       throw err;
     }
   } else if (result.suspended) {
@@ -417,6 +486,11 @@ export async function runWorkflowWithSnapshots(params: {
       });
     });
 
+    wfdiag('snapshot_saved', {
+      plaintextBytes: snapshot.byteLength,
+      eventsCursor: lastEventsCursor,
+    });
+
     // Build per-pending-op promises so events.create + queueMessage
     // calls fan out in parallel rather than serially. This mirrors
     // the replay runtime's `Promise.all(ops)` pattern in
@@ -472,6 +546,10 @@ export async function runWorkflowWithSnapshots(params: {
                 idempotencyKey: step.correlationId,
               }
             );
+            wfdiag('step_queued', {
+              stepId: step.stepId,
+              correlationId: step.correlationId,
+            });
           })()
         );
       } else if (op.type === 'hook' && !op.hasCreatedEvent) {
@@ -620,12 +698,25 @@ export async function runWorkflowWithSnapshots(params: {
     if (needsRequeue) {
       // An elapsed wait was completed — re-queue immediately so the
       // snapshot runtime can process the wait_completed event.
+      wfdiag('exit_suspended', {
+        action: 'wait_elapsed_requeue',
+        timeoutSeconds: 0,
+      });
       return { timeoutSeconds: 0 };
     }
 
     if (minTimeoutSeconds !== undefined) {
+      wfdiag('exit_suspended', {
+        action: 'schedule_wait_timeout',
+        timeoutSeconds: minTimeoutSeconds,
+      });
       return { timeoutSeconds: minTimeoutSeconds };
     }
+
+    wfdiag('exit_suspended', {
+      action: 'awaiting_external',
+      pendingOpsCount: pendingOperations.length,
+    });
   } else if (result.failed) {
     // Workflow failed — remap stack trace using inline source maps
     let errorStack = result.failed.stack;
@@ -691,10 +782,16 @@ export async function runWorkflowWithSnapshots(params: {
         runtimeLogger.warn('Workflow already finished, skipping run_failed', {
           workflowRunId: runId,
         });
+        wfdiag('exit_failed', { result: 'already_finished' });
         return;
       }
+      wfdiag('exit_failed_error', {
+        errorName: (err as Error)?.name,
+        errorMessage: (err as Error)?.message,
+      });
       throw err;
     }
+    wfdiag('exit_failed', { result: 'run_failed_written' });
   }
 }
 

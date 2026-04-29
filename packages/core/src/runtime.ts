@@ -161,6 +161,18 @@ export function workflowEntrypoint(
         // Extract the workflow name from the topic name
         const workflowName = metadata.queueName.slice('__wkf_workflow_'.length);
 
+        // CI-visible diagnostic: workflow handler invocation start. Mirrors
+        // the SNAPSHOT_DIAG checkpoints emitted by the snapshot runtime so a
+        // wedged workflow's last function-side activity is grep-able by
+        // runId in Vercel function logs.
+        runtimeLogger.warn('WORKFLOW_HANDLER_DIAG', {
+          checkpoint: 'enter',
+          runId,
+          workflowName,
+          attempt: metadata.attempt,
+          requestId,
+        });
+
         // --- Max delivery check ---
         // Enforce max delivery limit before any infrastructure calls.
         // This prevents runaway workflows from consuming infinite queue deliveries.
