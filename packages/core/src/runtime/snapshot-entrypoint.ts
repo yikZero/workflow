@@ -354,11 +354,15 @@ export async function runWorkflowWithSnapshots(params: {
         : {}),
     });
 
-    // Save the snapshot, encrypting if a key is available. When
-    // encryption is disabled, encrypt() passes the bytes through
-    // unchanged. Wrapped in a child span so operators can drill into
-    // serialize / encrypt / persist latency separately.
-    await trace('snapshot.save', async (saveSpan) => {
+    // Save the snapshot, encrypting if a key is available. Runs in
+    // parallel with the per-pending-op event/queue dispatch below
+    // (Promise.all at the end of this block) so the round-trip to
+    // blob/db storage doesn't block step queueing. The snapshot is an
+    // optimization — if save fails or lags, the next workflow
+    // invocation simply replays from events. Wrapped in a child span
+    // so operators can drill into serialize / encrypt / persist
+    // latency separately.
+    const snapshotSavePromise = trace('snapshot.save', async (saveSpan) => {
       const plaintextBytes = snapshot.byteLength;
       saveSpan?.setAttributes({
         ...Attribute.SnapshotSavePlaintextBytes(plaintextBytes),
@@ -409,54 +413,62 @@ export async function runWorkflowWithSnapshots(params: {
       });
     });
 
-    // Create events and queue steps for pending operations
+    // Build per-pending-op promises so events.create + queueMessage
+    // calls fan out in parallel rather than serially. This mirrors
+    // the replay runtime's `Promise.all(ops)` pattern in
+    // suspension-handler.ts and significantly reduces wall-clock time
+    // on cloud worlds (e.g. Vercel) where each storage call is a
+    // network round-trip.
     let minTimeoutSeconds: number | undefined;
+    const opsPromises: Promise<void>[] = [];
 
     for (const op of pendingOperations) {
       if (op.type === 'step' && !op.hasCreatedEvent) {
         const step = op as PendingStep;
+        opsPromises.push(
+          (async () => {
+            // Create step_created event. `step.input` is the format-prefixed
+            // devalue bytes ("devl" + devalue) produced by
+            // `__wdk_serialize({args, closureVars, thisVal})` inside the VM.
+            // The VM has no access to the CryptoKey, so encryption is
+            // applied here on the host side — matching what
+            // `dehydrateStepArguments` does in the replay runtime.
+            try {
+              await world.events.create(runId, {
+                eventType: 'step_created',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: step.correlationId,
+                eventData: {
+                  stepName: step.stepId,
+                  input: await encryptSerializedData(step.input, encryptionKey),
+                },
+              });
+            } catch (err) {
+              if (EntityConflictError.is(err)) return;
+              throw err;
+            }
 
-        // Create step_created event.
-        // `step.input` is the format-prefixed devalue bytes ("devl" + devalue)
-        // produced by `__wdk_serialize({args, closureVars, thisVal})` inside
-        // the VM. The VM has no access to the CryptoKey, so encryption is
-        // applied here on the host side — matching what
-        // `dehydrateStepArguments` does in the replay runtime (see
-        // `suspension-handler.ts`).
-        try {
-          await world.events.create(runId, {
-            eventType: 'step_created',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: step.correlationId,
-            eventData: {
-              stepName: step.stepId,
-              input: await encryptSerializedData(step.input, encryptionKey),
-            },
-          });
-        } catch (err) {
-          if (EntityConflictError.is(err)) continue;
-          throw err;
-        }
-
-        // Queue the step execution
-        // The queue name is __wkf_step_<stepName>
-        // The step handler expects: workflowName, workflowRunId, workflowStartedAt, stepId
-        const startedAtMs = workflowRun.startedAt
-          ? +workflowRun.startedAt
-          : Date.now();
-        await queueMessage(
-          world,
-          `__wkf_step_${step.stepId}`,
-          {
-            workflowName: workflowRun.workflowName,
-            workflowRunId: runId,
-            workflowStartedAt: startedAtMs,
-            stepId: step.correlationId,
-            requestedAt: new Date(),
-          },
-          {
-            idempotencyKey: step.correlationId,
-          }
+            // Queue the step execution. Queue name is __wkf_step_<stepName>;
+            // step handler expects: workflowName, workflowRunId,
+            // workflowStartedAt, stepId.
+            const startedAtMs = workflowRun.startedAt
+              ? +workflowRun.startedAt
+              : Date.now();
+            await queueMessage(
+              world,
+              `__wkf_step_${step.stepId}`,
+              {
+                workflowName: workflowRun.workflowName,
+                workflowRunId: runId,
+                workflowStartedAt: startedAtMs,
+                stepId: step.correlationId,
+                requestedAt: new Date(),
+              },
+              {
+                idempotencyKey: step.correlationId,
+              }
+            );
+          })()
         );
       } else if (op.type === 'hook' && !op.hasCreatedEvent) {
         const hook = op as PendingHook;
@@ -468,116 +480,123 @@ export async function runWorkflowWithSnapshots(params: {
           isWebhook: hook.isWebhook,
         });
 
-        // Create hook_created event.
-        // First check if our hook entity already exists (stale-snapshot race
-        // where a concurrent invocation already created it). Skip entirely
-        // to avoid creating spurious hook_conflict events.
-        try {
-          const { data: existingHooks } = await world.hooks.list({ runId });
-          if (existingHooks.some((h) => h.hookId === hook.correlationId)) {
-            continue;
-          }
-        } catch {
-          // If hooks.list fails, proceed with creation attempt
-        }
+        opsPromises.push(
+          (async () => {
+            // `hook.metadata` is the format-prefixed devalue bytes produced
+            // by `__wdk_serialize(options.metadata)` inside the VM. Encrypt
+            // on the host side before writing — matches the replay
+            // runtime's `dehydrateStepArguments` flow.
+            //
+            // No pre-check via hooks.list: with deterministic correlationIds
+            // (same VM seed across replays) and per-(runId, correlationId)
+            // uniqueness in worlds, the storage layer rejects duplicates as
+            // EntityConflictError, which we swallow below. This drops one
+            // network round-trip per pending hook.
+            try {
+              const encryptedMetadata =
+                typeof hook.metadata === 'undefined'
+                  ? undefined
+                  : await encryptSerializedData(hook.metadata, encryptionKey);
+              const result = await world.events.create(runId, {
+                eventType: 'hook_created',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: hook.correlationId,
+                eventData: {
+                  token: hook.token,
+                  metadata: encryptedMetadata,
+                  // Always include isWebhook explicitly. Worlds default it to
+                  // `true` when absent, which would break the public webhook
+                  // endpoint's 404 guard for hooks created via createHook().
+                  isWebhook: hook.isWebhook,
+                } as any,
+              });
 
-        try {
-          // `hook.metadata` is the format-prefixed devalue bytes produced
-          // by `__wdk_serialize(options.metadata)` inside the VM (see
-          // snapshot-runtime.ts `WORKFLOW_CREATE_HOOK`). Encrypt on the
-          // host side before writing — matches `suspension-handler.ts` in
-          // the replay runtime, which runs the metadata through
-          // `dehydrateStepArguments` (devalue + encrypt).
-          const encryptedMetadata =
-            typeof hook.metadata === 'undefined'
-              ? undefined
-              : await encryptSerializedData(hook.metadata, encryptionKey);
-          const result = await world.events.create(runId, {
-            eventType: 'hook_created',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: hook.correlationId,
-            eventData: {
-              token: hook.token,
-              metadata: encryptedMetadata,
-              // Always include isWebhook explicitly. Worlds default it to
-              // `true` when absent, which would break the public webhook
-              // endpoint's 404 guard for hooks created via createHook().
-              // Matches suspension-handler.ts in the replay runtime.
-              isWebhook: hook.isWebhook,
-            } as any,
-          });
-
-          // If the storage detected a real token conflict with another
-          // workflow's hook, re-queue so the snapshot runtime can process
-          // the conflict event and fail the workflow gracefully.
-          if (result.event?.eventType === 'hook_conflict') {
-            await queueMessage(
-              world,
-              `__wkf_workflow_${workflowRun.workflowName}`,
-              {
-                runId,
-              },
-              { idempotencyKey: `hook_conflict_${hook.correlationId}` }
-            );
-          }
-        } catch (err) {
-          if (EntityConflictError.is(err)) continue;
-          throw err;
-        }
+              // If storage detected a real token conflict with another
+              // workflow's hook, re-queue so the snapshot runtime can
+              // process the conflict event and fail gracefully.
+              if (result.event?.eventType === 'hook_conflict') {
+                await queueMessage(
+                  world,
+                  `__wkf_workflow_${workflowRun.workflowName}`,
+                  {
+                    runId,
+                  },
+                  { idempotencyKey: `hook_conflict_${hook.correlationId}` }
+                );
+              }
+            } catch (err) {
+              if (EntityConflictError.is(err)) return;
+              throw err;
+            }
+          })()
+        );
       } else if (op.type === 'hook_dispose' && !op.hasCreatedEvent) {
-        // Create hook_disposed event
-        try {
-          await world.events.create(runId, {
-            eventType: 'hook_disposed',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: op.correlationId,
-          });
-        } catch (err) {
-          if (EntityConflictError.is(err)) continue;
-          throw err;
-        }
+        opsPromises.push(
+          (async () => {
+            try {
+              await world.events.create(runId, {
+                eventType: 'hook_disposed',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: op.correlationId,
+              });
+            } catch (err) {
+              if (EntityConflictError.is(err)) return;
+              throw err;
+            }
+          })()
+        );
       } else if (op.type === 'wait' && !op.hasCreatedEvent) {
         const wait = op as PendingWait;
-
-        // Create wait_created event
-        try {
-          await world.events.create(runId, {
-            eventType: 'wait_created',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: wait.correlationId,
-            eventData: {
-              resumeAt: new Date(wait.resumeAt),
-            },
-          });
-        } catch (err) {
-          if (EntityConflictError.is(err)) continue;
-          throw err;
-        }
+        opsPromises.push(
+          (async () => {
+            try {
+              await world.events.create(runId, {
+                eventType: 'wait_created',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: wait.correlationId,
+                eventData: {
+                  resumeAt: new Date(wait.resumeAt),
+                },
+              });
+            } catch (err) {
+              if (EntityConflictError.is(err)) return;
+              throw err;
+            }
+          })()
+        );
       }
     }
+
+    // Snapshot save runs concurrently with the per-op dispatch.
+    await Promise.all([snapshotSavePromise, ...opsPromises]);
 
     // Handle pending waits — both newly created and pre-existing from the
     // snapshot. For each wait, either create a wait_completed event (if
     // elapsed) or schedule a timeout for re-queuing.
     let needsRequeue = false;
+    const waitCompletePromises: Promise<void>[] = [];
     for (const op of pendingOperations) {
       if (op.type !== 'wait') continue;
       const wait = op as PendingWait;
       const resumeMs = new Date(wait.resumeAt).getTime() - Date.now();
 
       if (resumeMs <= 0) {
-        // Wait has elapsed — create wait_completed and re-queue
-        try {
-          await world.events.create(runId, {
-            eventType: 'wait_completed',
-            specVersion: SPEC_VERSION_CURRENT,
-            correlationId: wait.correlationId,
-          });
-          needsRequeue = true;
-        } catch (err) {
-          if (EntityConflictError.is(err)) continue;
-          throw err;
-        }
+        // Wait has elapsed — create wait_completed and re-queue.
+        waitCompletePromises.push(
+          (async () => {
+            try {
+              await world.events.create(runId, {
+                eventType: 'wait_completed',
+                specVersion: SPEC_VERSION_CURRENT,
+                correlationId: wait.correlationId,
+              });
+              needsRequeue = true;
+            } catch (err) {
+              if (EntityConflictError.is(err)) return;
+              throw err;
+            }
+          })()
+        );
       } else {
         // Wait hasn't elapsed yet — schedule a timeout
         const timeoutSeconds = Math.max(1, Math.ceil(resumeMs / 1000));
@@ -588,6 +607,9 @@ export async function runWorkflowWithSnapshots(params: {
           minTimeoutSeconds = timeoutSeconds;
         }
       }
+    }
+    if (waitCompletePromises.length > 0) {
+      await Promise.all(waitCompletePromises);
     }
 
     if (needsRequeue) {
