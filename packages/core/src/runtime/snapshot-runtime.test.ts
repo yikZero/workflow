@@ -267,6 +267,178 @@ describe('runSnapshotWorkflow', () => {
   });
 });
 
+describe('correlationId determinism', () => {
+  // The snapshot runtime must produce identical correlationIds for the
+  // same logical workflow operation across concurrent invocations of the
+  // same resumption — otherwise two queue messages for the same runId
+  // can each generate "fresh" pending step ops, the world has no
+  // EntityConflictError to dedup them, and a single logical step
+  // becomes 2 step_created events (and only one of them ever has a
+  // matching step_completed handler in the running VM, so the others
+  // hang).
+  //
+  // Determinism boundary:
+  //   1. Same `workflowRun` (runId, name, startedAt) + same starting
+  //      state (no snapshot, OR same snapshot+events) → IDENTICAL ids.
+  //   2. Different starting state (different cursor) → DIFFERENT ids.
+  //
+  // The fix injects a deterministic `__ulidTimestamp` (workflowRun.startedAt)
+  // into the VM so the ULID timestamp portion is stable across concurrent
+  // invocations, and seeds the PRNG with `runId:name:startedAt:cursor`
+  // so the random portion advances across resumptions but is stable
+  // within a resumption.
+
+  const stepWorkflow = `
+    var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+    async function workflow() { return await add(10, 7); }
+    workflow.workflowId = "workflow//test//workflow";
+    globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+  `;
+
+  it('produces identical correlationIds for two concurrent first-run invocations', async () => {
+    const run = makeRun();
+
+    // Two independent VM invocations of the same fresh workflow run.
+    // These could be two queue messages for the same runId being
+    // processed in parallel by two workflow handler instances.
+    const [a, b] = await Promise.all([
+      runSnapshotWorkflow({
+        workflowCode: stepWorkflow,
+        workflowId: 'workflow//test//workflow',
+        workflowRun: run,
+        events: [],
+        existingSnapshot: null,
+      }),
+      runSnapshotWorkflow({
+        workflowCode: stepWorkflow,
+        workflowId: 'workflow//test//workflow',
+        workflowRun: run,
+        events: [],
+        existingSnapshot: null,
+      }),
+    ]);
+
+    expect(a.suspended).toBeDefined();
+    expect(b.suspended).toBeDefined();
+    const aCid = a.suspended!.pendingOperations[0].correlationId;
+    const bCid = b.suspended!.pendingOperations[0].correlationId;
+    expect(aCid).toBe(bCid);
+  });
+
+  it('produces identical correlationIds for two concurrent restore invocations', async () => {
+    const run = makeRun();
+
+    // Drive the workflow to a suspension point so we have a snapshot.
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: `
+        var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+        async function workflow() {
+          var a = await add(10, 7);
+          var b = await add(a, 8);
+          return b;
+        }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [],
+      existingSnapshot: null,
+    });
+    const step1Cid = r1.suspended!.pendingOperations[0].correlationId;
+
+    // Two concurrent resumes from the same snapshot, both processing
+    // the same step_completed event. Each independently runs the
+    // workflow body forward to the next suspension point.
+    const events = [
+      {
+        eventId: 'evnt_001',
+        runId: run.runId,
+        eventType: 'step_completed' as const,
+        correlationId: step1Cid,
+        eventData: { result: 17 },
+        createdAt: new Date(),
+      },
+    ];
+    const existingSnapshot = {
+      data: r1.suspended!.snapshot,
+      metadata: { eventsCursor: 'evnt_001', createdAt: new Date() },
+    };
+
+    const [a, b] = await Promise.all([
+      runSnapshotWorkflow({
+        workflowCode: '',
+        workflowId: 'workflow//test//workflow',
+        workflowRun: run,
+        events,
+        existingSnapshot,
+      }),
+      runSnapshotWorkflow({
+        workflowCode: '',
+        workflowId: 'workflow//test//workflow',
+        workflowRun: run,
+        events,
+        existingSnapshot,
+      }),
+    ]);
+
+    expect(a.suspended).toBeDefined();
+    expect(b.suspended).toBeDefined();
+    const aCid = a.suspended!.pendingOperations[0].correlationId;
+    const bCid = b.suspended!.pendingOperations[0].correlationId;
+    expect(aCid).toBe(bCid);
+  });
+
+  it('produces a different correlationId across resumes (different cursor)', async () => {
+    const run = makeRun();
+
+    const r1 = await runSnapshotWorkflow({
+      workflowCode: `
+        var add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//test//add");
+        async function workflow() {
+          var a = await add(10, 7);
+          var b = await add(a, 8);
+          return b;
+        }
+        workflow.workflowId = "workflow//test//workflow";
+        globalThis.__private_workflows.set("workflow//test//workflow", workflow);
+      `,
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [],
+      existingSnapshot: null,
+    });
+    const step1Cid = r1.suspended!.pendingOperations[0].correlationId;
+
+    const r2 = await runSnapshotWorkflow({
+      workflowCode: '',
+      workflowId: 'workflow//test//workflow',
+      workflowRun: run,
+      events: [
+        {
+          eventId: 'evnt_001',
+          runId: run.runId,
+          eventType: 'step_completed',
+          correlationId: step1Cid,
+          eventData: { result: 17 },
+          createdAt: new Date(),
+        },
+      ],
+      existingSnapshot: {
+        data: r1.suspended!.snapshot,
+        metadata: { eventsCursor: 'evnt_001', createdAt: new Date() },
+      },
+    });
+    const step2Cid = r2.suspended!.pendingOperations[0].correlationId;
+
+    // The second step's correlationId must be distinct from the first —
+    // different resume, different position in the workflow body,
+    // different PRNG state, different cursor. Otherwise EntityConflictError
+    // would falsely dedup it as a duplicate.
+    expect(step2Cid).not.toBe(step1Cid);
+  });
+});
+
 describe('raw QuickJS proof of concept', () => {
   it('should run, snapshot, restore, and complete', async () => {
     const vm = await QuickJS.create();
