@@ -1,8 +1,22 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { WorkflowWorldError } from '@workflow/errors';
 import type { SnapshotMetadata, Storage } from '@workflow/world';
+import { request as undiciRequest } from 'undici';
 import { getDispatcher } from './http-client.js';
 import { type APIConfig, getHttpConfig } from './utils.js';
+
+/**
+ * Convert a Web `Headers` object into a plain record for undici's
+ * lower-level `request()` API. Headers in undici-request take
+ * `Record<string, string | string[]>`, not the Headers object.
+ */
+function headersToRecord(headers: Headers): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const [key, value] of headers) {
+    record[key] = value;
+  }
+  return record;
+}
 
 /**
  * Content encoding used for snapshot storage.
@@ -45,24 +59,44 @@ export function createSnapshotsStorage(
       headers.set('X-Snapshot-Events-Cursor', metadata.eventsCursor ?? '');
       headers.set('X-Snapshot-Created-At', metadata.createdAt.toISOString());
 
-      const response = await fetch(url, {
+      // Use undici.request() rather than the global fetch() because
+      // fetch() + RetryAgent is broken for Buffer/Uint8Array bodies:
+      // fetch wraps the body in a one-shot ReadableStream (per the
+      // WHATWG fetch spec), so when the RetryAgent retries (on 5xx or
+      // network errors), the second attempt sends 0 bytes and undici
+      // throws `UND_ERR_REQ_CONTENT_LENGTH_MISMATCH`. The lower-level
+      // `request()` API hands the Buffer to the connection layer
+      // directly, which can be replayed on retry.
+      //
+      // Upstream context: nodejs/undici#3288 (filed May 2024) reported
+      // this exact failure. The "fix" in nodejs/undici#3294 made
+      // RetryAgent skip stateful bodies rather than rewind them, and
+      // the maintainers explicitly recommended switching to
+      // `undici.request()` for any retried request with a body. Don't
+      // simplify this back to `fetch()` without first verifying that
+      // upstream now copies Buffers across retries.
+      //
+      // Snapshot bodies are 5-15 MB so the bug fires constantly under
+      // network turbulence; a single failed save poisons the run
+      // (handler returns 500 -> queue retries handler -> save fails
+      // again -> 5xx loop until the run TTL).
+      const response = await undiciRequest(url, {
         method: 'PUT',
         body: compressed,
-        headers,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- undici dispatcher
+        headers: headersToRecord(headers),
         dispatcher: getDispatcher(),
-      } as any);
+      });
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        const text = await response.body.text().catch(() => '');
         throw new WorkflowWorldError(
-          `PUT /v2/runs/${runId}/snapshot -> HTTP ${response.status}: ${text}`,
-          { url, status: response.status }
+          `PUT /v2/runs/${runId}/snapshot -> HTTP ${response.statusCode}: ${text}`,
+          { url, status: response.statusCode }
         );
       }
 
       // Consume the response body to release the connection
-      await response.text();
+      await response.body.text();
     },
 
     async load(
