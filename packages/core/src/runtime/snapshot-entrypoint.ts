@@ -5,6 +5,7 @@
  * snapshot-based runtime instead of the event-replay runtime.
  */
 
+import type { Span } from '@opentelemetry/api';
 import {
   EntityConflictError,
   RunExpiredError,
@@ -26,6 +27,8 @@ import {
   encrypt as encryptSerializedData,
 } from '../serialization/encryption.js';
 import { remapErrorStack } from '../source-map.js';
+import * as Attribute from '../telemetry/semantic-conventions.js';
+import { trace } from '../telemetry.js';
 import { queueMessage } from './helpers.js';
 import {
   type PendingHook,
@@ -34,6 +37,11 @@ import {
   runSnapshotWorkflow,
 } from './snapshot-runtime.js';
 import { getWorld } from './world.js';
+
+/** Tiny ms timer using performance.now() — already monotonic on Node. */
+function tick(): number {
+  return performance.now();
+}
 
 /**
  * Run a workflow using the snapshot runtime.
@@ -65,11 +73,27 @@ export async function runWorkflowWithSnapshots(params: {
    * the event log is incomplete.
    */
   runInput?: RunInput;
+  /**
+   * The parent OTel span (the outer `WORKFLOW {workflowName}` span from
+   * `runtime.ts`). When supplied, snapshot lifecycle attributes are
+   * attached to it for end-to-end visibility.
+   */
+  parentSpan?: Span;
 }): Promise<{ timeoutSeconds?: number } | void> {
-  const { workflowCode, workflowName, workflowRun, preloadedEvents, runInput } =
-    params;
+  const {
+    workflowCode,
+    workflowName,
+    workflowRun,
+    preloadedEvents,
+    runInput,
+    parentSpan,
+  } = params;
   const world = await getWorld();
   const runId = workflowRun.runId;
+
+  parentSpan?.setAttributes({
+    ...Attribute.SnapshotRuntime('snapshot'),
+  });
 
   // The workflowName from the queue topic is already the full workflow ID
   // (e.g. "workflow//./workflows/1_simple//simple")
@@ -80,19 +104,56 @@ export async function runWorkflowWithSnapshots(params: {
   const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
   const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
 
-  // Check for existing snapshot, decrypting if it was written with
-  // encryption. Plaintext snapshots (written before this change, or on
-  // runs without encryption configured) pass through unchanged.
-  const loadedSnapshot = await world.snapshots.load(runId);
-  const existingSnapshot = loadedSnapshot
-    ? {
-        data: (await decryptSerializedData(
-          loadedSnapshot.data,
-          encryptionKey
-        )) as Uint8Array,
-        metadata: loadedSnapshot.metadata,
-      }
-    : null;
+  // Load + decrypt is wrapped in a child span so operators can see
+  // snapshot-restore latency in waterfall views.
+  const existingSnapshot = await trace<{
+    data: Uint8Array;
+    metadata: import('@workflow/world').SnapshotMetadata;
+  } | null>('snapshot.load', async (loadSpan) => {
+    const t0 = tick();
+    const loadedSnapshot = await world.snapshots.load(runId);
+    const loadDurationMs = tick() - t0;
+
+    loadSpan?.setAttributes({
+      ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
+    });
+    parentSpan?.setAttributes({
+      ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
+    });
+
+    if (!loadedSnapshot) return null;
+
+    loadSpan?.setAttributes({
+      ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+    });
+    parentSpan?.setAttributes({
+      ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+    });
+
+    // Decrypt if the snapshot was written with encryption. Plaintext
+    // snapshots (written before this change, or on runs without
+    // encryption configured) pass through unchanged.
+    const decryptStart = tick();
+    const decrypted = (await decryptSerializedData(
+      loadedSnapshot.data,
+      encryptionKey
+    )) as Uint8Array;
+    if (encryptionKey) {
+      const decryptDurationMs = tick() - decryptStart;
+      loadSpan?.setAttributes({
+        ...Attribute.SnapshotDecryptDurationMs(Math.round(decryptDurationMs)),
+      });
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotDecryptDurationMs(Math.round(decryptDurationMs)),
+      });
+    }
+
+    return { data: decrypted, metadata: loadedSnapshot.metadata };
+  });
+
+  parentSpan?.setAttributes({
+    ...Attribute.SnapshotInvocationKind(existingSnapshot ? 'restore' : 'first'),
+  });
 
   // On first invocation (no snapshot), prefer preloadedEvents from the
   // run_started response — they're guaranteed to include run_created
@@ -102,6 +163,7 @@ export async function runWorkflowWithSnapshots(params: {
   let lastEventsCursor: string | null =
     existingSnapshot?.metadata.eventsCursor ?? null;
 
+  let eventsFetchedPages = 0;
   if (!existingSnapshot && preloadedEvents && preloadedEvents.length > 0) {
     events = preloadedEvents;
   } else {
@@ -118,6 +180,7 @@ export async function runWorkflowWithSnapshots(params: {
           limit: 1000,
         },
       });
+      eventsFetchedPages++;
       allEvents.push(...response.data);
       // Update the cursor to the last successfully fetched page's cursor.
       // Only update when we got results — the final empty-page response
@@ -132,6 +195,14 @@ export async function runWorkflowWithSnapshots(params: {
     // Capture the final cursor position (after all fetched events)
     if (cursor) lastEventsCursor = cursor;
   }
+
+  parentSpan?.setAttributes({
+    ...Attribute.SnapshotEventsPreloaded(
+      !existingSnapshot && !!preloadedEvents && preloadedEvents.length > 0
+    ),
+    ...Attribute.SnapshotEventsFetchedCount(events.length),
+    ...Attribute.SnapshotEventsFetchedPages(eventsFetchedPages),
+  });
 
   runtimeLogger.info('Snapshot runtime: fetched events', {
     workflowRunId: runId,
@@ -197,6 +268,7 @@ export async function runWorkflowWithSnapshots(params: {
     encryptionKey,
     port,
     runInput,
+    parentSpan,
   });
 
   runtimeLogger.debug('Snapshot runtime: VM returned', {
@@ -212,9 +284,18 @@ export async function runWorkflowWithSnapshots(params: {
     runtimeLogger.info('Snapshot runtime: workflow completed', {
       workflowRunId: runId,
     });
+    parentSpan?.setAttributes({
+      ...Attribute.SnapshotOutcome('completed'),
+    });
 
     // Delete the snapshot
-    await world.snapshots.delete(runId);
+    {
+      const t0 = tick();
+      await world.snapshots.delete(runId);
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotDeleteDurationMs(Math.round(tick() - t0)),
+      });
+    }
 
     // Create run_completed event.
     // The VM serializes the workflow result as format-prefixed devalue bytes
@@ -265,25 +346,67 @@ export async function runWorkflowWithSnapshots(params: {
       })),
     });
 
+    parentSpan?.setAttributes({
+      ...Attribute.SnapshotOutcome('suspended'),
+      ...Attribute.SnapshotPendingOpsCount(pendingOperations.length),
+      ...(lastEventsCursor
+        ? Attribute.SnapshotEventsCursor(lastEventsCursor)
+        : {}),
+    });
+
     // Save the snapshot, encrypting if a key is available. When
     // encryption is disabled, encrypt() passes the bytes through
-    // unchanged.
-    const snapshotToStore = (await encryptSerializedData(
-      snapshot,
-      encryptionKey
-    )) as Uint8Array;
-    runtimeLogger.debug('Snapshot runtime: saving snapshot', {
-      workflowRunId: runId,
-      snapshotType: typeof snapshotToStore,
-      snapshotIsUint8Array: snapshotToStore instanceof Uint8Array,
-      snapshotLength: snapshotToStore?.length,
-      snapshotByteLength: snapshotToStore?.byteLength,
-      encrypted: !!encryptionKey,
-      eventsCursor: lastEventsCursor,
-    });
-    await world.snapshots.save(runId, snapshotToStore, {
-      eventsCursor: lastEventsCursor,
-      createdAt: new Date(),
+    // unchanged. Wrapped in a child span so operators can drill into
+    // serialize / encrypt / persist latency separately.
+    await trace('snapshot.save', async (saveSpan) => {
+      const plaintextBytes = snapshot.byteLength;
+      saveSpan?.setAttributes({
+        ...Attribute.SnapshotSavePlaintextBytes(plaintextBytes),
+      });
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotSavePlaintextBytes(plaintextBytes),
+      });
+
+      const encryptStart = tick();
+      const snapshotToStore = (await encryptSerializedData(
+        snapshot,
+        encryptionKey
+      )) as Uint8Array;
+      if (encryptionKey) {
+        const encryptDurationMs = Math.round(tick() - encryptStart);
+        saveSpan?.setAttributes({
+          ...Attribute.SnapshotEncryptDurationMs(encryptDurationMs),
+        });
+        parentSpan?.setAttributes({
+          ...Attribute.SnapshotEncryptDurationMs(encryptDurationMs),
+        });
+      }
+
+      runtimeLogger.debug('Snapshot runtime: saving snapshot', {
+        workflowRunId: runId,
+        snapshotType: typeof snapshotToStore,
+        snapshotIsUint8Array: snapshotToStore instanceof Uint8Array,
+        snapshotLength: snapshotToStore?.length,
+        snapshotByteLength: snapshotToStore?.byteLength,
+        encrypted: !!encryptionKey,
+        eventsCursor: lastEventsCursor,
+      });
+
+      const saveStart = tick();
+      await world.snapshots.save(runId, snapshotToStore, {
+        eventsCursor: lastEventsCursor,
+        createdAt: new Date(),
+      });
+      const saveDurationMs = Math.round(tick() - saveStart);
+
+      saveSpan?.setAttributes({
+        ...Attribute.SnapshotSaveBytes(snapshotToStore.byteLength),
+        ...Attribute.SnapshotSaveDurationMs(saveDurationMs),
+      });
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotSaveBytes(snapshotToStore.byteLength),
+        ...Attribute.SnapshotSaveDurationMs(saveDurationMs),
+      });
     });
 
     // Create events and queue steps for pending operations
@@ -510,9 +633,18 @@ export async function runWorkflowWithSnapshots(params: {
       errorStack,
       errorCode,
     });
+    parentSpan?.setAttributes({
+      ...Attribute.SnapshotOutcome('failed'),
+    });
 
     // Delete the snapshot
-    await world.snapshots.delete(runId);
+    {
+      const t0 = tick();
+      await world.snapshots.delete(runId);
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotDeleteDurationMs(Math.round(tick() - t0)),
+      });
+    }
 
     // Create run_failed event
     try {

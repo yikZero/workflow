@@ -436,6 +436,7 @@ export function workflowEntrypoint(
                       workflowRun,
                       preloadedEvents,
                       runInput,
+                      parentSpan: span,
                     });
                     runtimeLogger.debug('Snapshot runtime returned', {
                       workflowRunId: runId,

@@ -13,6 +13,7 @@
  * resolve/reject promises.
  */
 
+import type { Span } from '@opentelemetry/api';
 import type {
   Event,
   RunInput,
@@ -25,6 +26,7 @@ import seedrandom from 'seedrandom';
 import type { CryptoKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import { decrypt as decryptData } from '../serialization/encryption.js';
+import * as Attribute from '../telemetry/semantic-conventions.js';
 import { quickjsExtensions, quickjsWasm } from './quickjs-assets.generated.js';
 import { VM_SERDE_BUNDLE } from './vm-serde-bundle.generated.js';
 
@@ -115,6 +117,12 @@ export interface SnapshotRuntimeOptions {
    * (eventually-consistent read after the parent's start() wrote it).
    */
   runInput?: RunInput;
+  /**
+   * Parent OTel span (the outer `WORKFLOW {workflowName}` span). When
+   * provided, VM serialize / deserialize timing attributes are attached
+   * to it for end-to-end visibility.
+   */
+  parentSpan?: Span;
 }
 
 // ---- VM Bootstrap Code ----
@@ -471,7 +479,14 @@ export async function runSnapshotWorkflow(
 
   if (existingSnapshot) {
     // ---- RESTORE from snapshot ----
+    const deserializeStart = performance.now();
     const snapshot = QuickJS.deserializeSnapshot(existingSnapshot.data);
+    const deserializeDurationMs = Math.round(
+      performance.now() - deserializeStart
+    );
+    options.parentSpan?.setAttributes({
+      ...Attribute.SnapshotDeserializeDurationMs(deserializeDurationMs),
+    });
     vm = await QuickJS.restore(snapshot, {
       wasm: quickjsWasm,
       // Use real time for Date.now() — determinism is handled by seeded Math.random
@@ -661,7 +676,7 @@ export async function runSnapshotWorkflow(
   }
 
   // ---- Check result ----
-  return checkWorkflowState(vm);
+  return checkWorkflowState(vm, options.parentSpan);
 }
 
 // ---- Event Processing ----
@@ -979,7 +994,10 @@ function markCreated(vm: QuickJS, escapedCid: string, opType?: string): void {
 
 // ---- State Checking ----
 
-function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
+function checkWorkflowState(
+  vm: QuickJS,
+  parentSpan?: Span
+): SnapshotRuntimeResult {
   // Check completed — __workflowResult is a format-prefixed Uint8Array
   {
     using h = vm.evalCode('globalThis.__workflowResult');
@@ -1028,14 +1046,22 @@ function checkWorkflowState(vm: QuickJS): SnapshotRuntimeResult {
       );
       const pendingOps = vm.dump(pendingH) as PendingOperation[];
 
+      const serializeStart = performance.now();
       const snapshot = vm.snapshot();
       const serialized = QuickJS.serializeSnapshot(snapshot);
+      const serializeDurationMs = Math.round(
+        performance.now() - serializeStart
+      );
+      parentSpan?.setAttributes({
+        ...Attribute.SnapshotSerializeDurationMs(serializeDurationMs),
+      });
       vm.dispose();
 
       runtimeLogger.debug('Snapshot runtime: serialized snapshot', {
         type: typeof serialized,
         byteLength: serialized?.byteLength,
         length: serialized?.length,
+        durationMs: serializeDurationMs,
       });
 
       return {

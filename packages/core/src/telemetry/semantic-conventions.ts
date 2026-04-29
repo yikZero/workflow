@@ -92,6 +92,101 @@ export const WorkflowTracePropagated = SemanticConvention<boolean>(
   'workflow.trace.propagated'
 );
 
+// Snapshot runtime attributes
+
+/** The runtime mode handling this invocation */
+export const SnapshotRuntime = SemanticConvention<'snapshot' | 'replay'>(
+  'snapshot.runtime'
+);
+
+/**
+ * Whether this VM invocation is the first run (no existing snapshot) or a
+ * restore from a previously-persisted snapshot.
+ */
+export const SnapshotInvocationKind = SemanticConvention<'first' | 'restore'>(
+  'snapshot.invocation_kind'
+);
+
+/** Stored snapshot size on load, including any encryption framing */
+export const SnapshotLoadBytes = SemanticConvention<number>(
+  'snapshot.load.bytes'
+);
+
+/** Time spent in `world.snapshots.load()` (ms) */
+export const SnapshotLoadDurationMs = SemanticConvention<number>(
+  'snapshot.load.duration_ms'
+);
+
+/** Time spent decrypting the snapshot payload (ms) */
+export const SnapshotDecryptDurationMs = SemanticConvention<number>(
+  'snapshot.decrypt.duration_ms'
+);
+
+/** Time spent in QuickJS.deserializeSnapshot() (ms) */
+export const SnapshotDeserializeDurationMs = SemanticConvention<number>(
+  'snapshot.deserialize.duration_ms'
+);
+
+/** Whether preloaded events from `events.create('run_started')` were used */
+export const SnapshotEventsPreloaded = SemanticConvention<boolean>(
+  'snapshot.events.preloaded'
+);
+
+/** Total number of events fetched from the world for this invocation */
+export const SnapshotEventsFetchedCount = SemanticConvention<number>(
+  'snapshot.events.fetched_count'
+);
+
+/** Number of pages required to fetch all events */
+export const SnapshotEventsFetchedPages = SemanticConvention<number>(
+  'snapshot.events.fetched_pages'
+);
+
+/** Number of pending VM operations captured at suspension */
+export const SnapshotPendingOpsCount = SemanticConvention<number>(
+  'snapshot.pending_ops_count'
+);
+
+/** Stored snapshot size on save, post-encryption (the bytes the world sees) */
+export const SnapshotSaveBytes = SemanticConvention<number>(
+  'snapshot.save.bytes'
+);
+
+/** Snapshot size before encryption (raw QuickJS serializeSnapshot output) */
+export const SnapshotSavePlaintextBytes = SemanticConvention<number>(
+  'snapshot.save.plaintext_bytes'
+);
+
+/** Time spent in QuickJS.serializeSnapshot() (ms) */
+export const SnapshotSerializeDurationMs = SemanticConvention<number>(
+  'snapshot.serialize.duration_ms'
+);
+
+/** Time spent encrypting the snapshot payload (ms) */
+export const SnapshotEncryptDurationMs = SemanticConvention<number>(
+  'snapshot.encrypt.duration_ms'
+);
+
+/** Time spent in `world.snapshots.save()` (ms) */
+export const SnapshotSaveDurationMs = SemanticConvention<number>(
+  'snapshot.save.duration_ms'
+);
+
+/** Time spent in `world.snapshots.delete()` (ms) */
+export const SnapshotDeleteDurationMs = SemanticConvention<number>(
+  'snapshot.delete.duration_ms'
+);
+
+/** Outcome of this snapshot-runtime VM invocation */
+export const SnapshotOutcome = SemanticConvention<
+  'completed' | 'suspended' | 'failed'
+>('snapshot.outcome');
+
+/** Events cursor written into the saved snapshot's metadata */
+export const SnapshotEventsCursor = SemanticConvention<string>(
+  'snapshot.events_cursor'
+);
+
 /** Name of the error that caused workflow failure */
 export const WorkflowErrorName = SemanticConvention<string>(
   'workflow.error.name'
