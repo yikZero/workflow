@@ -48,11 +48,14 @@ export function createSnapshotsStorage(
       data: Uint8Array,
       metadata: SnapshotMetadata
     ): Promise<void> {
+      const t0 = performance.now();
       const { baseUrl, headers } = await getHttpConfig(config);
       const url = `${baseUrl}/v2/runs/${encodeURIComponent(runId)}/snapshot`;
 
       // Compress the snapshot data before sending
+      const gzipStart = performance.now();
       const compressed = gzipSync(data);
+      const gzipDurationMs = Math.round(performance.now() - gzipStart);
 
       headers.set('Content-Type', 'application/octet-stream');
       headers.set('X-Snapshot-Content-Encoding', SNAPSHOT_CONTENT_ENCODING);
@@ -80,12 +83,14 @@ export function createSnapshotsStorage(
       // network turbulence; a single failed save poisons the run
       // (handler returns 500 -> queue retries handler -> save fails
       // again -> 5xx loop until the run TTL).
+      const putStart = performance.now();
       const response = await undiciRequest(url, {
         method: 'PUT',
         body: compressed,
         headers: headersToRecord(headers),
         dispatcher: getDispatcher(),
       });
+      const putDurationMs = Math.round(performance.now() - putStart);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         const text = await response.body.text().catch(() => '');
@@ -97,26 +102,61 @@ export function createSnapshotsStorage(
 
       // Consume the response body to release the connection
       await response.body.text();
+
+      // CI-visible diagnostic: actual on-the-wire snapshot bytes and
+      // the gzip / HTTP-PUT cost breakdown. Mirrors the SNAPSHOT_DIAG
+      // checkpoint format from `@workflow/core` so a wedged run's
+      // entire save/load lifecycle is grep-able by runId in Vercel
+      // function logs. Emitted at warn level (always-on, no DEBUG
+      // required).
+      console.warn('[Workflow] WORLD_SNAPSHOT_DIAG', {
+        op: 'save',
+        runId,
+        // Raw snapshot bytes received from the core (already encrypted
+        // upstream if a key was configured).
+        inputBytes: data.byteLength,
+        // After gzipSync — the actual on-the-wire body uploaded.
+        wireBytes: compressed.byteLength,
+        compressionRatio:
+          data.byteLength > 0
+            ? +(data.byteLength / compressed.byteLength).toFixed(2)
+            : 0,
+        gzipDurationMs,
+        putDurationMs,
+        totalDurationMs: Math.round(performance.now() - t0),
+      });
     },
 
     async load(
       runId: string
     ): Promise<{ data: Uint8Array; metadata: SnapshotMetadata } | null> {
+      const t0 = performance.now();
       const { baseUrl, headers } = await getHttpConfig(config);
       const url = `${baseUrl}/v2/runs/${encodeURIComponent(runId)}/snapshot`;
 
       headers.set('Accept', 'application/octet-stream');
 
+      const getStart = performance.now();
       const response = await fetch(url, {
         method: 'GET',
         headers,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- undici dispatcher
         dispatcher: getDispatcher(),
       } as any);
+      const getDurationMs = Math.round(performance.now() - getStart);
 
       if (response.status === 404) {
         // Consume the response body to release the connection
         await response.text().catch(() => {});
+        // Diagnostic: emit the not-found case so we can correlate the
+        // skip-load fast-path in core with whatever the world saw.
+        console.warn('[Workflow] WORLD_SNAPSHOT_DIAG', {
+          op: 'load',
+          runId,
+          outcome: 'not_found',
+          getDurationMs,
+          totalDurationMs: Math.round(performance.now() - t0),
+        });
         return null;
       }
 
@@ -129,19 +169,43 @@ export function createSnapshotsStorage(
       }
 
       const buffer = await response.arrayBuffer();
+      const wireBytes = buffer.byteLength;
       let data = new Uint8Array(buffer);
 
       // Decompress based on the encoding header from the server
       const contentEncoding =
         response.headers.get('X-Snapshot-Content-Encoding') || null;
+      let gunzipDurationMs: number | undefined;
       if (contentEncoding === 'gzip') {
+        const gunzipStart = performance.now();
         data = gunzipSync(data);
+        gunzipDurationMs = Math.round(performance.now() - gunzipStart);
       }
 
       const eventsCursor =
         response.headers.get('X-Snapshot-Events-Cursor') || null;
       const createdAtStr = response.headers.get('X-Snapshot-Created-At');
       const createdAt = createdAtStr ? new Date(createdAtStr) : new Date();
+
+      // CI-visible diagnostic: actual on-the-wire snapshot bytes and
+      // gunzip cost. Same format/pairing as the save side above so the
+      // entire snapshot save/load lifecycle is grep-able from Vercel
+      // function logs by runId.
+      console.warn('[Workflow] WORLD_SNAPSHOT_DIAG', {
+        op: 'load',
+        runId,
+        outcome: 'ok',
+        // On-the-wire body size returned by the workflow-server.
+        wireBytes,
+        // After gunzip (if applicable). Equal to wireBytes when the
+        // server returns plaintext (no Content-Encoding header).
+        decompressedBytes: data.byteLength,
+        compressionRatio:
+          wireBytes > 0 ? +(data.byteLength / wireBytes).toFixed(2) : 0,
+        getDurationMs,
+        gunzipDurationMs,
+        totalDurationMs: Math.round(performance.now() - t0),
+      });
 
       return {
         data,
