@@ -563,6 +563,17 @@ export async function runSnapshotWorkflow(
       vm.setProp(vm.global, '__generateNanoid', nanoidFn);
     }
 
+    // Inject a deterministic timestamp for the VM's ULID factory. ULIDs
+    // produced inside the VM use this as their time prefix instead of
+    // Date.now(), so two concurrent workflow invocations of the same
+    // resumption produce IDENTICAL correlationIds (the random portion
+    // also matches because the PRNG is seeded the same way) and the
+    // world's EntityConflictError on `events.create` dedups one of each
+    // pair. Use `startedAt` (constant per-run) — distinctness across
+    // resumptions comes from the cursor mixed into the seedrandom seed,
+    // which advances the PRNG sequence between resumes.
+    vm.evalCode(`globalThis.__ulidTimestamp = ${startedAt};`).dispose();
+
     // Evaluate the VM serde bundle
     vm.evalCode(VM_SERDE_BUNDLE, 'vm-serde.js').dispose();
 
