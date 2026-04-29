@@ -6,12 +6,11 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../../../lib/utils';
 import type { Span } from '../../trace-viewer/types';
 import { formatDuration, getHighResInMs } from '../../trace-viewer/util/timing';
-import type { SegmentStatus, TimeCompression } from '../utils';
+import type { SegmentStatus, TimeCompression, TimeMarker } from '../utils';
 import {
-  computeCompressedTimeMarkers,
   computeSpanGaps,
   computeSpanSegments,
-  computeTimeMarkers,
+  getSpanDurationMs,
   getResourceColor,
 } from '../utils';
 
@@ -91,7 +90,7 @@ const TimelineBar = memo(function TimelineBar({
 }): ReactNode {
   const startTime = getHighResInMs(span.startTime);
   const endTime = getHighResInMs(span.endTime);
-  const totalDurationMs = endTime - startTime;
+  const totalDurationMs = getSpanDurationMs(span);
 
   const leftFrac = compression.toVisual(startTime);
   const rightFrac = compression.toVisual(endTime);

@@ -192,6 +192,63 @@ describe('Trace viewer with v1 events (no run lifecycle events)', () => {
       // parseStepName which returns the correlationId as fallback
       expect(stepSpan!.spanId).toBe('step_1');
     });
+
+    it('uses elapsed time for a pending sleep before resumeAt', () => {
+      const run = makeV1Run({
+        status: 'running',
+        completedAt: undefined,
+        output: undefined,
+      });
+      const waitCreatedAt = new Date(BASE_TIME.getTime() + 1_000);
+      const now = new Date(BASE_TIME.getTime() + 11_000);
+      const resumeAt = new Date(BASE_TIME.getTime() + 61_000);
+      const events = [
+        {
+          eventId: 'evnt_wait_created',
+          runId: 'wrun_v1test',
+          eventType: 'wait_created',
+          correlationId: 'wait_1',
+          createdAt: waitCreatedAt,
+          specVersion: 1,
+          eventData: { resumeAt },
+        },
+      ] as Event[];
+
+      const trace = buildTrace(run, events, now);
+      const sleepSpan = trace.spans.find((s) => s.resource === 'sleep');
+
+      expect(sleepSpan).toBeDefined();
+      const { map } = parseTrace(trace);
+      expect(map[sleepSpan!.spanId].duration).toBe(10_000);
+    });
+
+    it('does not extend a pending sleep beyond the run end', () => {
+      const runCompletedAt = new Date(BASE_TIME.getTime() + 86_400_000);
+      const run = makeV1Run({
+        status: 'completed',
+        completedAt: runCompletedAt,
+      });
+      const waitCreatedAt = new Date(BASE_TIME.getTime() + 1_000);
+      const resumeAt = new Date(BASE_TIME.getTime() + 6 * 86_400_000 + 1_000);
+      const events = [
+        {
+          eventId: 'evnt_wait_created',
+          runId: 'wrun_v1test',
+          eventType: 'wait_created',
+          correlationId: 'wait_1',
+          createdAt: waitCreatedAt,
+          specVersion: 1,
+          eventData: { resumeAt },
+        },
+      ] as Event[];
+
+      const trace = buildTrace(run, events, runCompletedAt);
+      const sleepSpan = trace.spans.find((s) => s.resource === 'sleep');
+
+      expect(sleepSpan).toBeDefined();
+      const { map } = parseTrace(trace);
+      expect(map[sleepSpan!.spanId].duration).toBe(86_399_000);
+    });
   });
 
   describe('computeSegments for v1 run spans', () => {
