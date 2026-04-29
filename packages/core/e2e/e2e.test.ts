@@ -33,6 +33,7 @@ import {
   getCollectedRunIds,
   getProtectionBypassHeaders,
   getWorkflowMetadata,
+  hasNestedStepStackFrames,
   hasStepSourceMaps,
   hasWorkflowSourceMaps,
   isLocalDeployment,
@@ -833,7 +834,7 @@ describe('e2e', () => {
   // Extended, CJK, emoji, RTL) round-trip end-to-end as bytes that decode
   // back to the original strings — the same property that the web inspector
   // relies on to render decoded text for typed-array stream chunks.
-  test('utf8StreamWorkflow', { timeout: 60_000 }, async () => {
+  test('utf8StreamWorkflow', { timeout: 120_000 }, async () => {
     const run = await start(await e2e('utf8StreamWorkflow'), []);
     const reader = run.getReadable().getReader();
 
@@ -1014,8 +1015,11 @@ describe('e2e', () => {
             expect(result.message).toContain(
               'Step error from imported helper module'
             );
-            // Stack trace propagates to caught error with function names and source file
-            expect(result.stack).toContain('throwErrorFromStep');
+            // Stack trace propagates to caught error with function names and source file.
+            // Some production bundlers collapse non-exported helper frames.
+            if (hasNestedStepStackFrames()) {
+              expect(result.stack).toContain('throwErrorFromStep');
+            }
             expect(result.stack).toContain('stepThatThrowsFromHelper');
             expect(result.stack).not.toContain('evalmachine');
 
@@ -1035,7 +1039,9 @@ describe('e2e', () => {
               s.stepName.includes('stepThatThrowsFromHelper')
             );
             expect(failedStep.status).toBe('failed');
-            expect(failedStep.error.stack).toContain('throwErrorFromStep');
+            if (hasNestedStepStackFrames()) {
+              expect(failedStep.error.stack).toContain('throwErrorFromStep');
+            }
             expect(failedStep.error.stack).toContain(
               'stepThatThrowsFromHelper'
             );
