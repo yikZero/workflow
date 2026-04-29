@@ -30,6 +30,10 @@ export const SerializationFormat = {
   DEVALUE_V1: 'devl' as FormatPrefix,
   /** Encrypted payload (inner payload has its own format prefix) */
   ENCRYPTED: 'encr' as FormatPrefix,
+  /** gzip-compressed payload (`zlib.gzipSync`); inner is raw bytes */
+  GZIP: 'gzip' as FormatPrefix,
+  /** zstd-compressed payload (`zlib.zstdCompressSync`, Node >= 22.15); inner is raw bytes */
+  ZSTD: 'zstd' as FormatPrefix,
 } as const;
 
 // ---- Serializable Types ----

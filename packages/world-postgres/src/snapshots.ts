@@ -1,4 +1,3 @@
-import { gunzipSync, gzipSync } from 'node:zlib';
 import type { SnapshotMetadata, Storage } from '@workflow/world';
 import { eq } from 'drizzle-orm';
 import { type Drizzle, Schema } from './drizzle/index.js';
@@ -6,10 +5,12 @@ import { type Drizzle, Schema } from './drizzle/index.js';
 /**
  * Snapshot storage for world-postgres.
  *
- * Binary snapshot data is stored gzip-compressed in the `data` column of
- * the `workflow.workflow_snapshots` table. Each run has at most one row —
- * `save()` uses an upsert to replace the previous snapshot when a newer
- * suspension point is reached.
+ * Compression and encryption are handled by `@workflow/core`'s
+ * snapshot entrypoint (`compress(snapshot) → encrypt → save`). This
+ * world layer treats the bytes as opaque — it does NOT add its own
+ * compression. Blobs are stored verbatim in the `data` column of
+ * `workflow.workflow_snapshots`. Each run has at most one row;
+ * `save()` upserts the latest suspension's bytes.
  */
 export function createSnapshotsStorage(drizzle: Drizzle): Storage['snapshots'] {
   const { snapshots } = Schema;
@@ -20,20 +21,19 @@ export function createSnapshotsStorage(drizzle: Drizzle): Storage['snapshots'] {
       data: Uint8Array,
       metadata: SnapshotMetadata
     ): Promise<void> {
-      const compressed = gzipSync(data);
-
+      const blob = Buffer.from(data);
       await drizzle
         .insert(snapshots)
         .values({
           runId,
-          data: Buffer.from(compressed),
+          data: blob,
           eventsCursor: metadata.eventsCursor,
           createdAt: metadata.createdAt,
         })
         .onConflictDoUpdate({
           target: snapshots.runId,
           set: {
-            data: Buffer.from(compressed),
+            data: blob,
             eventsCursor: metadata.eventsCursor,
             createdAt: metadata.createdAt,
           },
@@ -51,12 +51,10 @@ export function createSnapshotsStorage(drizzle: Drizzle): Storage['snapshots'] {
 
       if (!row) return null;
 
-      // Decompress the snapshot data.
-      const decompressed = gunzipSync(row.data);
       const data = new Uint8Array(
-        decompressed.buffer,
-        decompressed.byteOffset,
-        decompressed.byteLength
+        row.data.buffer,
+        row.data.byteOffset,
+        row.data.byteLength
       );
 
       return {

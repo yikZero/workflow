@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { gunzipSync } from 'node:zlib';
 import type { SnapshotMetadata } from '@workflow/world';
 import { SnapshotMetadataSchema } from '@workflow/world';
 import { z } from 'zod';
@@ -11,7 +11,7 @@ import { ensureDir, readBuffer, readJSON, write, writeJSON } from '../fs.js';
  * so the correct file (and compression format) can be loaded.
  */
 const LocalSnapshotMetadataSchema = SnapshotMetadataSchema.extend({
-  /** Filename of the binary snapshot data (e.g. "{runId}.bin.gz") */
+  /** Filename of the binary snapshot data (e.g. "{runId}.bin") */
   dataFile: z.string().optional(),
 });
 
@@ -19,13 +19,15 @@ const LocalSnapshotMetadataSchema = SnapshotMetadataSchema.extend({
  * Create the snapshots sub-storage for a local World implementation.
  *
  * Snapshots are stored as two files per run:
- *   {basedir}/snapshots/{runId}.bin.gz — gzip-compressed VM snapshot
+ *   {basedir}/snapshots/{runId}.bin    — opaque VM snapshot bytes
  *   {basedir}/snapshots/{runId}.json   — metadata (eventsCursor, createdAt, dataFile)
  *
- * The metadata includes a `dataFile` field with the binary filename so
- * the correct compression format can be determined on load. This allows
- * changing the compression format in the future without breaking existing
- * snapshots.
+ * Compression and encryption are handled by `@workflow/core`'s snapshot
+ * entrypoint (`compress(snapshot) → encrypt → save`); this world layer
+ * stores the bytes verbatim. The `dataFile` filename in metadata also
+ * supports older `.bin.gz` blobs (gzipped by a previous version of this
+ * code) for backward compatibility on a developer's local
+ * `.workflow-data` directory.
  */
 export function createSnapshotsStorage(basedir: string) {
   const snapshotsDir = path.join(basedir, 'snapshots');
@@ -42,11 +44,9 @@ export function createSnapshotsStorage(basedir: string) {
     ): Promise<void> {
       await ensureDir(snapshotsDir);
 
-      const dataFile = `${runId}.bin.gz`;
-      const compressed = gzipSync(data);
-
+      const dataFile = `${runId}.bin`;
       await Promise.all([
-        write(path.join(snapshotsDir, dataFile), compressed, {
+        write(path.join(snapshotsDir, dataFile), Buffer.from(data), {
           overwrite: true,
         }),
         writeJSON(
@@ -75,7 +75,11 @@ export function createSnapshotsStorage(basedir: string) {
       try {
         const dataBuf = await readBuffer(dataPath);
 
-        // Decompress if the file is gzip-compressed
+        // BACKWARD COMPAT: older snapshots saved as `.bin.gz` get
+        // gunzipped here. New saves are always `.bin` (opaque bytes
+        // — compression handled by the core entrypoint). This branch
+        // only fires for stale `.workflow-data/` directories on a
+        // developer's machine; CI workspaces are clean per run.
         let data: Uint8Array;
         if (dataFile.endsWith('.gz')) {
           data = gunzipSync(dataBuf);

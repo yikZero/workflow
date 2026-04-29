@@ -1,4 +1,4 @@
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { gunzipSync } from 'node:zlib';
 import { WorkflowWorldError } from '@workflow/errors';
 import type { SnapshotMetadata, Storage } from '@workflow/world';
 import { request as undiciRequest } from 'undici';
@@ -19,20 +19,20 @@ function headersToRecord(headers: Headers): Record<string, string> {
 }
 
 /**
- * Content encoding used for snapshot storage.
- * Sent as X-Snapshot-Content-Encoding header so the server can persist it
- * alongside the blob. On load, the SDK reads this header to know how to
- * decompress. This allows changing the algorithm in the future without
- * breaking existing snapshots.
- */
-const SNAPSHOT_CONTENT_ENCODING = 'gzip';
-
-/**
  * Create snapshot storage backed by the workflow-server API.
  *
- * Snapshot data is gzip-compressed by the SDK before sending and
- * decompressed after receiving. The server stores the raw (compressed)
- * bytes and tracks the encoding via S3 user metadata.
+ * Compression and encryption are now handled by `@workflow/core`'s
+ * snapshot entrypoint (`compress(snapshot) → encrypt → save`). This
+ * world layer treats the bytes as opaque — it does NOT add its own
+ * gzip wrapper, since the bytes arriving here are already encrypted
+ * (and encryption produces ciphertext that doesn't compress).
+ *
+ * For backward compatibility, the load path still honors the
+ * `X-Snapshot-Content-Encoding: gzip` response header that older
+ * stored blobs were written with — those will be gunzipped on the
+ * way out. New blobs from the current SDK arrive without any
+ * Content-Encoding metadata, so the gunzip step is skipped and the
+ * bytes are returned verbatim for the core to decrypt + decompress.
  *
  * Snapshot endpoints use raw binary transfer:
  *   - PUT  /v2/runs/:runId/snapshot — binary body, metadata in headers
@@ -52,13 +52,12 @@ export function createSnapshotsStorage(
       const { baseUrl, headers } = await getHttpConfig(config);
       const url = `${baseUrl}/v2/runs/${encodeURIComponent(runId)}/snapshot`;
 
-      // Compress the snapshot data before sending
-      const gzipStart = performance.now();
-      const compressed = gzipSync(data);
-      const gzipDurationMs = Math.round(performance.now() - gzipStart);
-
+      // Bytes arrive opaquely from the core (compress(plain) → encrypt
+      // pipeline). Don't compress again — encrypted bytes don't
+      // compress, and the core is responsible for the codec choice.
+      // Don't set X-Snapshot-Content-Encoding either; old blobs
+      // written under that scheme can still be loaded back below.
       headers.set('Content-Type', 'application/octet-stream');
-      headers.set('X-Snapshot-Content-Encoding', SNAPSHOT_CONTENT_ENCODING);
       headers.set('X-Snapshot-Events-Cursor', metadata.eventsCursor ?? '');
       headers.set('X-Snapshot-Created-At', metadata.createdAt.toISOString());
 
@@ -86,7 +85,7 @@ export function createSnapshotsStorage(
       const putStart = performance.now();
       const response = await undiciRequest(url, {
         method: 'PUT',
-        body: compressed,
+        body: data,
         headers: headersToRecord(headers),
         dispatcher: getDispatcher(),
       });
@@ -104,24 +103,16 @@ export function createSnapshotsStorage(
       await response.body.text();
 
       // CI-visible diagnostic: actual on-the-wire snapshot bytes and
-      // the gzip / HTTP-PUT cost breakdown. Mirrors the SNAPSHOT_DIAG
-      // checkpoint format from `@workflow/core` so a wedged run's
-      // entire save/load lifecycle is grep-able by runId in Vercel
-      // function logs. Emitted at warn level (always-on, no DEBUG
-      // required).
+      // the HTTP-PUT cost. Mirrors the SNAPSHOT_DIAG checkpoint format
+      // from `@workflow/core` so a wedged run's entire save/load
+      // lifecycle is grep-able by runId in Vercel function logs.
+      // Emitted at warn level (always-on, no DEBUG required).
       console.warn('[Workflow] WORLD_SNAPSHOT_DIAG', {
         op: 'save',
         runId,
-        // Raw snapshot bytes received from the core (already encrypted
-        // upstream if a key was configured).
-        inputBytes: data.byteLength,
-        // After gzipSync — the actual on-the-wire body uploaded.
-        wireBytes: compressed.byteLength,
-        compressionRatio:
-          data.byteLength > 0
-            ? +(data.byteLength / compressed.byteLength).toFixed(2)
-            : 0,
-        gzipDurationMs,
+        // Bytes received from the core — already compressed and
+        // encrypted upstream. The world transports them opaquely.
+        wireBytes: data.byteLength,
         putDurationMs,
         totalDurationMs: Math.round(performance.now() - t0),
       });
@@ -172,7 +163,14 @@ export function createSnapshotsStorage(
       const wireBytes = buffer.byteLength;
       let data = new Uint8Array(buffer);
 
-      // Decompress based on the encoding header from the server
+      // BACKWARD COMPAT: older blobs were saved with the SDK applying
+      // its own gzip + an `X-Snapshot-Content-Encoding: gzip` header.
+      // New blobs (current SDK) arrive opaque — already
+      // compressed+encrypted by the core — and have no
+      // Content-Encoding metadata. When this header is present we
+      // gunzip; otherwise we pass bytes through verbatim and let the
+      // core's `decompress()` handle the modern format-prefix
+      // (gzip/zstd) on the inner payload.
       const contentEncoding =
         response.headers.get('X-Snapshot-Content-Encoding') || null;
       let gunzipDurationMs: number | undefined;

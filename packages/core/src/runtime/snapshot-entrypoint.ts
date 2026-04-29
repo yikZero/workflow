@@ -23,6 +23,11 @@ import { classifyRunError } from '../classify-error.js';
 import { importKey } from '../encryption.js';
 import { runtimeLogger } from '../logger.js';
 import {
+  compress,
+  decompress,
+  PREFERRED_CODEC,
+} from '../serialization/compression.js';
+import {
   decrypt as decryptSerializedData,
   encrypt as encryptSerializedData,
 } from '../serialization/encryption.js';
@@ -182,15 +187,14 @@ export async function runWorkflowWithSnapshots(params: {
   // closure so we can fold it into the `snapshot_loaded` diagnostic.
   let loadDurationMs: number | undefined;
   let loadDecryptDurationMs: number | undefined;
-  // Bytes returned by `world.snapshots.load()`. May be smaller than the
-  // plaintext snapshot bytes if the world stored an encrypted blob,
-  // but is NOT the actual on-the-wire size — world-vercel decompresses
-  // (gunzip) inside its load() before returning, so this measures the
-  // post-decompress, pre-decrypt size.
+  let loadDecompressDurationMs: number | undefined;
   let loadReturnedBytes: number | undefined;
+  let loadDecompressedBytes: number | undefined;
 
-  // Load + decrypt is wrapped in a child span so operators can see
-  // snapshot-restore latency in waterfall views.
+  // Load + decrypt + decompress is wrapped in a child span so
+  // operators can see snapshot-restore latency in waterfall views.
+  // Pipeline order on load (inverse of save):
+  //   world.snapshots.load → decrypt → decompress → deserialize.
   const existingSnapshot = isFirstInvocation
     ? null
     : await trace<{
@@ -240,7 +244,17 @@ export async function runWorkflowWithSnapshots(params: {
           });
         }
 
-        return { data: decrypted, metadata: loadedSnapshot.metadata };
+        // Decompress if the snapshot was written with a compression
+        // prefix (gzip/zstd). Snapshots written before the
+        // compress-then-encrypt rollout are bare plaintext and pass
+        // through unchanged via the format-prefix dispatch in
+        // `decompress()`.
+        const decompressStart = tick();
+        const decompressed = decompress(decrypted) as Uint8Array;
+        loadDecompressDurationMs = tick() - decompressStart;
+        loadDecompressedBytes = decompressed.byteLength;
+
+        return { data: decompressed, metadata: loadedSnapshot.metadata };
       });
 
   parentSpan?.setAttributes({
@@ -249,17 +263,25 @@ export async function runWorkflowWithSnapshots(params: {
 
   wfdiag('snapshot_loaded', {
     invocationKind: existingSnapshot ? 'restore' : 'first',
-    // Plaintext bytes after decrypt — what gets handed to
+    // Plaintext bytes after decrypt + decompress — what gets handed to
     // QuickJS.deserializeSnapshot.
     snapshotBytes: existingSnapshot?.data.byteLength ?? 0,
-    // Bytes returned by `world.snapshots.load()`. NOTE: world-vercel
-    // already decompresses (gunzip) before returning, so this is the
-    // post-decompress, pre-decrypt size — not the on-the-wire bytes.
-    // For true wire bytes see the world-side WORLD_SNAPSHOT_DIAG log
-    // emitted from `world-vercel/src/snapshots.ts`.
+    // Bytes returned by `world.snapshots.load()` — after the world has
+    // done its own transport-level decompression (if any). With the
+    // compress-then-encrypt pipeline and world-vercel's gzip layer
+    // removed, this should equal the (encrypted, compressed) bytes
+    // that came off the wire.
     returnedBytes: loadReturnedBytes ?? 0,
+    // Bytes after our own decompress() (pre-deserialize). When equal
+    // to returnedBytes, the load was a no-op decompression (no
+    // compression prefix on the stored blob — old format).
+    decompressedBytes: loadDecompressedBytes ?? 0,
     loadDurationMs:
       loadDurationMs !== undefined ? Math.round(loadDurationMs) : undefined,
+    decompressDurationMs:
+      loadDecompressDurationMs !== undefined
+        ? Math.round(loadDecompressDurationMs)
+        : undefined,
     decryptDurationMs:
       loadDecryptDurationMs !== undefined
         ? Math.round(loadDecryptDurationMs)
@@ -525,6 +547,15 @@ export async function runWorkflowWithSnapshots(params: {
     // Per-stage timings/byte counts are captured here and reported in
     // the `snapshot_saved` wfdiag below so the breakdown shows up in
     // CI-fetched function logs (not just OTel spans).
+    //
+    // Pipeline order: serialize → compress → encrypt → store.
+    // Compression goes BEFORE encryption because encrypted bytes are
+    // ~random and don't compress (gzip on ciphertext is wasted CPU).
+    // For QuickJS heaps the compression ratio is ~4x with zstd or
+    // gzip, so the bytes that get encrypted (and uploaded) are
+    // already much smaller than the raw heap.
+    let saveCompressedBytes = 0;
+    let saveCompressDurationMs = 0;
     let saveHandedToWorldBytes = 0;
     let saveEncryptDurationMs: number | undefined;
     let saveStoreDurationMs = 0;
@@ -537,9 +568,15 @@ export async function runWorkflowWithSnapshots(params: {
         ...Attribute.SnapshotSavePlaintextBytes(plaintextBytes),
       });
 
+      // Compress before encrypt — see comment above.
+      const compressStart = tick();
+      const compressed = compress(snapshot) as Uint8Array;
+      saveCompressDurationMs = Math.round(tick() - compressStart);
+      saveCompressedBytes = compressed.byteLength;
+
       const encryptStart = tick();
       const snapshotToStore = (await encryptSerializedData(
-        snapshot,
+        compressed,
         encryptionKey
       )) as Uint8Array;
       if (encryptionKey) {
@@ -582,21 +619,24 @@ export async function runWorkflowWithSnapshots(params: {
 
     wfdiag('snapshot_saved', {
       // Plaintext bytes — QuickJS serializeSnapshot output, before
-      // any encryption. What the host actually generated.
+      // compression / encryption. What the host actually generated.
       plaintextBytes: snapshot.byteLength,
-      // Bytes handed to `world.snapshots.save()` — equal to
-      // plaintextBytes when no encryption key is configured (the
-      // encrypt pass-through). The world may apply additional
-      // compression on top: world-vercel gzips inside its save
-      // method, so the actual on-the-wire size is smaller still.
-      // For the true wire bytes, see the world-side
-      // WORLD_SNAPSHOT_DIAG log emitted from
-      // `world-vercel/src/snapshots.ts`.
+      // After compression but before encryption. The codec used
+      // (zstd vs gzip) is reflected in the format prefix on the bytes;
+      // PREFERRED_CODEC reports which one this process is using.
+      compressedBytes: saveCompressedBytes,
+      compressionRatio:
+        snapshot.byteLength > 0 && saveCompressedBytes > 0
+          ? +(snapshot.byteLength / saveCompressedBytes).toFixed(2)
+          : 0,
+      compressionCodec: PREFERRED_CODEC,
+      // Bytes handed to `world.snapshots.save()` — after both
+      // compression and encryption. This is what the world transports.
+      // The world should NOT add its own compression layer (encrypted
+      // bytes are not compressible).
       handedToWorldBytes: saveHandedToWorldBytes,
-      // Per-stage timings. encryptDurationMs is undefined when no
-      // key was configured (encryptSerializedData is a pass-through).
-      // storeDurationMs is the round-trip into the world's save
-      // method, which on world-vercel includes gzip + the HTTP PUT.
+      // Per-stage timings.
+      compressDurationMs: saveCompressDurationMs,
       encryptDurationMs: saveEncryptDurationMs,
       storeDurationMs: saveStoreDurationMs,
       eventsCursor: lastEventsCursor,
