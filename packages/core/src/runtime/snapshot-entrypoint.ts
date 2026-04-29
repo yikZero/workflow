@@ -44,6 +44,37 @@ function tick(): number {
 }
 
 /**
+ * Returns true when the supplied events indicate the workflow handler
+ * has not yet completed a suspension cycle for this run, meaning a
+ * `snapshots.load` call would 404 and can be skipped entirely.
+ *
+ * The suspension handler always writes the snapshot BEFORE any
+ * `step_created` / `hook_created` / `wait_created` events
+ * (`await trace('snapshot.save', ...)` then `Promise.all(opsPromises)`
+ * in this file). So the presence of any non-initial event implies a
+ * save attempt has at least started, and we should still try to load
+ * to potentially restore from it. The contrapositive: if we only see
+ * `run_created` / `run_started`, the handler has never reached its
+ * first suspension and no snapshot exists.
+ *
+ * Returns false when `preloadedEvents` is missing/empty so the caller
+ * falls back to the normal load path (the world may simply not have
+ * preloaded events for this invocation).
+ *
+ * Exported for unit testing.
+ */
+export function canSkipSnapshotLoad(
+  preloadedEvents: readonly Event[] | undefined
+): boolean {
+  if (!Array.isArray(preloadedEvents) || preloadedEvents.length === 0) {
+    return false;
+  }
+  return preloadedEvents.every(
+    (e) => e.eventType === 'run_created' || e.eventType === 'run_started'
+  );
+}
+
+/**
  * Run a workflow using the snapshot runtime.
  *
  * This replaces the event-replay path (runWorkflow + EventsConsumer) with:
@@ -132,52 +163,63 @@ export async function runWorkflowWithSnapshots(params: {
   const rawKey = await world.getEncryptionKeyForRun?.(workflowRun);
   const encryptionKey = rawKey ? await importKey(rawKey) : undefined;
 
+  // Fast path: if the events we already have indicate the workflow
+  // handler has not yet completed a suspension cycle for this run,
+  // skip the `snapshots.load` round-trip (which would 404 anyway).
+  const isFirstInvocation = canSkipSnapshotLoad(preloadedEvents);
+
   // Load + decrypt is wrapped in a child span so operators can see
   // snapshot-restore latency in waterfall views.
-  const existingSnapshot = await trace<{
-    data: Uint8Array;
-    metadata: import('@workflow/world').SnapshotMetadata;
-  } | null>('snapshot.load', async (loadSpan) => {
-    const t0 = tick();
-    const loadedSnapshot = await world.snapshots.load(runId);
-    const loadDurationMs = tick() - t0;
+  const existingSnapshot = isFirstInvocation
+    ? null
+    : await trace<{
+        data: Uint8Array;
+        metadata: import('@workflow/world').SnapshotMetadata;
+      } | null>('snapshot.load', async (loadSpan) => {
+        const t0 = tick();
+        const loadedSnapshot = await world.snapshots.load(runId);
+        const loadDurationMs = tick() - t0;
 
-    loadSpan?.setAttributes({
-      ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
-    });
-    parentSpan?.setAttributes({
-      ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
-    });
+        loadSpan?.setAttributes({
+          ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
+        });
+        parentSpan?.setAttributes({
+          ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
+        });
 
-    if (!loadedSnapshot) return null;
+        if (!loadedSnapshot) return null;
 
-    loadSpan?.setAttributes({
-      ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
-    });
-    parentSpan?.setAttributes({
-      ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
-    });
+        loadSpan?.setAttributes({
+          ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+        });
+        parentSpan?.setAttributes({
+          ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+        });
 
-    // Decrypt if the snapshot was written with encryption. Plaintext
-    // snapshots (written before this change, or on runs without
-    // encryption configured) pass through unchanged.
-    const decryptStart = tick();
-    const decrypted = (await decryptSerializedData(
-      loadedSnapshot.data,
-      encryptionKey
-    )) as Uint8Array;
-    if (encryptionKey) {
-      const decryptDurationMs = tick() - decryptStart;
-      loadSpan?.setAttributes({
-        ...Attribute.SnapshotDecryptDurationMs(Math.round(decryptDurationMs)),
+        // Decrypt if the snapshot was written with encryption. Plaintext
+        // snapshots (written before this change, or on runs without
+        // encryption configured) pass through unchanged.
+        const decryptStart = tick();
+        const decrypted = (await decryptSerializedData(
+          loadedSnapshot.data,
+          encryptionKey
+        )) as Uint8Array;
+        if (encryptionKey) {
+          const decryptDurationMs = tick() - decryptStart;
+          loadSpan?.setAttributes({
+            ...Attribute.SnapshotDecryptDurationMs(
+              Math.round(decryptDurationMs)
+            ),
+          });
+          parentSpan?.setAttributes({
+            ...Attribute.SnapshotDecryptDurationMs(
+              Math.round(decryptDurationMs)
+            ),
+          });
+        }
+
+        return { data: decrypted, metadata: loadedSnapshot.metadata };
       });
-      parentSpan?.setAttributes({
-        ...Attribute.SnapshotDecryptDurationMs(Math.round(decryptDurationMs)),
-      });
-    }
-
-    return { data: decrypted, metadata: loadedSnapshot.metadata };
-  });
 
   parentSpan?.setAttributes({
     ...Attribute.SnapshotInvocationKind(existingSnapshot ? 'restore' : 'first'),
@@ -187,6 +229,9 @@ export async function runWorkflowWithSnapshots(params: {
     invocationKind: existingSnapshot ? 'restore' : 'first',
     snapshotBytes: existingSnapshot?.data.byteLength ?? 0,
     eventsCursor: existingSnapshot?.metadata.eventsCursor ?? null,
+    // True when we skipped the snapshots.load call entirely because
+    // preloadedEvents indicated this is the first handler invocation.
+    skippedLoad: isFirstInvocation,
   });
 
   // On first invocation (no snapshot), prefer preloadedEvents from the
