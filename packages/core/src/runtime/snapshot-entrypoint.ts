@@ -26,7 +26,7 @@ import {
   decrypt as decryptSerializedData,
   encrypt as encryptSerializedData,
 } from '../serialization/encryption.js';
-import { remapErrorStack } from '../source-map.js';
+import { remapErrorStack, stripInlineSourceMap } from '../source-map.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 import { trace } from '../telemetry.js';
 import { queueMessage } from './helpers.js';
@@ -122,6 +122,16 @@ export async function runWorkflowWithSnapshots(params: {
   const world = await getWorld();
   const runId = workflowRun.runId;
   const invocationStart = tick();
+
+  // Strip the inline source map comment before evaluating the bundle in
+  // the QuickJS VM. The map is purely host-side metadata for
+  // `remapErrorStack` (called below on workflow failures, against the
+  // ORIGINAL `workflowCode`). QuickJS retains source text for
+  // stack-trace line lookups, so the few-MB base64 comment bloats the
+  // VM heap and therefore every snapshot save+load round-trip.
+  // Empirically: ~32% snapshot-bytes reduction on the example
+  // workbench's bundle (11.9 MB → 8.0 MB plaintext snapshot).
+  const workflowCodeForVM = stripInlineSourceMap(workflowCode);
   // Per-invocation diagnostic id so checkpoint logs can be correlated even
   // if the same runId is processed by overlapping invocations on different
   // function instances.
@@ -168,6 +178,17 @@ export async function runWorkflowWithSnapshots(params: {
   // skip the `snapshots.load` round-trip (which would 404 anyway).
   const isFirstInvocation = canSkipSnapshotLoad(preloadedEvents);
 
+  // Per-load timing/byte breakdown carried back out of the trace
+  // closure so we can fold it into the `snapshot_loaded` diagnostic.
+  let loadDurationMs: number | undefined;
+  let loadDecryptDurationMs: number | undefined;
+  // Bytes returned by `world.snapshots.load()`. May be smaller than the
+  // plaintext snapshot bytes if the world stored an encrypted blob,
+  // but is NOT the actual on-the-wire size — world-vercel decompresses
+  // (gunzip) inside its load() before returning, so this measures the
+  // post-decompress, pre-decrypt size.
+  let loadReturnedBytes: number | undefined;
+
   // Load + decrypt is wrapped in a child span so operators can see
   // snapshot-restore latency in waterfall views.
   const existingSnapshot = isFirstInvocation
@@ -178,7 +199,7 @@ export async function runWorkflowWithSnapshots(params: {
       } | null>('snapshot.load', async (loadSpan) => {
         const t0 = tick();
         const loadedSnapshot = await world.snapshots.load(runId);
-        const loadDurationMs = tick() - t0;
+        loadDurationMs = tick() - t0;
 
         loadSpan?.setAttributes({
           ...Attribute.SnapshotLoadDurationMs(Math.round(loadDurationMs)),
@@ -189,11 +210,12 @@ export async function runWorkflowWithSnapshots(params: {
 
         if (!loadedSnapshot) return null;
 
+        loadReturnedBytes = loadedSnapshot.data.byteLength;
         loadSpan?.setAttributes({
-          ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+          ...Attribute.SnapshotLoadBytes(loadReturnedBytes),
         });
         parentSpan?.setAttributes({
-          ...Attribute.SnapshotLoadBytes(loadedSnapshot.data.byteLength),
+          ...Attribute.SnapshotLoadBytes(loadReturnedBytes),
         });
 
         // Decrypt if the snapshot was written with encryption. Plaintext
@@ -205,15 +227,15 @@ export async function runWorkflowWithSnapshots(params: {
           encryptionKey
         )) as Uint8Array;
         if (encryptionKey) {
-          const decryptDurationMs = tick() - decryptStart;
+          loadDecryptDurationMs = tick() - decryptStart;
           loadSpan?.setAttributes({
             ...Attribute.SnapshotDecryptDurationMs(
-              Math.round(decryptDurationMs)
+              Math.round(loadDecryptDurationMs)
             ),
           });
           parentSpan?.setAttributes({
             ...Attribute.SnapshotDecryptDurationMs(
-              Math.round(decryptDurationMs)
+              Math.round(loadDecryptDurationMs)
             ),
           });
         }
@@ -227,7 +249,21 @@ export async function runWorkflowWithSnapshots(params: {
 
   wfdiag('snapshot_loaded', {
     invocationKind: existingSnapshot ? 'restore' : 'first',
+    // Plaintext bytes after decrypt — what gets handed to
+    // QuickJS.deserializeSnapshot.
     snapshotBytes: existingSnapshot?.data.byteLength ?? 0,
+    // Bytes returned by `world.snapshots.load()`. NOTE: world-vercel
+    // already decompresses (gunzip) before returning, so this is the
+    // post-decompress, pre-decrypt size — not the on-the-wire bytes.
+    // For true wire bytes see the world-side WORLD_SNAPSHOT_DIAG log
+    // emitted from `world-vercel/src/snapshots.ts`.
+    returnedBytes: loadReturnedBytes ?? 0,
+    loadDurationMs:
+      loadDurationMs !== undefined ? Math.round(loadDurationMs) : undefined,
+    decryptDurationMs:
+      loadDecryptDurationMs !== undefined
+        ? Math.round(loadDecryptDurationMs)
+        : undefined,
     eventsCursor: existingSnapshot?.metadata.eventsCursor ?? null,
     // True when we skipped the snapshots.load call entirely because
     // preloadedEvents indicated this is the first handler invocation.
@@ -349,7 +385,12 @@ export async function runWorkflowWithSnapshots(params: {
   });
 
   const result = await runSnapshotWorkflow({
-    workflowCode,
+    // Pass the STRIPPED bundle to the VM so the inline source map
+    // doesn't end up in the QuickJS heap or the resulting snapshot.
+    // The original (unstripped) `workflowCode` is still kept in this
+    // host-side scope and is used by `remapErrorStack` on workflow
+    // failures below.
+    workflowCode: workflowCodeForVM,
     workflowId,
     workflowRun,
     events,
@@ -480,6 +521,13 @@ export async function runWorkflowWithSnapshots(params: {
     // wall-clock reduction without the ordering hazard. Wrapped in a
     // child span so operators can drill into serialize / encrypt /
     // persist latency separately.
+    //
+    // Per-stage timings/byte counts are captured here and reported in
+    // the `snapshot_saved` wfdiag below so the breakdown shows up in
+    // CI-fetched function logs (not just OTel spans).
+    let saveHandedToWorldBytes = 0;
+    let saveEncryptDurationMs: number | undefined;
+    let saveStoreDurationMs = 0;
     await trace('snapshot.save', async (saveSpan) => {
       const plaintextBytes = snapshot.byteLength;
       saveSpan?.setAttributes({
@@ -495,14 +543,15 @@ export async function runWorkflowWithSnapshots(params: {
         encryptionKey
       )) as Uint8Array;
       if (encryptionKey) {
-        const encryptDurationMs = Math.round(tick() - encryptStart);
+        saveEncryptDurationMs = Math.round(tick() - encryptStart);
         saveSpan?.setAttributes({
-          ...Attribute.SnapshotEncryptDurationMs(encryptDurationMs),
+          ...Attribute.SnapshotEncryptDurationMs(saveEncryptDurationMs),
         });
         parentSpan?.setAttributes({
-          ...Attribute.SnapshotEncryptDurationMs(encryptDurationMs),
+          ...Attribute.SnapshotEncryptDurationMs(saveEncryptDurationMs),
         });
       }
+      saveHandedToWorldBytes = snapshotToStore.byteLength;
 
       runtimeLogger.debug('Snapshot runtime: saving snapshot', {
         workflowRunId: runId,
@@ -519,20 +568,37 @@ export async function runWorkflowWithSnapshots(params: {
         eventsCursor: lastEventsCursor,
         createdAt: new Date(),
       });
-      const saveDurationMs = Math.round(tick() - saveStart);
+      saveStoreDurationMs = Math.round(tick() - saveStart);
 
       saveSpan?.setAttributes({
         ...Attribute.SnapshotSaveBytes(snapshotToStore.byteLength),
-        ...Attribute.SnapshotSaveDurationMs(saveDurationMs),
+        ...Attribute.SnapshotSaveDurationMs(saveStoreDurationMs),
       });
       parentSpan?.setAttributes({
         ...Attribute.SnapshotSaveBytes(snapshotToStore.byteLength),
-        ...Attribute.SnapshotSaveDurationMs(saveDurationMs),
+        ...Attribute.SnapshotSaveDurationMs(saveStoreDurationMs),
       });
     });
 
     wfdiag('snapshot_saved', {
+      // Plaintext bytes — QuickJS serializeSnapshot output, before
+      // any encryption. What the host actually generated.
       plaintextBytes: snapshot.byteLength,
+      // Bytes handed to `world.snapshots.save()` — equal to
+      // plaintextBytes when no encryption key is configured (the
+      // encrypt pass-through). The world may apply additional
+      // compression on top: world-vercel gzips inside its save
+      // method, so the actual on-the-wire size is smaller still.
+      // For the true wire bytes, see the world-side
+      // WORLD_SNAPSHOT_DIAG log emitted from
+      // `world-vercel/src/snapshots.ts`.
+      handedToWorldBytes: saveHandedToWorldBytes,
+      // Per-stage timings. encryptDurationMs is undefined when no
+      // key was configured (encryptSerializedData is a pass-through).
+      // storeDurationMs is the round-trip into the world's save
+      // method, which on world-vercel includes gzip + the HTTP PUT.
+      encryptDurationMs: saveEncryptDurationMs,
+      storeDurationMs: saveStoreDurationMs,
       eventsCursor: lastEventsCursor,
     });
 

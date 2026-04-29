@@ -1,6 +1,32 @@
 import { originalPositionFor, TraceMap } from '@jridgewell/trace-mapping';
 
 /**
+ * Pattern matching the trailing inline source map comment that bundlers
+ * (esbuild, etc.) emit. The comment is purely host-side metadata for
+ * `remapErrorStack` — the VM never needs it. Stripping it before
+ * passing the bundle to `vm.evalCode` materially reduces the QuickJS
+ * heap (and therefore snapshot bytes), because QuickJS retains source
+ * text for stack-trace line lookups.
+ */
+const INLINE_SOURCE_MAP_COMMENT_RE =
+  /\/\/# sourceMappingURL=data:application\/json;base64,[A-Za-z0-9+/=]+\s*$/m;
+
+/**
+ * Strip the trailing `//# sourceMappingURL=data:…` comment from a JS
+ * bundle. Returns the input unchanged if no inline map is present.
+ *
+ * Use this on the host side before evaluating workflow bundles inside
+ * the QuickJS VM — the inline map can account for ~30%+ of the
+ * resulting snapshot bytes (measured 11.9 MB → 8.0 MB on the example
+ * workbench's bundle), and the VM never needs it; only host-side
+ * `remapErrorStack` reads the map (and it can do so against the
+ * original, unstripped string).
+ */
+export function stripInlineSourceMap(workflowCode: string): string {
+  return workflowCode.replace(INLINE_SOURCE_MAP_COMMENT_RE, '');
+}
+
+/**
  * Remaps an error stack trace using inline source maps to show original source locations.
  *
  * @param stack - The error stack trace to remap
