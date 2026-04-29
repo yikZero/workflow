@@ -1,0 +1,268 @@
+/**
+ * Source snippets for the AI SDK registry entry.
+ *
+ * Each export is a raw string of source code that the detail page renders
+ * with shiki. The canonical reference for these snippets is the AI SDK
+ * cookbook integration — `content/docs/cookbook/integrations/ai-sdk.mdx`.
+ *
+ * The pattern: one workflow run = one full conversation. The workflow
+ * suspends between turns on a hook and resumes when the next user message
+ * arrives. `streamText()` runs inside a `"use step"` so the per-turn LLM
+ * stream is durable and can be sliced by index for follow-up turns.
+ *
+ * Note on escaping: template literal placeholders inside the snippet are
+ * escaped as `\${...}` so they stay literal here.
+ */
+
+export const aiSdkWorkflowSource = `import { streamText, stepCountIs } from "ai";
+import { defineHook, getWritable, getWorkflowMetadata } from "workflow";
+import type { ModelMessage, UIMessageChunk } from "ai";
+import { z } from "zod";
+
+const MAX_TURNS = 20;
+
+// One hook per workflow run drives the multi-turn loop. Each \`.resume()\`
+// from the API route delivers the next user message to the workflow.
+export const turnHook = defineHook({
+  schema: z.object({ message: z.string() }),
+});
+
+// Tool implementations are durable steps — each call is recorded in the
+// event log and replayed (not re-executed) on restart.
+async function lookupOrder({ orderId }: { orderId: string }) {
+  "use step";
+  const res = await fetch(\`https://api.store.com/orders/\${orderId}\`);
+  return res.json();
+}
+
+async function processRefund({
+  orderId,
+  reason,
+}: { orderId: string; reason: string }) {
+  "use step";
+  const res = await fetch("https://api.store.com/refunds", {
+    method: "POST",
+    body: JSON.stringify({ orderId, reason }),
+  });
+  return res.json();
+}
+
+const TOOLS = {
+  lookupOrder: {
+    description: "Look up an order by ID",
+    inputSchema: z.object({ orderId: z.string() }),
+    execute: lookupOrder,
+  },
+  processRefund: {
+    description: "Process a refund",
+    inputSchema: z.object({ orderId: z.string(), reason: z.string() }),
+    execute: processRefund,
+  },
+};
+
+// Per-turn step — streams one agent response into the durable writable.
+async function runTurn(messages: ModelMessage[]) {
+  "use step";
+
+  const result = streamText({
+    model: "anthropic/claude-haiku-4.5",
+    system: "You are a customer support agent.",
+    messages,
+    tools: TOOLS,
+    stopWhen: stepCountIs(8),
+  });
+
+  const writable = getWritable<UIMessageChunk>();
+  // \`preventClose: true\` keeps the durable writable open so the next turn
+  // can write to it. Each turn still emits its own start + finish chunks.
+  await result.toUIMessageStream().pipeTo(writable, { preventClose: true });
+
+  const response = await result.response;
+  return { responseMessages: response.messages };
+}
+
+export async function supportWorkflow(initialMessages: ModelMessage[]) {
+  "use workflow";
+
+  const { workflowRunId } = getWorkflowMetadata();
+  // Create the hook ONCE outside the loop. Re-creating it inside with the
+  // same token throws \`HookConflictError\`. One hook, one token, reused
+  // every iteration.
+  const hook = turnHook.create({ token: workflowRunId });
+  let allMessages = initialMessages;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const { responseMessages } = await runTurn(allMessages);
+    allMessages = [...allMessages, ...responseMessages];
+
+    // Suspend until the next user message arrives.
+    const { message } = await hook;
+    if (message === "/done") break;
+
+    allMessages = [...allMessages, { role: "user", content: message }];
+  }
+
+  return { turns: MAX_TURNS };
+}
+`;
+
+export const aiSdkRouteSource = `import type { UIMessage, UIMessageChunk } from "ai";
+import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
+import { start, getRun } from "workflow/api";
+import { supportWorkflow, turnHook } from "@/workflows/support";
+
+// Pump the durable stream until this turn's \`finish\` chunk, then close
+// the HTTP response. Release (don't cancel) the source reader so the
+// workflow's durable stream keeps flowing for the next turn.
+function sliceUntilFinish(
+  source: ReadableStream<UIMessageChunk>
+): ReadableStream<UIMessageChunk> {
+  return new ReadableStream<UIMessageChunk>({
+    async start(controller) {
+      const reader = source.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+          if (value.type === "finish") break;
+        }
+        controller.close();
+      } catch (e) {
+        controller.error(e);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
+// \`/done\` exits the workflow without emitting chunks. Return a synthetic
+// start+finish so \`useChat\`'s lifecycle terminates cleanly.
+function emptyTurnStream(): ReadableStream<UIMessageChunk> {
+  return new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: "start", messageId: crypto.randomUUID() });
+      controller.enqueue({ type: "finish" });
+      controller.close();
+    },
+  });
+}
+
+export async function POST(req: Request) {
+  const { messages, runId }: { messages: UIMessage[]; runId?: string } =
+    await req.json();
+  const modelMessages = await convertToModelMessages(messages);
+
+  // Follow-up turn: resume the hook, return only the new chunks.
+  if (runId) {
+    try {
+      const run = getRun(runId);
+
+      // Snapshot tail BEFORE resuming so the slice only contains this turn.
+      const probe = run.getReadable();
+      const tailIndex = await probe.getTailIndex();
+      await probe.cancel();
+
+      const lastUser = modelMessages.filter((m) => m.role === "user").at(-1);
+      const text =
+        typeof lastUser?.content === "string"
+          ? lastUser.content
+          : Array.isArray(lastUser?.content)
+            ? lastUser.content
+                .filter((p): p is { type: "text"; text: string } =>
+                  "type" in p && p.type === "text"
+                )
+                .map((p) => p.text)
+                .join("")
+            : "";
+
+      await turnHook.resume(runId, { message: text });
+
+      if (text === "/done") {
+        return createUIMessageStreamResponse({
+          stream: emptyTurnStream(),
+          headers: { "x-workflow-run-id": runId },
+        });
+      }
+
+      const stream = sliceUntilFinish(
+        run.getReadable({ startIndex: tailIndex + 1 })
+      );
+
+      return createUIMessageStreamResponse({
+        stream,
+        headers: { "x-workflow-run-id": runId },
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message.toLowerCase() : "";
+      if (!msg.includes("not found") && !msg.includes("expired")) throw e;
+      // Stale runId — fall through to start fresh.
+    }
+  }
+
+  // First turn: start a new workflow.
+  const run = await start(supportWorkflow, [modelMessages]);
+  const stream = sliceUntilFinish(run.readable);
+
+  return createUIMessageStreamResponse({
+    stream,
+    headers: { "x-workflow-run-id": run.runId },
+  });
+}
+`;
+
+export const aiSdkClientSource = `"use client";
+
+import { useChat } from "@ai-sdk/react";
+import { WorkflowChatTransport } from "@workflow/ai";
+import { useMemo, useRef, useState } from "react";
+
+// Stash the runId in a ref and forward it on every follow-up.
+// \`WorkflowChatTransport\` handles the wiring for you.
+export function SupportChat() {
+  const [input, setInput] = useState("");
+  const runIdRef = useRef<string | null>(null);
+
+  const transport = useMemo(
+    () =>
+      new WorkflowChatTransport({
+        api: "/api/support",
+        prepareSendMessagesRequest: ({ messages, body }) => ({
+          body: { ...body, messages, runId: runIdRef.current },
+        }),
+        onChatSendMessage: (response) => {
+          const id = response.headers.get("x-workflow-run-id");
+          if (id) runIdRef.current = id;
+        },
+      }),
+    []
+  );
+
+  const { messages, sendMessage, status } = useChat({ transport });
+  const busy = status === "streaming" || status === "submitted";
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (busy || !input.trim()) return;
+        sendMessage({ text: input });
+        setInput("");
+      }}
+    >
+      {messages.map((m) => (
+        <div key={m.id}>
+          {m.role}:{" "}
+          {m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}
+        </div>
+      ))}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        disabled={busy}
+      />
+    </form>
+  );
+}
+`;

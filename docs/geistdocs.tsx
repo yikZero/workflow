@@ -21,6 +21,10 @@ export const nav = [
     href: '/worlds',
   },
   {
+    label: 'Registry',
+    href: '/registry',
+  },
+  {
     label: 'Examples',
     href: 'https://github.com/vercel/workflow-examples',
   },
