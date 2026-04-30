@@ -1,5 +1,5 @@
 ---
-"@workflow/world-vercel": patch
+"@workflow/world-vercel": minor
 ---
 
-Add snapshot storage endpoints (PUT/GET/DELETE `/v2/runs/:runId/snapshot`) for the new opt-in snapshot runtime in `@workflow/core`. Also enforces atomic per-(run, correlation) uniqueness for `step_created` / `hook_created` / `wait_created` events to dedupe concurrent invocations.
+Add snapshot storage (PUT/GET/DELETE `/v2/runs/:runId/snapshot`) for the new snapshot runtime in `@workflow/core`. Switches the save path from `fetch()` to `undici.request()` so the `RetryAgent` can replay multi-MB snapshot bodies on transient errors.
