@@ -503,127 +503,6 @@ function getObservabilityDashboardUrl(runId: string): string | null {
 }
 
 /**
- * Fetch Vercel function runtime logs that mention the given runId.
- *
- * Used in e2e diagnostics to surface what happened inside the function
- * when a workflow wedged. Returns up to 200 matching lines from the
- * deployment's `/events` endpoint, scoped to the test's run window.
- *
- * Returns `null` if logs API access isn't configured (local runs, missing
- * env, etc.).
- */
-async function getVercelFunctionLogs(
-  runId: string,
-  runWindow: { startedAt?: Date; endedAt?: Date }
-): Promise<string | null> {
-  const token = process.env.WORKFLOW_VERCEL_AUTH_TOKEN;
-  const teamId = process.env.WORKFLOW_VERCEL_TEAM;
-  const deploymentId = process.env.VERCEL_DEPLOYMENT_ID;
-  if (!token || !teamId || !deploymentId) return null;
-
-  // Cast a wide time window: 30s before run start, up to "now" (or 60s
-  // after run end if known). Times are in milliseconds since epoch.
-  const startedAtMs = runWindow.startedAt
-    ? runWindow.startedAt.getTime()
-    : Date.now() - 5 * 60_000;
-  const endedAtMs = runWindow.endedAt
-    ? runWindow.endedAt.getTime()
-    : Date.now();
-  const since = Math.max(0, startedAtMs - 30_000);
-  const until = endedAtMs + 60_000;
-
-  // The deployment events endpoint streams function/runtime logs. We fetch
-  // the most recent N entries within the window and filter client-side by
-  // runId substring (the runId appears in structured log payloads emitted
-  // via `runtimeLogger` but not in any Vercel-indexed field).
-  const url = new URL(
-    `https://api.vercel.com/v3/deployments/${encodeURIComponent(deploymentId)}/events`
-  );
-  url.searchParams.set('teamId', teamId);
-  url.searchParams.set('since', String(since));
-  url.searchParams.set('until', String(until));
-  url.searchParams.set('builds', '0');
-  url.searchParams.set('direction', 'backward');
-  url.searchParams.set('limit', '1000');
-
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
-  } catch (err) {
-    return `(failed to fetch function logs: ${(err as Error).message})`;
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return `(function logs API returned HTTP ${res.status}: ${text.slice(0, 200)})`;
-  }
-
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    return '(function logs response was not valid JSON)';
-  }
-
-  // The events endpoint returns either an array of entries or
-  // `{ events: [...] }` depending on the API version. Handle both.
-  const entries: Array<Record<string, unknown>> = Array.isArray(body)
-    ? (body as Array<Record<string, unknown>>)
-    : body && typeof body === 'object' && 'events' in body
-      ? (body as { events: Array<Record<string, unknown>> }).events
-      : [];
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return '(no function logs returned in window)';
-  }
-
-  // Filter to lines mentioning the runId — substring match against the
-  // text/payload field. Vercel's events have varying shapes; check several
-  // likely fields.
-  const messageOf = (entry: Record<string, unknown>): string => {
-    if (typeof entry.text === 'string') return entry.text;
-    if (
-      entry.payload &&
-      typeof entry.payload === 'object' &&
-      'text' in entry.payload &&
-      typeof (entry.payload as { text?: unknown }).text === 'string'
-    ) {
-      return (entry.payload as { text: string }).text;
-    }
-    return JSON.stringify(entry);
-  };
-
-  const matching = entries
-    .filter((entry) => messageOf(entry).includes(runId))
-    .slice(0, 200);
-
-  if (matching.length === 0) {
-    return `(${entries.length} function log lines fetched, none mentioned runId)`;
-  }
-
-  // Render each matching log with a timestamp + condensed body. Truncate
-  // per-line so a verbose snapshot dump doesn't drown the diagnostic.
-  return matching
-    .map((entry) => {
-      const ts =
-        typeof entry.created === 'number'
-          ? new Date(entry.created).toISOString()
-          : typeof entry.date === 'number'
-            ? new Date(entry.date).toISOString()
-            : '????-??-??T??:??:??.???Z';
-      const message = messageOf(entry);
-      const truncated =
-        message.length > 1500 ? `${message.slice(0, 1500)}\u2026` : message;
-      return `  ${ts}  ${truncated}`;
-    })
-    .reverse() // reverse so output is chronological (we fetched backward)
-    .join('\n');
-}
-
-/**
  * Fetch run diagnostics via the world API. Returns a formatted string.
  */
 async function getRunDiagnostics(tracked: TrackedRun): Promise<string> {
@@ -634,14 +513,9 @@ async function getRunDiagnostics(tracked: TrackedRun): Promise<string> {
     `Run ID:     ${run.runId}`,
   ];
 
-  let runStartedAt: Date | undefined;
-  let runEndedAt: Date | undefined;
-
   try {
     const world = await getWorld();
     const runData = await world.runs.get(run.runId);
-    runStartedAt = runData.startedAt;
-    runEndedAt = runData.completedAt;
 
     lines.push(`Status:     ${runData.status}`);
     lines.push(`Workflow:   ${runData.workflowName}`);
@@ -724,26 +598,6 @@ async function getRunDiagnostics(tracked: TrackedRun): Promise<string> {
   const dashboardUrl = getObservabilityDashboardUrl(run.runId);
   if (dashboardUrl) {
     lines.push(`Dashboard:  ${dashboardUrl}`);
-  }
-
-  // Vercel function logs (only when WORKFLOW_VERCEL_AUTH_TOKEN is set —
-  // typically only in CI). Surfaces SNAPSHOT_DIAG / WORKFLOW_HANDLER_DIAG
-  // / STEP_HANDLER_DIAG checkpoint records emitted by the runtime so the
-  // function-side activity for a wedged run is visible in the failed-test
-  // output.
-  try {
-    const fnLogs = await getVercelFunctionLogs(run.runId, {
-      startedAt: runStartedAt,
-      endedAt: runEndedAt,
-    });
-    if (fnLogs) {
-      lines.push('');
-      lines.push('Function Logs:');
-      lines.push(fnLogs);
-    }
-  } catch (e) {
-    lines.push('');
-    lines.push(`Function Logs: (failed to fetch: ${(e as Error).message})`);
   }
 
   lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
