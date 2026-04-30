@@ -2,16 +2,17 @@
  * VM-compatible common reducers and revivers.
  *
  * Identical to common.ts but without Node.js dependencies:
- * - Uses pure-JS base64 instead of Buffer
- * - Uses `instanceof Error` instead of `types.isNativeError()`
+ * - Uses native `btoa` / `atob` (provided by quickjs-wasi's base64
+ *   extension, see `quickjs-assets.generated.ts`) instead of Buffer
+ *   or pure-JS base64.
+ * - Uses `instanceof Error` instead of `types.isNativeError()`.
  *
  * This module is safe to bundle into the QuickJS WASM VM.
  */
 
-import { base64Decode, base64Encode } from '../base64.js';
 import type { Reducers, Revivers, SerializableSpecial } from '../types.js';
 
-// ---- Base64 helpers ----
+// ---- Base64 helpers (native btoa/atob from the quickjs-wasi base64 extension) ----
 
 function arrayBufferToBase64(
   value: ArrayBufferLike,
@@ -19,8 +20,13 @@ function arrayBufferToBase64(
   length: number
 ): string {
   if (length === 0) return '.';
+  // btoa requires a binary string. Build it from the byte view.
   const uint8 = new Uint8Array(value, offset, length);
-  return base64Encode(uint8);
+  let binary = '';
+  for (let i = 0; i < uint8.length; i++) {
+    binary += String.fromCharCode(uint8[i]!);
+  }
+  return btoa(binary);
 }
 
 function viewToBase64(value: ArrayBufferView): string {
@@ -28,8 +34,12 @@ function viewToBase64(value: ArrayBufferView): string {
 }
 
 function reviveArrayBuffer(value: string): ArrayBuffer {
-  const base64 = value === '.' ? '' : value;
-  const bytes = base64Decode(base64);
+  if (value === '.') return new ArrayBuffer(0);
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
   return bytes.buffer as ArrayBuffer;
 }
 
@@ -52,11 +62,8 @@ export function getCommonReducers(): Partial<Reducers> {
     },
     // DOMException is checked before Error so that DOMException-specific
     // shape (name, message, stack, cause) survives the round-trip.
-    // Uses duck-typing instead of `instanceof` because DOMException may not
-    // be available as a global in all QuickJS versions.
     DOMException: (value) => {
-      if (!(value instanceof Error)) return false;
-      if (value.constructor?.name !== 'DOMException') return false;
+      if (!(value instanceof DOMException)) return false;
       const reduced: SerializableSpecial['DOMException'] = {
         message: value.message,
         name: value.name,
@@ -167,11 +174,7 @@ export function getCommonReducers(): Partial<Reducers> {
       return { name: name || '__empty' };
     }) as any,
     Set: (value) => value instanceof Set && Array.from(value),
-    URL: (value) => {
-      // URL may not be available in QuickJS — check typeof
-      if (typeof URL !== 'undefined' && value instanceof URL) return value.href;
-      return false;
-    },
+    URL: (value) => value instanceof URL && value.href,
     WorkflowFunction: (value) => {
       // Only match function references with a workflowId property (set by
       // the SWC compiler on workflow functions). Plain { workflowId } objects
@@ -183,14 +186,8 @@ export function getCommonReducers(): Partial<Reducers> {
       return { workflowId };
     },
     URLSearchParams: (value) => {
-      if (
-        typeof URLSearchParams !== 'undefined' &&
-        value instanceof URLSearchParams
-      ) {
-        if (value.size === 0) return '.';
-        return String(value);
-      }
-      return false;
+      if (!(value instanceof URLSearchParams)) return false;
+      return value.size === 0 ? '.' : String(value);
     },
     Uint8Array: (value) => value instanceof Uint8Array && viewToBase64(value),
     Uint8ClampedArray: (value) =>
@@ -212,20 +209,7 @@ export function getCommonRevivers(): Partial<Revivers> {
       new BigUint64Array(reviveArrayBuffer(value)),
     Date: (value) => new Date(value),
     DOMException: (value) => {
-      // DOMException may not be constructible in all QuickJS versions —
-      // fall back to a regular Error with the same shape if unavailable.
-      const DOMExceptionCtor =
-        typeof (globalThis as any).DOMException === 'function'
-          ? (globalThis as any).DOMException
-          : null;
-      if (DOMExceptionCtor) {
-        const error = new DOMExceptionCtor(value.message, value.name);
-        if (value.stack !== undefined) error.stack = value.stack;
-        if ('cause' in value) error.cause = value.cause;
-        return error;
-      }
-      const error = new Error(value.message);
-      error.name = value.name;
+      const error = new DOMException(value.message, value.name);
       if (value.stack !== undefined) error.stack = value.stack;
       if ('cause' in value) (error as any).cause = value.cause;
       return error;
@@ -244,10 +228,7 @@ export function getCommonRevivers(): Partial<Revivers> {
     Map: (value) => new Map(value),
     RegExp: (value) => new RegExp(value.source, value.flags),
     Set: (value) => new Set(value),
-    URL: (value) => {
-      if (typeof URL !== 'undefined') return new URL(value);
-      return value;
-    },
+    URL: (value) => new URL(value),
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
@@ -257,11 +238,7 @@ export function getCommonRevivers(): Partial<Revivers> {
         },
         { workflowId: value.workflowId }
       ),
-    URLSearchParams: (value) => {
-      if (typeof URLSearchParams !== 'undefined')
-        return new URLSearchParams(value === '.' ? '' : value);
-      return value;
-    },
+    URLSearchParams: (value) => new URLSearchParams(value === '.' ? '' : value),
     Uint8Array: (value: string) => new Uint8Array(reviveArrayBuffer(value)),
     Uint8ClampedArray: (value: string) =>
       new Uint8ClampedArray(reviveArrayBuffer(value)),

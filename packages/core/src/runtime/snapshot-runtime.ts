@@ -190,7 +190,7 @@ globalThis[Symbol.for("WORKFLOW_USE_STEP")] = function(stepId, closureVarsFn) {
     var thisVal = (this !== undefined && this !== null && this !== globalThis) ? this : undefined;
     // Serialize step input using the host-provided devalue serializer.
     // This produces a format-prefixed Uint8Array ("devl" + devalue.stringify).
-    var input = globalThis.__wdk_serialize({
+    var input = globalThis[Symbol.for("workflow-serialize")]({
       args: args,
       closureVars: closureVarsFn ? closureVarsFn() : undefined,
       thisVal: thisVal,
@@ -372,7 +372,7 @@ globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")] = function(options) {
     correlationId: correlationId,
     token: token,
     isWebhook: !!options.isWebhook,
-    metadata: options.metadata ? globalThis.__wdk_serialize(options.metadata) : undefined,
+    metadata: options.metadata ? globalThis[Symbol.for("workflow-serialize")](options.metadata) : undefined,
     hasCreatedEvent: false,
   });
 
@@ -520,9 +520,11 @@ export async function runSnapshotWorkflow(
       vm.newString(generateNanoid())
     );
 
-    // Note: __wdk_serialize/__wdk_deserialize are JS functions in the VM
-    // (set by the serde bundle), so they survive snapshot/restore as part
-    // of the QuickJS heap. No re-registration needed.
+    // Note: globalThis[Symbol.for('workflow-serialize')] and
+    // globalThis[Symbol.for('workflow-deserialize')] are JS functions
+    // in the VM (set by the serde bundle), so they survive
+    // snapshot/restore as part of the QuickJS heap. No re-registration
+    // needed.
 
     // Process events and drain jobs in a loop. Events may resolve promises
     // that unblock workflow code, which then creates NEW resolvers for
@@ -668,12 +670,12 @@ export async function runSnapshotWorkflow(
           throw __wfnErr;
         }
         var __args = globalThis.__wdk_input
-          ? globalThis.__wdk_deserialize(globalThis.__wdk_input)
+          ? globalThis[Symbol.for("workflow-deserialize")](globalThis.__wdk_input)
           : [];
         delete globalThis.__wdk_input;
         if (!Array.isArray(__args)) __args = [__args];
         __wfn.apply(null, __args).then(
-          function(result) { globalThis.__workflowResult = globalThis.__wdk_serialize(result); },
+          function(result) { globalThis.__workflowResult = globalThis[Symbol.for("workflow-serialize")](result); },
           function(error) {
             globalThis.__workflowError = {
               message: error.message || String(error),
@@ -753,7 +755,7 @@ async function processEvents(
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis[Symbol.for("workflow-deserialize")](globalThis.__tmp_result));` +
                 `delete globalThis.__resolvers["${escapedCid}"];` +
                 `delete globalThis.__tmp_result;`
             ).dispose();
@@ -894,7 +896,7 @@ async function processEvents(
             vm.setProp(vm.global, '__tmp_result', bytesHandle);
             bytesHandle.dispose();
             vm.evalCode(
-              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis.__wdk_deserialize(globalThis.__tmp_result));` +
+              `globalThis.__resolvers["${escapedCid}"].resolve(globalThis[Symbol.for("workflow-deserialize")](globalThis.__tmp_result));` +
                 `delete globalThis.__resolvers["${escapedCid}"];` +
                 `delete globalThis.__tmp_result;`
             ).dispose();
@@ -948,7 +950,7 @@ async function processEvents(
             vm.evalCode(
               bufferAndTrack.replace(
                 '%PAYLOAD%',
-                'globalThis.__wdk_deserialize(globalThis.__tmp_result)'
+                'globalThis[Symbol.for("workflow-deserialize")](globalThis.__tmp_result)'
               ) + 'delete globalThis.__tmp_result;'
             ).dispose();
           } else {

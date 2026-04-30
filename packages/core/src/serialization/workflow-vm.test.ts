@@ -2,13 +2,11 @@
  * Tests for the VM-compatible workflow serializer.
  *
  * Verifies that:
- * 1. The VM serializer produces the same wire format as the Node.js serializer
- * 2. Data serialized by the VM can be deserialized by Node.js and vice versa
- * 3. The pure-JS base64 implementation is correct
+ * 1. The VM serializer produces the same wire format as the Node.js serializer.
+ * 2. Data serialized by the VM can be deserialized by Node.js and vice versa.
  */
 
 import { describe, expect, it } from 'vitest';
-import { base64Decode, base64Encode } from './base64.js';
 import { peekFormatPrefix } from './format.js';
 import {
   deserialize as nodeDeserialize,
@@ -18,42 +16,6 @@ import {
   deserialize as vmDeserialize,
   serialize as vmSerialize,
 } from './workflow-vm.js';
-
-describe('base64 encode/decode', () => {
-  it('should round-trip empty buffer', () => {
-    const encoded = base64Encode(new Uint8Array(0));
-    expect(encoded).toBe('');
-    const decoded = base64Decode(encoded);
-    expect(decoded.length).toBe(0);
-  });
-
-  it('should round-trip small buffers', () => {
-    for (const bytes of [
-      new Uint8Array([0]),
-      new Uint8Array([1, 2, 3]),
-      new Uint8Array([255]),
-      new Uint8Array([0, 0, 0]),
-    ]) {
-      const encoded = base64Encode(bytes);
-      const decoded = base64Decode(encoded);
-      expect(Array.from(decoded)).toEqual(Array.from(bytes));
-    }
-  });
-
-  it('should match Node.js Buffer base64', () => {
-    const data = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-    const jsBase64 = base64Encode(data);
-    const nodeBase64 = Buffer.from(data).toString('base64');
-    expect(jsBase64).toBe(nodeBase64);
-  });
-
-  it('should decode Node.js Buffer base64', () => {
-    const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-    const nodeBase64 = Buffer.from(data).toString('base64');
-    const decoded = base64Decode(nodeBase64);
-    expect(Array.from(decoded)).toEqual(Array.from(data));
-  });
-});
 
 describe('VM workflow serializer', () => {
   it('should produce format-prefixed output', () => {

@@ -656,11 +656,12 @@ export async function runWorkflowWithSnapshots(params: {
         const step = op as PendingStep;
         opsPromises.push(
           (async () => {
-            // Create step_created event. `step.input` is the format-prefixed
-            // devalue bytes ("devl" + devalue) produced by
-            // `__wdk_serialize({args, closureVars, thisVal})` inside the VM.
-            // The VM has no access to the CryptoKey, so encryption is
-            // applied here on the host side — matching what
+            // Create step_created event. `step.input` is the
+            // format-prefixed devalue bytes ("devl" + devalue) produced
+            // by `globalThis[Symbol.for('workflow-serialize')]({args,
+            // closureVars, thisVal})` inside the VM. The VM has no
+            // access to the CryptoKey, so encryption is applied here
+            // on the host side — matching what
             // `dehydrateStepArguments` does in the replay runtime.
             try {
               await world.events.create(runId, {
@@ -715,10 +716,11 @@ export async function runWorkflowWithSnapshots(params: {
 
         opsPromises.push(
           (async () => {
-            // `hook.metadata` is the format-prefixed devalue bytes produced
-            // by `__wdk_serialize(options.metadata)` inside the VM. Encrypt
-            // on the host side before writing — matches the replay
-            // runtime's `dehydrateStepArguments` flow.
+            // `hook.metadata` is the format-prefixed devalue bytes
+            // produced by `globalThis[Symbol.for('workflow-serialize')]
+            // (options.metadata)` inside the VM. Encrypt on the host
+            // side before writing — matches the replay runtime's
+            // `dehydrateStepArguments` flow.
             //
             // No pre-check via hooks.list: with deterministic correlationIds
             // (same VM seed across replays) and per-(runId, correlationId)
