@@ -14,8 +14,11 @@
  */
 
 export type RegistryCategory =
+  | 'provider'
+  | 'agent'
   | 'vercel'
-  | 'email'
+  | 'advanced'
+  | 'common'
   | 'storage'
   | 'ai'
   | 'auth'
@@ -61,7 +64,25 @@ export interface RegistrySnippet {
  *   2. Register it in `components/registry/logos/index.ts`.
  *   3. Reference its key here.
  */
-export type RegistryLogoId = 'resend' | 'ai-sdk' | 'sandbox' | 'chat-sdk';
+export type RegistryLogoId =
+  | 'resend'
+  | 'ai-sdk'
+  | 'sandbox'
+  | 'chat-sdk'
+  | 'durable-agent'
+  | 'human-in-the-loop'
+  | 'agent-cancellation'
+  | 'sequential-and-parallel'
+  | 'workflow-composition'
+  | 'saga'
+  | 'batching'
+  | 'rate-limiting'
+  | 'scheduling'
+  | 'timeouts'
+  | 'idempotency'
+  | 'webhooks'
+  | 'child-workflows'
+  | 'distributed-abort-controller';
 
 export interface RegistryItem {
   /** Slug used in the URL — `/registry/${id}`. */
@@ -76,8 +97,13 @@ export interface RegistryItem {
   longDescription?: string;
   /** Searchable tags rendered as small badges. */
   tags: string[];
-  /** Primary category — used to group items on the listing page. */
-  category: RegistryCategory;
+  /**
+   * Categories the item belongs to. Items can live in more than one — e.g. AI
+   * SDK is both an `agent` pattern and a `vercel`-built integration. Each
+   * category renders as its own badge on the card and matches every relevant
+   * filter on the listing page.
+   */
+  categories: RegistryCategory[];
   /** Provider homepage / product page. */
   homepage: string;
   /** Provider docs entry-point linked from the detail hero. */

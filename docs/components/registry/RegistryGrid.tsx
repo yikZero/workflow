@@ -16,20 +16,24 @@ export function RegistryGrid({ items }: RegistryGridProps) {
   const [filter, setFilter] = useState<Filter>('all');
 
   // Build the list of category filters dynamically — only the categories that
-  // actually have items get a chip.
+  // actually have items get a chip. Items can belong to more than one
+  // category (e.g. AI SDK is both `agent` and `vercel`), so they appear under
+  // every relevant filter and contribute to each chip's count.
   const presentCategories = Array.from(
-    new Set(items.map((item) => item.category))
+    new Set(items.flatMap((item) => item.categories))
   );
 
   const filtered =
-    filter === 'all' ? items : items.filter((item) => item.category === filter);
+    filter === 'all'
+      ? items
+      : items.filter((item) => item.categories.includes(filter));
 
   const filters: { id: Filter; label: string; count: number }[] = [
     { id: 'all', label: 'Show all', count: items.length },
     ...presentCategories.map((category) => ({
       id: category as Filter,
       label: categoryLabels[category],
-      count: items.filter((item) => item.category === category).length,
+      count: items.filter((item) => item.categories.includes(category)).length,
     })),
   ];
 

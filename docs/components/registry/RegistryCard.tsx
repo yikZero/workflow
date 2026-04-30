@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { categoryLabels } from '@/lib/registry/manifest';
 import type { RegistryItem } from '@/lib/registry/types';
 import { getProviderLogo } from './logos';
 
@@ -46,13 +47,13 @@ export function RegistryCard({ item }: RegistryCardProps) {
           </p>
         </CardContent>
         <div className="flex items-center flex-wrap gap-1.5 px-4 pb-4 pt-2">
-          {item.tags.slice(0, 4).map((tag) => (
+          {item.categories.map((category) => (
             <Badge
-              key={tag}
+              key={category}
               variant="outline"
               className="text-xs font-normal py-0.5 px-2"
             >
-              {tag}
+              {categoryLabels[category]}
             </Badge>
           ))}
         </div>

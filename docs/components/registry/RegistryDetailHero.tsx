@@ -1,5 +1,6 @@
 import { ChevronRight, ExternalLink, Github, Home } from 'lucide-react';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/badge';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -8,7 +9,6 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Badge } from '@/components/ui/badge';
 import type { RegistryItem } from '@/lib/registry/types';
 import { getProviderLogo } from './logos';
 

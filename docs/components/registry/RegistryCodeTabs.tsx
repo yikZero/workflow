@@ -16,9 +16,13 @@ export function RegistryCodeTabs({ blocks }: RegistryCodeTabsProps) {
 
   return (
     <Tabs defaultValue={blocks[0].label} className="w-full">
-      <TabsList className="h-10 p-1">
+      <TabsList className="h-10 gap-1 p-1">
         {blocks.map((b) => (
-          <TabsTrigger key={b.label} value={b.label} className="px-3.5 py-1.5">
+          <TabsTrigger
+            key={b.label}
+            value={b.label}
+            className="flex-none px-3.5 py-1.5"
+          >
             {b.label}
           </TabsTrigger>
         ))}
