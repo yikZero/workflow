@@ -11,13 +11,13 @@
 
 import { Lock } from 'lucide-react';
 import {
+  type CSSProperties,
   createContext,
+  type ReactNode,
   useContext,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
 } from 'react';
 import { useDarkMode } from '../../hooks/use-dark-mode';
 import { ENCRYPTED_DISPLAY_NAME } from '../../lib/hydration';
@@ -318,7 +318,7 @@ function createTreeStyles(isDark: boolean): JsonTreeStyles {
     row: {
       display: 'block',
       margin: 0,
-      padding: 0,
+      padding: '0 0 0 18px',
     },
     childContainer: {
       margin: 0,
@@ -377,7 +377,7 @@ function createTreeStyles(isDark: boolean): JsonTreeStyles {
       justifyContent: 'center',
       lineHeight: 1,
       margin: 0,
-      marginRight: '0.25ch',
+      marginLeft: '-18px',
       minHeight: '18px',
       minWidth: '18px',
       padding: 0,
@@ -978,9 +978,9 @@ function formatMapKey(key: unknown, index: number): string {
 
 function getConstructorName(value: object): string | undefined {
   const prototype = Object.getPrototypeOf(value);
-  const constructor = prototype?.constructor;
-  if (typeof constructor !== 'function') return undefined;
-  return constructor.name || undefined;
+  const ctor = prototype?.constructor;
+  if (typeof ctor !== 'function') return undefined;
+  return ctor.name || undefined;
 }
 
 function getPrefixStyle(
