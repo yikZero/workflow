@@ -122,16 +122,16 @@ function MiddleTruncate({
       )}
       onCopy={handleCopy}
     >
-      {isTruncated && <span className='sr-only select-none'>{value}</span>}
+      {isTruncated && <span className="sr-only select-none">{value}</span>}
       <span
-        aria-hidden='true'
-        className='pointer-events-none col-start-1 row-start-1 invisible select-none whitespace-nowrap'
+        aria-hidden="true"
+        className="pointer-events-none col-start-1 row-start-1 invisible select-none whitespace-nowrap"
       >
         {value}
       </span>
       <span
         aria-hidden={isTruncated || undefined}
-        className='col-start-1 row-start-1 min-w-0 overflow-hidden'
+        className="col-start-1 row-start-1 min-w-0 overflow-hidden"
         ref={visibleRef}
       >
         {isTruncated ? (
@@ -145,8 +145,8 @@ function MiddleTruncate({
         )}
       </span>
       <span
-        aria-hidden='true'
-        className='pointer-events-none absolute left-0 top-0 inline-block invisible select-none whitespace-nowrap'
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 top-0 inline-block invisible select-none whitespace-nowrap"
         ref={measureRef}
       />
     </span>

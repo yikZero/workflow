@@ -1,14 +1,7 @@
 'use client';
 
-/**
- * Reusable data inspector component built on react-inspector.
- *
- * All data rendering in the o11y UI should use this component to ensure
- * consistent theming, custom type handling (StreamRef, ClassInstanceRef),
- * and expand behavior.
- */
-
-import { Lock } from 'lucide-react';
+import { JsonView, type Props as JsonViewProps } from 'react-json-view-lite';
+import { useCallback, useMemo } from 'react';
 import {
   createContext,
   useContext,
@@ -87,16 +80,15 @@ function parseChunkData(text: string): unknown {
 }
 
 function isStreamRef(value: unknown): value is StreamRef {
-  if (value === null || typeof value !== 'object') return false;
-  // Check both enumerable and non-enumerable __type (opaque refs use non-enumerable)
-  const desc = Object.getOwnPropertyDescriptor(value, '__type');
-  return desc?.value === STREAM_REF_TYPE;
+  if (!isObjectLike(value)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, '__type');
+  return descriptor?.value === STREAM_REF_TYPE;
 }
 
 function isRunRef(value: unknown): value is RunRef {
-  if (value === null || typeof value !== 'object') return false;
-  const desc = Object.getOwnPropertyDescriptor(value, '__type');
-  return desc?.value === RUN_REF_TYPE;
+  if (!isObjectLike(value)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, '__type');
+  return descriptor?.value === RUN_REF_TYPE;
 }
 
 export function isBytesDisplay(value: unknown): value is BytesDisplay {
@@ -112,8 +104,7 @@ function isClassInstanceRef(value: unknown): value is {
   data: unknown;
 } {
   return (
-    value !== null &&
-    typeof value === 'object' &&
+    isObjectLike(value) &&
     '__type' in value &&
     (value as Record<string, unknown>).__type === CLASS_INSTANCE_REF_TYPE
   );

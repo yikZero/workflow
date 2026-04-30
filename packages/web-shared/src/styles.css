@@ -653,3 +653,236 @@
     transform: scale(1);
   }
 }
+
+/* Compact JSON tree */
+
+.wf-json-view-container {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ds-gray-1000);
+  font-family:
+    var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.wf-json-view-container > .wf-json-view-row {
+  padding-left: 1.5ch;
+}
+
+.wf-json-view-container > .wf-json-view-row > .wf-json-view-expand-icon,
+.wf-json-view-container > .wf-json-view-row > .wf-json-view-collapse-icon {
+  margin-left: -1.5ch;
+}
+
+.wf-json-view-children {
+  margin: 0;
+  padding: 0;
+}
+
+.wf-json-view-row {
+  display: block;
+  margin: 0;
+  padding: 0 0 0 2ch;
+}
+
+.wf-json-view-row:hover:not(:has(.wf-json-view-row:hover)):not(
+    :has(.wf-json-view-row ~ .wf-json-view-row)
+  ) {
+  background-color: var(--ds-gray-alpha-100);
+}
+
+.wf-json-view-label {
+  margin-right: 1ch;
+  color: var(--ds-pink-900);
+  font-weight: 400;
+}
+
+.wf-json-view-clickable-label {
+  margin-right: 1ch;
+  cursor: pointer;
+  color: var(--ds-pink-900);
+  font-weight: 400;
+}
+
+.wf-json-view-string {
+  color: var(--ds-green-900);
+}
+
+.wf-json-view-number {
+  color: var(--ds-blue-900);
+}
+
+.wf-json-view-boolean {
+  color: var(--ds-amber-900);
+}
+
+.wf-json-view-null,
+.wf-json-view-undefined,
+.wf-json-view-other {
+  color: var(--ds-gray-900);
+}
+
+.wf-json-view-punctuation {
+  margin-right: 0;
+  color: var(--ds-gray-1000);
+  font-weight: 400;
+}
+
+.wf-json-view-expand-icon,
+.wf-json-view-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 18px;
+  min-height: 18px;
+  margin-right: 0;
+  margin-left: -1.5ch;
+  padding: 2px 4px;
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: pointer;
+  color: var(--ds-gray-900);
+  user-select: none;
+  outline: none;
+  vertical-align: middle;
+}
+
+.wf-json-view-expand-icon::after,
+.wf-json-view-collapse-icon::after {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin-right: 0;
+  background-color: currentColor;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10.1016 7.29297C10.4921 7.68349 10.4921 8.31651 10.1016 8.70703L6.74805 12.0605L5.6875 11L8.6875 8L5.6875 5L6.74805 3.93945L10.1016 7.29297Z' fill='black'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 14px 14px;
+  mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10.1016 7.29297C10.4921 7.68349 10.4921 8.31651 10.1016 8.70703L6.74805 12.0605L5.6875 11L8.6875 8L5.6875 5L6.74805 3.93945L10.1016 7.29297Z' fill='black'/%3E%3C/svg%3E");
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 14px 14px;
+  transition: transform 120ms ease;
+}
+
+.wf-json-view-expand-icon::after {
+  transform: none;
+}
+
+.wf-json-view-collapse-icon::after {
+  transform: rotate(90deg);
+}
+
+.wf-json-view-expand-icon:hover,
+.wf-json-view-collapse-icon:hover,
+.wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-expand-icon,
+.wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-collapse-icon {
+  background-color: var(--ds-gray-alpha-100);
+  color: var(--ds-gray-900);
+}
+
+.wf-json-view-collapsed {
+  color: var(--ds-gray-900);
+}
+
+.wf-json-view-collapsed::after {
+  content: '...';
+}
+
+.dark-theme .wf-json-view-label,
+.dark .wf-json-view-label,
+[data-theme='dark'] .wf-json-view-label {
+  color: var(--ds-pink-700, var(--ds-pink-900));
+}
+
+.dark-theme .wf-json-view-clickable-label,
+.dark .wf-json-view-clickable-label,
+[data-theme='dark'] .wf-json-view-clickable-label {
+  color: var(--ds-pink-700, var(--ds-pink-900));
+}
+
+.dark-theme .wf-json-view-string,
+.dark .wf-json-view-string,
+[data-theme='dark'] .wf-json-view-string {
+  color: var(--ds-blue-700);
+}
+
+.dark-theme .wf-json-view-number,
+.dark .wf-json-view-number,
+[data-theme='dark'] .wf-json-view-number {
+  color: var(--ds-blue-700);
+}
+
+.dark-theme .wf-json-view-boolean,
+.dark .wf-json-view-boolean,
+[data-theme='dark'] .wf-json-view-boolean {
+  color: var(--ds-amber-700);
+}
+
+.dark-theme .wf-json-view-null,
+.dark-theme .wf-json-view-undefined,
+.dark-theme .wf-json-view-other,
+.dark .wf-json-view-null,
+.dark .wf-json-view-undefined,
+.dark .wf-json-view-other,
+[data-theme='dark'] .wf-json-view-null,
+[data-theme='dark'] .wf-json-view-undefined,
+[data-theme='dark'] .wf-json-view-other {
+  color: var(--ds-gray-700);
+}
+
+.dark-theme .wf-json-view-expand-icon,
+.dark-theme .wf-json-view-collapse-icon,
+.dark .wf-json-view-expand-icon,
+.dark .wf-json-view-collapse-icon,
+[data-theme='dark'] .wf-json-view-expand-icon,
+[data-theme='dark'] .wf-json-view-collapse-icon {
+  color: #fff;
+}
+
+.dark-theme .wf-json-view-expand-icon:hover,
+.dark-theme .wf-json-view-collapse-icon:hover,
+.dark-theme
+  .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-expand-icon,
+.dark-theme
+  .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-collapse-icon,
+.dark .wf-json-view-expand-icon:hover,
+.dark .wf-json-view-collapse-icon:hover,
+.dark .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-expand-icon,
+.dark .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-collapse-icon,
+[data-theme='dark'] .wf-json-view-expand-icon:hover,
+[data-theme='dark'] .wf-json-view-collapse-icon:hover,
+[data-theme='dark']
+  .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-expand-icon,
+[data-theme='dark']
+  .wf-json-view-row:has(> .wf-json-view-clickable-label:hover)
+  > .wf-json-view-collapse-icon {
+  background-color: var(--ds-gray-alpha-100);
+  color: #fff;
+}
+
+.dark-theme .wf-json-view-collapsed,
+.dark .wf-json-view-collapsed,
+[data-theme='dark'] .wf-json-view-collapsed {
+  color: var(--ds-gray-700);
+}
