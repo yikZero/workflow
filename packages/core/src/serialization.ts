@@ -2011,3 +2011,43 @@ export async function hydrateStepReturnValue(
 
   throw new Error(`Unsupported serialization format: ${format}`);
 }
+
+/**
+ * Serialize and encrypt an error payload (message, stack, errorCode).
+ * When a key is provided, the error data is AES-256-GCM encrypted.
+ * When no key is provided (encryption not configured), returns unencrypted serialized bytes.
+ *
+ * @param error - Structured error with message, optional stack, and optional code
+ * @param key - Encryption key (undefined to skip encryption)
+ * @returns Serialized (and optionally encrypted) Uint8Array
+ */
+export async function dehydrateError(
+  error: { message: string; stack?: string; code?: string },
+  key: CryptoKey | undefined
+): Promise<Uint8Array> {
+  const json = JSON.stringify(error);
+  const bytes = new TextEncoder().encode(json);
+  const serialized = encodeWithFormatPrefix(
+    SerializationFormat.DEVALUE_V1,
+    bytes
+  ) as Uint8Array;
+  return maybeEncrypt(serialized, key);
+}
+
+/**
+ * Decrypt and deserialize an error payload produced by dehydrateError.
+ * Falls through for legacy plaintext formats (string / object) for backwards compatibility.
+ *
+ * @param data - Binary data (Uint8Array from dehydrateError) or legacy plaintext
+ * @param key - Encryption key (undefined if no key available)
+ * @returns Deserialized error object, or the original data if not a Uint8Array
+ */
+export async function hydrateError(
+  data: unknown,
+  key: CryptoKey | undefined
+): Promise<{ message: string; stack?: string; code?: string } | unknown> {
+  if (!(data instanceof Uint8Array)) return data; // legacy plaintext — pass through
+  const decrypted = (await maybeDecrypt(data, key)) as Uint8Array;
+  const { payload } = decodeFormatPrefix(decrypted);
+  return JSON.parse(new TextDecoder().decode(payload));
+}

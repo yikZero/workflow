@@ -17,6 +17,7 @@ import { importKey } from '../encryption.js';
 import { runtimeLogger, stepLogger } from '../logger.js';
 import { getStepFunction } from '../private.js';
 import {
+  dehydrateError,
   dehydrateStepReturnValue,
   hydrateStepArguments,
 } from '../serialization.js';
@@ -606,8 +607,13 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                       specVersion: SPEC_VERSION_CURRENT,
                       correlationId: stepId,
                       eventData: {
-                        error: normalizedError.message,
-                        stack: normalizedStack,
+                        error: await dehydrateError(
+                          {
+                            message: normalizedError.message,
+                            stack: normalizedStack,
+                          },
+                          encryptionKey
+                        ),
                       },
                     },
                     { requestId }
@@ -667,8 +673,10 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                         specVersion: SPEC_VERSION_CURRENT,
                         correlationId: stepId,
                         eventData: {
-                          error: errorMessage,
-                          stack: normalizedStack,
+                          error: await dehydrateError(
+                            { message: errorMessage, stack: normalizedStack },
+                            encryptionKey
+                          ),
                         },
                       },
                       { requestId }
@@ -723,8 +731,13 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                         specVersion: SPEC_VERSION_CURRENT,
                         correlationId: stepId,
                         eventData: {
-                          error: normalizedError.message,
-                          stack: normalizedStack,
+                          error: await dehydrateError(
+                            {
+                              message: normalizedError.message,
+                              stack: normalizedStack,
+                            },
+                            encryptionKey
+                          ),
                           ...(RetryableError.is(err) && {
                             retryAfter: err.retryAfter,
                           }),

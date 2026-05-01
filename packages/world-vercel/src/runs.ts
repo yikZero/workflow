@@ -31,8 +31,10 @@ import {
 export const WorkflowRunWireBaseSchema = WorkflowRunBaseSchema.omit({
   error: true,
 }).extend({
-  // Backend returns error as either a JSON string or structured object
-  error: z.union([z.string(), StructuredErrorSchema]).optional(),
+  // Backend returns error as either a JSON string, structured object, or encrypted Uint8Array
+  error: z
+    .union([z.string(), StructuredErrorSchema, z.instanceof(Uint8Array)])
+    .optional(),
   // errorCode is stored inline on the run entity (not inside errorRef).
   // It's merged into StructuredError.code by deserializeError().
   errorCode: z.string().optional(),
@@ -59,28 +61,34 @@ const WorkflowRunWireWithRefsSchema = WorkflowRunWireBaseSchema.omit({
 });
 
 // Overloaded function signatures for filterRunData
-function filterRunData(run: any, resolveData: 'none'): WorkflowRunWithoutData;
-function filterRunData(run: any, resolveData: 'all'): WorkflowRun;
-function filterRunData(
+async function filterRunData(
+  run: any,
+  resolveData: 'none'
+): Promise<WorkflowRunWithoutData>;
+async function filterRunData(
+  run: any,
+  resolveData: 'all'
+): Promise<WorkflowRun>;
+async function filterRunData(
   run: any,
   resolveData: 'none' | 'all'
-): WorkflowRun | WorkflowRunWithoutData;
+): Promise<WorkflowRun | WorkflowRunWithoutData>;
 
 // Implementation
-function filterRunData(
+async function filterRunData(
   run: any,
   resolveData: 'none' | 'all'
-): WorkflowRun | WorkflowRunWithoutData {
+): Promise<WorkflowRun | WorkflowRunWithoutData> {
   if (resolveData === 'none') {
     const { inputRef: _inputRef, outputRef: _outputRef, ...rest } = run;
-    const deserialized = deserializeError<WorkflowRun>(rest);
+    const deserialized = await deserializeError<WorkflowRun>(rest);
     return {
       ...deserialized,
       input: undefined,
       output: undefined,
     } as WorkflowRunWithoutData;
   }
-  return deserializeError<WorkflowRun>(run);
+  return await deserializeError<WorkflowRun>(run);
 }
 
 // Functions
@@ -141,7 +149,9 @@ export async function listWorkflowRuns(
 
   return {
     ...response,
-    data: response.data.map((run: any) => filterRunData(run, resolveData)),
+    data: await Promise.all(
+      response.data.map((run: any) => filterRunData(run, resolveData))
+    ),
   };
 }
 
@@ -156,7 +166,7 @@ export async function createWorkflowRunV1(
     config,
     schema: WorkflowRunWireSchema,
   });
-  return deserializeError<WorkflowRun>(run);
+  return await deserializeError<WorkflowRun>(run);
 }
 
 export async function getWorkflowRun(
@@ -198,7 +208,7 @@ export async function getWorkflowRun(
         : WorkflowRunWireSchema) as any,
     });
 
-    return filterRunData(run, resolveData);
+    return await filterRunData(run, resolveData);
   } catch (error) {
     if (error instanceof WorkflowWorldError && error.status === 404) {
       throw new WorkflowRunNotFoundError(id);
@@ -246,7 +256,7 @@ export async function cancelWorkflowRunV1(
         : WorkflowRunWireSchema) as any,
     });
 
-    return filterRunData(run, resolveData);
+    return await filterRunData(run, resolveData);
   } catch (error) {
     if (error instanceof WorkflowWorldError && error.status === 404) {
       throw new WorkflowRunNotFoundError(id);

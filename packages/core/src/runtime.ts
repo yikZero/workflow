@@ -33,6 +33,7 @@ import {
   getWorldHandlers,
   type WorldHandlers,
 } from './runtime/world.js';
+import { dehydrateError } from './serialization.js';
 import { remapErrorStack } from './source-map.js';
 import * as Attribute from './telemetry/semantic-conventions.js';
 import {
@@ -553,11 +554,15 @@ export function workflowEntrypoint(
                           eventType: 'run_failed',
                           specVersion: SPEC_VERSION_CURRENT,
                           eventData: {
-                            error: {
-                              message: errorMessage,
-                              stack: errorStack,
-                            },
-                            errorCode,
+                            error: await dehydrateError(
+                              {
+                                message: errorMessage,
+                                stack: errorStack,
+                                code: errorCode,
+                              },
+                              encryptionKey
+                            ),
+                            // errorCode is now bundled inside the encrypted error blob
                           },
                         },
                         { requestId }

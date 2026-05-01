@@ -490,7 +490,7 @@ async function createWorkflowRunEventInner(
       ? stripEventAndLegacyRefs(wireResult.event, resolveData)
       : undefined,
     run: wireResult.run
-      ? deserializeError<WorkflowRun>(wireResult.run)
+      ? await deserializeError<WorkflowRun>(wireResult.run)
       : undefined,
     step: wireResult.step ? deserializeStep(wireResult.step) : undefined,
     hook: wireResult.hook,

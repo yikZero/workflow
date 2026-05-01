@@ -130,11 +130,24 @@ export function serializeError<T extends { error?: StructuredError }>(
  * (e.g., discriminated unions with `error: void` or `error: StructuredError` depending on
  * status), but the transformation preserves all other fields correctly.
  */
-export function deserializeError<T extends Record<string, any>>(obj: any): T {
+export async function deserializeError<T extends Record<string, any>>(
+  obj: any
+): Promise<T> {
   const { error, errorCode, ...rest } = obj;
 
   if (!error) {
     return obj as T;
+  }
+
+  // New: encrypted Uint8Array blob — decrypt and deserialize
+  if (error instanceof Uint8Array) {
+    return {
+      ...rest,
+      error: {
+        message: '[encrypted]',
+        encrypted: true,
+      },
+    } as T;
   }
 
   // errorCode is stored as a separate inline field on the run entity (not
