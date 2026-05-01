@@ -75,18 +75,6 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
       } = StepInvokePayloadSchema.parse(message_);
       const { requestId } = metadata;
 
-      // CI-visible diagnostic: step handler invocation start. Mirrors the
-      // SNAPSHOT_DIAG / WORKFLOW_HANDLER_DIAG checkpoints so step activity
-      // is grep-able by runId in Vercel function logs.
-      runtimeLogger.warn('STEP_HANDLER_DIAG', {
-        checkpoint: 'enter',
-        runId: workflowRunId,
-        workflowName,
-        stepId,
-        attempt: metadata.attempt,
-        requestId,
-      });
-
       // --- Max delivery check ---
       // Enforce max delivery limit before any infrastructure calls.
       // This prevents runaway steps from consuming infinite queue deliveries.
@@ -882,12 +870,6 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
               runId: workflowRunId,
               traceCarrier,
               requestedAt: new Date(),
-            });
-
-            runtimeLogger.warn('STEP_HANDLER_DIAG', {
-              checkpoint: 'exit_queued_workflow_continuation',
-              runId: workflowRunId,
-              stepId,
             });
           }
         );
