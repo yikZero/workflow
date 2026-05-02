@@ -9,7 +9,28 @@ import {
   isGeneratedWorkflowFile,
 } from './transform-utils.js';
 
-const enhancedResolve = promisify(enhancedResolveOriginal);
+const enhancedResolve = promisify(
+  enhancedResolveOriginal.create({
+    extensions: [
+      '.ts',
+      '.tsx',
+      '.mts',
+      '.cts',
+      '.cjs',
+      '.mjs',
+      '.js',
+      '.jsx',
+      '.json',
+      '.node',
+    ],
+    mainFields: ['main'],
+    mainFiles: ['index'],
+    conditionNames: ['node', 'import'],
+    // Match swc-esbuild-plugin's resolver so both plugins resolve the same
+    // paths — important for parentHasChild() graph lookups.
+    symlinks: true,
+  })
+);
 
 export const jsTsRegex = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
 
