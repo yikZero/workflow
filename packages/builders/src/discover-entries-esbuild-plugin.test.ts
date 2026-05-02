@@ -134,9 +134,9 @@ describe('createDiscoverEntriesPlugin projectRoot', () => {
     );
 
     const state = {
-      discoveredSteps: new Set<string>(),
-      discoveredWorkflows: new Set<string>(),
-      discoveredSerdeFiles: new Set<string>(),
+      discoveredSteps: [] as string[],
+      discoveredWorkflows: [] as string[],
+      discoveredSerdeFiles: [] as string[],
     };
 
     await esbuild.build({

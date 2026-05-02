@@ -250,9 +250,9 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     // Run discovery first to populate importParents
     importParents.clear();
     const state = {
-      discoveredSteps: new Set<string>(),
-      discoveredWorkflows: new Set<string>(),
-      discoveredSerdeFiles: new Set<string>(),
+      discoveredSteps: [] as string[],
+      discoveredWorkflows: [] as string[],
+      discoveredSerdeFiles: [] as string[],
     };
     await esbuild.build({
       entryPoints: [stepFile],
