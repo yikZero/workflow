@@ -150,15 +150,20 @@ export function createDevTests(config?: DevTestConfig) {
     });
 
     afterEach(async () => {
+      // Restore file contents before deleting any files. If a deletion races
+      // ahead of an api-file restore, the dev server briefly sees an import
+      // pointing at a missing module and fails compilation. On Windows that
+      // failure can stick — Turbopack leaves stale imports in the generated
+      // step route bundle — and every subsequent step request returns 500.
+      const toRestore = restoreFiles.filter((item) => item.content !== '');
+      const toDelete = restoreFiles.filter((item) => item.content === '');
       await Promise.all(
-        restoreFiles.map(async (item) => {
-          if (item.content === '') {
-            await fs.unlink(item.path);
-          } else {
-            await fs.writeFile(item.path, item.content);
-          }
-        })
+        toRestore.map((item) => fs.writeFile(item.path, item.content))
       );
+      if (toDelete.length > 0) {
+        await prewarm();
+      }
+      await Promise.all(toDelete.map((item) => fs.unlink(item.path)));
       await prewarm();
       restoreFiles.length = 0;
     });
@@ -311,7 +316,7 @@ ${apiFileContent}`
 
     test.skipIf(!usesDeferredBuilder)(
       'should include steps discovered from workflow imports',
-      { timeout: 30_000 },
+      { timeout: 60_000 },
       async () => {
         const workflowFile = path.join(
           appPath,
@@ -365,6 +370,39 @@ ${apiFileContent}`
             await fetchWithTimeout('/api/chat');
             const manifestFunctionNames = await readManifestStepFunctionNames();
             expect(manifestFunctionNames).toContain(
+              'discoveredViaWorkflowStep'
+            );
+          },
+        });
+
+        // Tear down in-test (rather than relying on afterEach) so we can wait
+        // for the deferred builder to drop the discovered step from the
+        // manifest before the next test file runs. The generated step route
+        // bundle holds a literal `import '../workflows/discovered-via-workflow-step.ts'`
+        // that is only pruned when the deferred builder rebuilds and
+        // `filterExistingFiles` excludes the now-missing source. On Windows
+        // the rebuild can lag behind the deletion, leaving the bundle
+        // unable to compile and breaking every step request in subsequent
+        // tests (which all share the same dev server).
+        await fs.writeFile(apiFile, apiFileContent);
+        await fs.unlink(workflowFile);
+        await fs.unlink(stepFile);
+        for (const trackedPath of [apiFile, workflowFile, stepFile]) {
+          const idx = restoreFiles.findIndex(
+            (item) => item.path === trackedPath
+          );
+          if (idx !== -1) {
+            restoreFiles.splice(idx, 1);
+          }
+        }
+        await pollUntil({
+          description:
+            'manifest.json to drop discoveredViaWorkflowStep after cleanup',
+          timeoutMs: 25_000,
+          check: async () => {
+            await fetchWithTimeout('/api/chat');
+            const manifestFunctionNames = await readManifestStepFunctionNames();
+            expect(manifestFunctionNames).not.toContain(
               'discoveredViaWorkflowStep'
             );
           },
