@@ -209,7 +209,7 @@ async function fetchFallback(userId: string): Promise<{ source: "fallback"; user
 
 export const sequentialAndParallelStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { fetchUserData } from "@/workflows/sequential-and-parallel";
+import { fetchUserData } from "@/app/workflows/sequential-and-parallel";
 
 // POST /api/sequential-and-parallel { userId }
 export async function POST(request: Request) {

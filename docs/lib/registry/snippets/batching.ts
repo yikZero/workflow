@@ -169,7 +169,7 @@ async function processRecord(record: ImportRecord): Promise<string> {
 
 export const batchingStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { batchImport, type ImportRecord } from "@/workflows/batching";
+import { batchImport, type ImportRecord } from "@/app/workflows/batching";
 
 // POST /api/batching { records: ImportRecord[], batchSize?: number }
 export async function POST(request: Request) {

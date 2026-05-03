@@ -279,7 +279,7 @@ async function deprovisionSeats(accountId: string, entitlementId: string): Promi
 
 export const sagaStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { subscriptionUpgradeSaga } from "@/workflows/saga";
+import { subscriptionUpgradeSaga } from "@/app/workflows/saga";
 
 // POST /api/saga { accountId, seats }
 export async function POST(request: Request) {

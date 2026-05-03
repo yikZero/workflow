@@ -156,7 +156,7 @@ upsertToWarehouse.maxRetries = 10;
 
 export const rateLimitingStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { syncContact } from "@/workflows/rate-limiting";
+import { syncContact } from "@/app/workflows/rate-limiting";
 
 // POST /api/rate-limiting { contactId }
 export async function POST(request: Request) {

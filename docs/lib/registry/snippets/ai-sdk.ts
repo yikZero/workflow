@@ -229,7 +229,7 @@ export async function supportWorkflow(initialMessages: ModelMessage[]) {
 export const aiSdkRouteSource = `import type { UIMessage, UIMessageChunk } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start, getRun } from "workflow/api";
-import { supportWorkflow, turnHook } from "@/workflows/support";
+import { supportWorkflow, turnHook } from "@/app/workflows/support";
 
 // Pump the durable stream until this turn's \`finish\` chunk, then close
 // the HTTP response. Release (don't cancel) the source reader so the

@@ -422,7 +422,7 @@ async function emitEvent(event: UpgradeEvent): Promise<void> {
 
 export const upgradingWorkflowsStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { upgradingWorkflow, type WorkflowState } from "@/workflows/upgrading-workflow";
+import { upgradingWorkflow, type WorkflowState } from "@/app/workflows/upgrading-workflows;
 
 // POST /api/upgrade — starts the first iteration of the chain.
 export async function POST(request: Request) {
@@ -436,7 +436,7 @@ export async function POST(request: Request) {
 `;
 
 export const upgradingWorkflowsResumeRouteSource = `import { NextResponse } from "next/server";
-import { resumeHook } from "@/workflows/upgrading-workflow";
+import { resumeHook } from "@/app/workflows/upgrading-workflows;
 
 // POST /api/upgrade/resume { runId, amount }
 // Resumes the active iteration, triggering a state update and a spawn.

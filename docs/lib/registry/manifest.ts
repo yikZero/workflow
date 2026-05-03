@@ -361,7 +361,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/ai-sdk',
     files: [
       {
-        path: 'workflows/support.ts',
+        path: 'workflows/ai-sdk.ts',
         description:
           'The durable chat workflow — `supportWorkflow()` + `turnHook` + tool steps. One run = one full conversation.',
       },
@@ -380,7 +380,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/support.ts',
+        caption: 'workflows/ai-sdk.ts',
         code: aiSdkWorkflowSource,
         installCode: aiSdkWorkflowInstallSource,
       },
@@ -525,7 +525,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/durable-agent',
     files: [
       {
-        path: 'workflows/flight-agent.ts',
+        path: 'workflows/durable-agent.ts',
         description:
           'The durable agent workflow — `flightAgent()` orchestrator + three tool steps (`searchFlights`, `bookFlight`, `checkWeather`). Replace the tools with your own.',
       },
@@ -544,7 +544,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/flight-agent.ts',
+        caption: 'workflows/durable-agent.ts',
         code: durableAgentWorkflowSource,
         installCode: durableAgentWorkflowInstallSource,
       },
@@ -626,7 +626,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/human-in-the-loop',
     files: [
       {
-        path: 'workflows/approval-agent.ts',
+        path: 'workflows/human-in-the-loop.ts',
         description:
           'Durable agent + `approvalHook` + the `requestApproval` tool that races the hook against a 24h `sleep()` and streams resolution parts.',
       },
@@ -650,7 +650,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/approval-agent.ts',
+        caption: 'workflows/human-in-the-loop.ts',
         code: humanInTheLoopWorkflowSource,
         installCode: humanInTheLoopWorkflowInstallSource,
       },
@@ -752,7 +752,7 @@ export const registryItems: RegistryItem[] = [
           'The `Chat` singleton — adapters, state backend, and `ThreadState` type that holds the `runId` per thread.',
       },
       {
-        path: 'workflows/durable-chat-session.ts',
+        path: 'workflows/chat-sdk.ts',
         description:
           'The durable session workflow — `durableChatSession()` + `chatTurnHook`, with platform side-effects in dynamic-import steps.',
       },
@@ -782,7 +782,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/durable-chat-session.ts',
+        caption: 'workflows/chat-sdk.ts',
         code: chatSdkWorkflowSource,
         installCode: chatSdkWorkflowInstallSource,
       },
@@ -2026,7 +2026,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/upgrading-workflows',
     files: [
       {
-        path: 'workflows/upgrading-workflow.ts',
+        path: 'workflows/upgrading-workflows.ts',
         description:
           'The self-upgrading workflow — one iteration per run, blocks on `resumeHook`, computes new state, then spawns the next iteration with `deploymentId: "latest"`.',
       },
@@ -2045,7 +2045,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Method 1 — per-event spawn',
         lang: 'tsx',
-        caption: 'workflows/upgrading-workflow.ts',
+        caption: 'workflows/upgrading-workflows.ts',
         description:
           'One run per event. After each resume, state is computed and the next iteration is spawned with `deploymentId: "latest"`. Every event automatically picks up the latest code.',
         code: upgradingWorkflowsWorkflowSource,
@@ -2054,7 +2054,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Method 2 — explicit upgrade hook',
         lang: 'tsx',
-        caption: 'workflows/upgrading-workflow.ts',
+        caption: 'workflows/upgrading-workflows.ts',
         description:
           'Long-running loop that handles many events per run. A separate `upgradeHook` races the work hook — fire it when you want to force a respawn on the latest deployment.',
         code: upgradingWorkflowsMethod2Source,

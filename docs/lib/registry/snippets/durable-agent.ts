@@ -243,7 +243,7 @@ export async function flightAgent(messages: ModelMessage[]) {
 export const durableAgentStartRouteSource = `import type { UIMessage } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start } from "workflow/api";
-import { flightAgent } from "@/workflows/flight-agent";
+import { flightAgent } from "@/app/workflows/durable-agent";
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();

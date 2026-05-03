@@ -291,7 +291,7 @@ async function generateSummary(analysis: string): Promise<string> {
 
 export const childWorkflowsStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { processDocumentBatch } from "@/workflows/child-workflows";
+import { processDocumentBatch } from "@/app/workflows/child-workflows";
 
 // POST /api/child-workflows { documentIds: string[] }
 export async function POST(request: Request) {

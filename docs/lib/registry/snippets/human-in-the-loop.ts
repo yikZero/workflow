@@ -316,7 +316,7 @@ export async function approvalAgent(messages: ModelMessage[]) {
 export const humanInTheLoopStartRouteSource = `import type { UIMessage } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start } from "workflow/api";
-import { approvalAgent } from "@/workflows/approval-agent";
+import { approvalAgent } from "@/app/workflows/human-in-the-loop";
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
@@ -332,7 +332,7 @@ export async function POST(req: Request) {
 `;
 
 export const humanInTheLoopRouteSource = `import { NextResponse } from "next/server";
-import { approvalHook } from "@/workflows/approval-agent";
+import { approvalHook } from "@/app/workflows/human-in-the-loop";
 
 export async function POST(req: Request) {
   const { toolCallId, approved, comment } = (await req.json()) as {

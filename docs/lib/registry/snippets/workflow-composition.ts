@@ -216,7 +216,7 @@ async function buildReport(reportId: string): Promise<void> {
 
 export const workflowCompositionStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { onboardUser } from "@/workflows/workflow-composition";
+import { onboardUser } from "@/app/workflows/workflow-composition";
 
 // POST /api/workflow-composition { userId }
 export async function POST(request: Request) {

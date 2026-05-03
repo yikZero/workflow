@@ -127,7 +127,7 @@ async function runAction(action: ScheduledAction): Promise<void> {
 
 export const schedulingStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { scheduleAction, type ScheduledAction } from "@/workflows/scheduling";
+import { scheduleAction, type ScheduledAction } from "@/app/workflows/scheduling";
 
 // POST /api/scheduling { id, delay, payload }
 export async function POST(request: Request) {
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
 `;
 
 export const schedulingCancelRouteSource = `import { NextResponse } from "next/server";
-import { cancelSchedule } from "@/workflows/scheduling";
+import { cancelSchedule } from "@/app/workflows/scheduling";
 
 // POST /api/scheduling/cancel { scheduleId, reason? }
 // Idempotent: returns success even if the hook has already fired or expired.

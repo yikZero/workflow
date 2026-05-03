@@ -209,7 +209,7 @@ export async function stoppableAgent(messages: ModelMessage[]) {
 export const agentCancellationStartRouteSource = `import type { UIMessage } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start } from "workflow/api";
-import { stoppableAgent } from "@/workflows/stoppable-agent";
+import { stoppableAgent } from "@/app/workflows/agent-cancellation";
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
@@ -226,7 +226,7 @@ export async function POST(req: Request) {
 
 export const agentCancellationRouteSource = `import { getRun } from "workflow/api";
 import { NextResponse } from "next/server";
-import { stopHook } from "@/workflows/stoppable-agent";
+import { stopHook } from "@/app/workflows/agent-cancellation";
 
 export async function POST(
   req: Request,
@@ -375,7 +375,7 @@ export async function stoppableAgent(messages: ModelMessage[]) {
 }
 `;
 
-export const agentCancellationConceptStopRouteSource = `import { stopHook } from "@/workflows/stoppable-agent";
+export const agentCancellationConceptStopRouteSource = `import { stopHook } from "@/app/workflows/agent-cancellation";
 
 // POST /api/agent/[runId]/stop — resumes the hook to trigger a graceful exit.
 export async function POST(

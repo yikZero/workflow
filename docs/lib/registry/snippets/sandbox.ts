@@ -442,7 +442,7 @@ export async function sandboxSessionWorkflow() {
 `;
 
 export const sandboxStartRouteSource = `import { start, getRun } from "workflow/api";
-import { sandboxSessionWorkflow } from "@/workflows/sandbox-session";
+import { sandboxSessionWorkflow } from "@/app/workflows/sandbox-session";
 
 export async function POST(req: Request) {
   let body: { runId?: string } = {};
@@ -490,7 +490,7 @@ function ndjson<T>() {
 }
 `;
 
-export const sandboxCommandRouteSource = `import { commandHook } from "@/workflows/sandbox-session";
+export const sandboxCommandRouteSource = `import { commandHook } from "@/app/workflows/sandbox-session";
 
 export async function POST(req: Request) {
   const { runId, command } = (await req.json()) as {
@@ -524,7 +524,7 @@ export async function POST(req: Request) {
 export const sandboxClientSource = `"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SandboxEvent } from "@/workflows/sandbox-session";
+import type { SandboxEvent } from "@/app/workflows/sandbox-session";
 
 const RUN_ID_KEY = "sandbox.runId";
 

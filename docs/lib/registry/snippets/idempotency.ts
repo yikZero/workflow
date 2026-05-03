@@ -155,7 +155,7 @@ async function sendReceipt(customerId: string, chargeId: string): Promise<void> 
 
 export const idempotencyStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { chargeCustomer } from "@/workflows/idempotency";
+import { chargeCustomer } from "@/app/workflows/idempotency";
 
 // POST /api/idempotency { customerId, amountCents }
 export async function POST(request: Request) {

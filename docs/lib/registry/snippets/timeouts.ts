@@ -197,7 +197,7 @@ async function sendApprovalRequest(
 
 export const timeoutsStartRouteSource = `import { start } from "workflow/api";
 import { NextResponse } from "next/server";
-import { processWithTimeout } from "@/workflows/timeouts";
+import { processWithTimeout } from "@/app/workflows/timeouts";
 
 // POST /api/timeouts { data }
 export async function POST(request: Request) {

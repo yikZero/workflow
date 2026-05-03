@@ -47,7 +47,7 @@ import type { ThreadState } from "@/lib/bot";
 
 // Hook payload type lives in its own file so the webhook side can import
 // it without pulling in the workflow module.
-import type { ChatTurnPayload } from "@/workflows/chat-turn-hook";
+import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
 
 const chatTurnHook = defineHook<ChatTurnPayload>();
 
@@ -133,6 +133,15 @@ export const chatSdkWorkflowInstallSource = `/**
  *   - Tool calls in the bot should be retried without re-running on replay.
  *   - You want the bot to maintain conversation state across reconnections.
  *
+ * DEPENDENCIES — run these before the workflow will compile:
+ *   pnpm add chat                    # Chat SDK core (provides Message, Thread, etc.)
+ *   pnpm add @chat-adapter/slack     # or telegram, teams, discord — your platform
+ *   pnpm add @chat-state/redis       # or another state backend
+ *
+ *   Then create lib/bot.ts exporting:
+ *     export const bot = createBot({ adapter, state });
+ *     export type ThreadState = { workflowRunId?: string };
+ *
  * TO ADAPT THIS TO YOUR USE CASE:
  *   - Replace the runTurn step body with your AI SDK call, tool loop, or
  *     database lookup — any async logic that should be durable.
@@ -148,7 +157,7 @@ export const chatSdkWorkflowInstallSource = `/**
 import { Message, reviver, type Thread } from "chat";
 import { defineHook, getWorkflowMetadata } from "workflow";
 import type { ThreadState } from "@/lib/bot";
-import type { ChatTurnPayload } from "@/workflows/chat-turn-hook";
+import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
 
 // One hook per run, token = runId. Reused every turn (created once outside
 // the loop to avoid HookConflictError on subsequent turns).
@@ -239,6 +248,9 @@ export const chatSdkHookTypeInstallSource = `/**
  *     a clean shared type without circular imports.
  *   - You are building on top of the Chat SDK durable-chat-session pattern.
  *
+ * DEPENDENCIES:
+ *   pnpm add chat    # Chat SDK core (provides SerializedMessage)
+ *
  * TO ADAPT THIS TO YOUR USE CASE:
  *   - Add any extra fields your handler needs to pass to the workflow turn
  *     (e.g. userId, metadata, attachments).
@@ -258,8 +270,8 @@ export type ChatTurnPayload = {
 export const chatSdkHandlersSource = `import type { Message, Thread } from "chat";
 import { getRun, resumeHook, start } from "workflow/api";
 import { bot, type ThreadState } from "@/lib/bot";
-import { durableChatSession } from "@/workflows/durable-chat-session";
-import type { ChatTurnPayload } from "@/workflows/chat-turn-hook";
+import { durableChatSession } from "@/app/workflows/chat-sdk";
+import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
 
 async function startSession(
   thread: Thread<ThreadState>,
