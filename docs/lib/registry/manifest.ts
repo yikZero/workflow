@@ -162,7 +162,7 @@ export const registryItems: RegistryItem[] = [
     ],
     files: [
       {
-        path: 'workflows/agent-cancellation.ts',
+        path: 'workflows/agent-cancellation-workflow.ts',
         description:
           'Durable agent + `stopHook` + `Promise.race` exit, with a final `data-stopped` part emitted on stop.',
       },
@@ -171,7 +171,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/agent-cancellation.ts',
+        caption: 'workflows/agent-cancellation-workflow.ts',
         code: agentCancellationWorkflowSource,
         installCode: agentCancellationWorkflowInstallSource,
       },
@@ -212,7 +212,7 @@ export const registryItems: RegistryItem[] = [
         label: 'Stop Signal',
         lang: 'tsx',
         caption:
-          'workflows/agent-cancellation.ts — hook + Promise.race graceful exit',
+          'workflows/agent-cancellation-workflow.ts — hook + Promise.race graceful exit',
         code: agentCancellationConceptStopSignalSource,
       },
       {
@@ -361,7 +361,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/ai-sdk',
     files: [
       {
-        path: 'workflows/ai-sdk.ts',
+        path: 'workflows/ai-sdk-workflow.ts',
         description:
           'The durable chat workflow — `supportWorkflow()` + `turnHook` + tool steps. One run = one full conversation.',
       },
@@ -380,7 +380,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/ai-sdk.ts',
+        caption: 'workflows/ai-sdk-workflow.ts',
         code: aiSdkWorkflowSource,
         installCode: aiSdkWorkflowInstallSource,
       },
@@ -525,7 +525,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/durable-agent',
     files: [
       {
-        path: 'workflows/durable-agent.ts',
+        path: 'workflows/durable-agent-workflow.ts',
         description:
           'The durable agent workflow — `flightAgent()` orchestrator + three tool steps (`searchFlights`, `bookFlight`, `checkWeather`). Replace the tools with your own.',
       },
@@ -544,7 +544,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/durable-agent.ts',
+        caption: 'workflows/durable-agent-workflow.ts',
         code: durableAgentWorkflowSource,
         installCode: durableAgentWorkflowInstallSource,
       },
@@ -626,7 +626,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/human-in-the-loop',
     files: [
       {
-        path: 'workflows/human-in-the-loop.ts',
+        path: 'workflows/human-in-the-loop-workflow.ts',
         description:
           'Durable agent + `approvalHook` + the `requestApproval` tool that races the hook against a 24h `sleep()` and streams resolution parts.',
       },
@@ -650,7 +650,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/human-in-the-loop.ts',
+        caption: 'workflows/human-in-the-loop-workflow.ts',
         code: humanInTheLoopWorkflowSource,
         installCode: humanInTheLoopWorkflowInstallSource,
       },
@@ -752,12 +752,12 @@ export const registryItems: RegistryItem[] = [
           'The `Chat` singleton — adapters, state backend, and `ThreadState` type that holds the `runId` per thread.',
       },
       {
-        path: 'workflows/chat-sdk.ts',
+        path: 'workflows/chat-sdk-workflow.ts',
         description:
           'The durable session workflow — `durableChatSession()` + `chatTurnHook`, with platform side-effects in dynamic-import steps.',
       },
       {
-        path: 'workflows/chat-turn-hook.ts',
+        path: 'workflows/chat-turn-hook-workflow.ts',
         description:
           'Stand-alone `ChatTurnPayload` type so the webhook handler can import it without pulling in the workflow module.',
       },
@@ -782,14 +782,14 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/chat-sdk.ts',
+        caption: 'workflows/chat-sdk-workflow.ts',
         code: chatSdkWorkflowSource,
         installCode: chatSdkWorkflowInstallSource,
       },
       {
         label: 'Hook type',
         lang: 'tsx',
-        caption: 'workflows/chat-turn-hook.ts',
+        caption: 'workflows/chat-turn-hook-workflow.ts',
         code: chatSdkHookTypeSource,
         installCode: chatSdkHookTypeInstallSource,
       },
@@ -911,7 +911,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/sandbox',
     files: [
       {
-        path: 'workflows/sandbox-session.ts',
+        path: 'workflows/sandbox-session-workflow.ts',
         description:
           'The durable session workflow — `sandboxSessionWorkflow()` + `commandHook`, with idle hibernation and proactive sandbox refresh built in.',
       },
@@ -935,7 +935,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/sandbox-session.ts',
+        caption: 'workflows/sandbox-session-workflow.ts',
         code: sandboxWorkflowSource,
         installCode: sandboxWorkflowInstallSource,
       },
@@ -964,7 +964,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Quickstart',
         lang: 'tsx',
-        caption: 'workflows/sandbox-pipeline.ts',
+        caption: 'workflows/sandbox-pipeline-workflow.ts',
         description:
           'Before the full session pattern, the simplest shape. Each `Sandbox` method is an implicit step, so the event log records every command and the workflow replays from the last completed call on restart.',
         code: sandboxUsageSource,
@@ -1057,7 +1057,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/batching',
     files: [
       {
-        path: 'workflows/batching.ts',
+        path: 'workflows/batching-workflow.ts',
         description:
           'Generic `batchImport()` — chunks records, runs each batch with Promise.allSettled, paces with sleep(), returns a tally + failure list.',
       },
@@ -1070,7 +1070,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/batching.ts',
+        caption: 'workflows/batching-workflow.ts',
         description:
           'The workflow splits records into chunks, processes each chunk concurrently, tracks results per batch, and returns a final tally. Each record runs in its own `"use step"` function with full Node.js access and automatic retries.',
         code: batchingWorkflowSource,
@@ -1139,7 +1139,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/idempotency',
     files: [
       {
-        path: 'workflows/idempotency.ts',
+        path: 'workflows/idempotency-workflow.ts',
         description:
           '`chargeCustomer()` workflow — Stripe charge + receipt, both keyed by their step IDs so retries dedupe automatically.',
       },
@@ -1152,7 +1152,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/idempotency.ts',
+        caption: 'workflows/idempotency-workflow.ts',
         code: idempotencyWorkflowSource,
         installCode: idempotencyWorkflowInstallSource,
       },
@@ -1213,7 +1213,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/rate-limiting',
     files: [
       {
-        path: 'workflows/rate-limiting.ts',
+        path: 'workflows/rate-limiting-workflow.ts',
         description:
           '`syncContact()` — Retry-After header on 429, exponential backoff on 5xx, `maxRetries = 10` override for known-flaky endpoints.',
       },
@@ -1226,7 +1226,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/rate-limiting.ts',
+        caption: 'workflows/rate-limiting-workflow.ts',
         code: rateLimitingWorkflowSource,
         installCode: rateLimitingWorkflowInstallSource,
       },
@@ -1295,7 +1295,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/saga',
     files: [
       {
-        path: 'workflows/saga.ts',
+        path: 'workflows/saga-workflow.ts',
         description:
           'Subscription-upgrade saga — three forward steps, three matching idempotent compensations, LIFO unwind on FatalError.',
       },
@@ -1308,7 +1308,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/saga.ts',
+        caption: 'workflows/saga-workflow.ts',
         code: sagaWorkflowSource,
         installCode: sagaWorkflowInstallSource,
       },
@@ -1378,7 +1378,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/scheduling',
     files: [
       {
-        path: 'workflows/scheduling.ts',
+        path: 'workflows/scheduling-workflow.ts',
         description:
           '`scheduleAction()` workflow + exported `cancelSchedule` hook + `runAction` step you customise per use case.',
       },
@@ -1396,7 +1396,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/scheduling.ts',
+        caption: 'workflows/scheduling-workflow.ts',
         code: schedulingWorkflowSource,
         installCode: schedulingWorkflowInstallSource,
       },
@@ -1477,7 +1477,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/sequential-and-parallel',
     files: [
       {
-        path: 'workflows/sequential-and-parallel.ts',
+        path: 'workflows/sequential-and-parallel-workflow.ts',
         description:
           'Three entry points — pipeline, fan-out, race — over a small set of placeholder steps you replace with real work.',
       },
@@ -1490,7 +1490,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/sequential-and-parallel.ts',
+        caption: 'workflows/sequential-and-parallel-workflow.ts',
         code: sequentialAndParallelWorkflowSource,
         installCode: sequentialAndParallelWorkflowInstallSource,
       },
@@ -1567,7 +1567,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/timeouts',
     files: [
       {
-        path: 'workflows/timeouts.ts',
+        path: 'workflows/timeouts-workflow.ts',
         description:
           'Three entry points — hard timeout, soft timeout with fallback, and a webhook racing a 7-day deadline.',
       },
@@ -1580,7 +1580,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/timeouts.ts',
+        caption: 'workflows/timeouts-workflow.ts',
         code: timeoutsWorkflowSource,
         installCode: timeoutsWorkflowInstallSource,
       },
@@ -1654,7 +1654,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/webhooks',
     files: [
       {
-        path: 'workflows/webhooks.ts',
+        path: 'workflows/webhooks-workflow.ts',
         description:
           'Two patterns — `paymentWebhook()` (long-running event ledger) and `asyncVerification()` (request-reply with deadline).',
       },
@@ -1668,7 +1668,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Event listener',
         lang: 'tsx',
-        caption: 'workflows/webhooks.ts',
+        caption: 'workflows/webhooks-workflow.ts',
         description:
           'Long-running listener that processes multiple requests from one URL and exits on a terminal event — Stripe-style payment ledger.',
         code: webhooksEventListenerSource,
@@ -1677,7 +1677,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Request-reply',
         lang: 'tsx',
-        caption: 'workflows/webhooks.ts',
+        caption: 'workflows/webhooks-workflow.ts',
         description:
           'Submit a request to an external vendor with your webhook URL as the callback, then race the response against a 30-second deadline.',
         code: webhooksRequestReplySource,
@@ -1747,7 +1747,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/workflow-composition',
     files: [
       {
-        path: 'workflows/workflow-composition.ts',
+        path: 'workflows/workflow-composition-workflow.ts',
         description:
           'Parent + child workflows demonstrating both direct-await flattening and background spawn via `start()` from a step.',
       },
@@ -1760,7 +1760,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/workflow-composition.ts',
+        caption: 'workflows/workflow-composition-workflow.ts',
         code: workflowCompositionWorkflowSource,
         installCode: workflowCompositionWorkflowInstallSource,
       },
@@ -1843,7 +1843,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/child-workflows',
     files: [
       {
-        path: 'workflows/child-workflows.ts',
+        path: 'workflows/child-workflows-workflow.ts',
         description:
           '`processDocumentBatch()` parent + `processDocument()` child + chunked spawn step + durable polling loop + result-collection step.',
       },
@@ -1857,7 +1857,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/child-workflows.ts',
+        caption: 'workflows/child-workflows-workflow.ts',
         code: childWorkflowsWorkflowSource,
         installCode: childWorkflowsWorkflowInstallSource,
       },
@@ -1943,7 +1943,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Lib',
         lang: 'tsx',
-        caption: 'workflows/distributed-abort-controller.ts',
+        caption: 'workflows/distributed-abort-controller-workflow.ts',
         code: distributedAbortControllerLibSource,
         installCode: distributedAbortControllerLibInstallSource,
       },
@@ -2026,7 +2026,7 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/upgrading-workflows',
     files: [
       {
-        path: 'workflows/upgrading-workflows.ts',
+        path: 'workflows/upgrading-workflows-workflow.ts',
         description:
           'The self-upgrading workflow — one iteration per run, blocks on `resumeHook`, computes new state, then spawns the next iteration with `deploymentId: "latest"`.',
       },
@@ -2045,7 +2045,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Method 1 — per-event spawn',
         lang: 'tsx',
-        caption: 'workflows/upgrading-workflows.ts',
+        caption: 'workflows/upgrading-workflows-workflow.ts',
         description:
           'One run per event. After each resume, state is computed and the next iteration is spawned with `deploymentId: "latest"`. Every event automatically picks up the latest code.',
         code: upgradingWorkflowsWorkflowSource,
@@ -2054,7 +2054,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Method 2 — explicit upgrade hook',
         lang: 'tsx',
-        caption: 'workflows/upgrading-workflows.ts',
+        caption: 'workflows/upgrading-workflows-workflow.ts',
         description:
           'Long-running loop that handles many events per run. A separate `upgradeHook` races the work hook — fire it when you want to force a respawn on the latest deployment.',
         code: upgradingWorkflowsMethod2Source,
