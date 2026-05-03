@@ -164,13 +164,18 @@ export default async function RegistryDetailPage({ params }: PageProps) {
 
   if (guide?.whySection) {
     pageTextSections.push(`## ${guide.whySection.title ?? 'Why'}`);
-    if (guide.whySection.problem)
-      pageTextSections.push(guide.whySection.problem);
-    if (guide.whySection.solution)
-      pageTextSections.push(guide.whySection.solution);
-    (guide.whySection.bullets ?? []).forEach((b) =>
+    if (guide.whySection.problemProse)
+      pageTextSections.push(guide.whySection.problemProse);
+    (guide.whySection.problemBullets ?? []).forEach((b) =>
       pageTextSections.push(`- ${b}`)
     );
+    if (guide.whySection.solutionProse)
+      pageTextSections.push(guide.whySection.solutionProse);
+    (guide.whySection.solutionBullets ?? []).forEach((b) =>
+      pageTextSections.push(`- ${b}`)
+    );
+    if (guide.whySection.closingProse)
+      pageTextSections.push(guide.whySection.closingProse);
   }
 
   if (guide?.approaches) {
