@@ -1,24 +1,26 @@
 import type { ComponentType } from 'react';
+import {
+  Ban,
+  Bot,
+  Box,
+  CalendarClock,
+  CircleStop,
+  Gauge,
+  GitFork,
+  Layers,
+  Network,
+  RefreshCw,
+  Repeat2,
+  Split,
+  ThumbsUp,
+  Timer,
+  Webhook,
+  Zap,
+} from 'lucide-react';
 import type { RegistryLogoId } from '@/lib/patterns/types';
-import { LogoAgentCancellation } from './logo-agent-cancellation';
 import { LogoAiSdk } from './logo-ai-sdk';
-import { LogoBatching } from './logo-batching';
 import { LogoChatSdk } from './logo-chat-sdk';
-import { LogoChildWorkflows } from './logo-child-workflows';
-import { LogoDistributedAbortController } from './logo-distributed-abort-controller';
-import { LogoDurableAgent } from './logo-durable-agent';
-import { LogoHumanInTheLoop } from './logo-human-in-the-loop';
-import { LogoIdempotency } from './logo-idempotency';
-import { LogoRateLimiting } from './logo-rate-limiting';
 import { LogoResend } from './logo-resend';
-import { LogoSaga } from './logo-saga';
-import { LogoSandbox } from './logo-sandbox';
-import { LogoScheduling } from './logo-scheduling';
-import { LogoSequentialAndParallel } from './logo-sequential-and-parallel';
-import { LogoTimeouts } from './logo-timeouts';
-import { LogoWebhooks } from './logo-webhooks';
-import { LogoUpgradingWorkflows } from './logo-upgrading-workflows';
-import { LogoWorkflowComposition } from './logo-workflow-composition';
 
 export interface ProviderLogoProps {
   size?: number;
@@ -26,8 +28,8 @@ export interface ProviderLogoProps {
 }
 
 /**
- * Provider brand marks — keyed by `RegistryLogoId`.
- * When adding a new provider, register its SVG component here.
+ * Pattern logos keyed by `RegistryLogoId`.
+ * Conceptual patterns use lucide-react icons; brand marks use custom SVGs.
  */
 export const providerLogos: Record<
   RegistryLogoId,
@@ -35,23 +37,23 @@ export const providerLogos: Record<
 > = {
   resend: LogoResend,
   'ai-sdk': LogoAiSdk,
-  sandbox: LogoSandbox,
   'chat-sdk': LogoChatSdk,
-  'durable-agent': LogoDurableAgent,
-  'human-in-the-loop': LogoHumanInTheLoop,
-  'agent-cancellation': LogoAgentCancellation,
-  'sequential-and-parallel': LogoSequentialAndParallel,
-  'workflow-composition': LogoWorkflowComposition,
-  saga: LogoSaga,
-  batching: LogoBatching,
-  'rate-limiting': LogoRateLimiting,
-  scheduling: LogoScheduling,
-  timeouts: LogoTimeouts,
-  idempotency: LogoIdempotency,
-  webhooks: LogoWebhooks,
-  'child-workflows': LogoChildWorkflows,
-  'distributed-abort-controller': LogoDistributedAbortController,
-  'upgrading-workflows': LogoUpgradingWorkflows,
+  'agent-cancellation': CircleStop,
+  batching: Layers,
+  'child-workflows': GitFork,
+  'distributed-abort-controller': Ban,
+  'durable-agent': Bot,
+  'human-in-the-loop': ThumbsUp,
+  idempotency: RefreshCw,
+  'rate-limiting': Gauge,
+  saga: Repeat2,
+  sandbox: Box,
+  scheduling: CalendarClock,
+  'sequential-and-parallel': Split,
+  timeouts: Timer,
+  'upgrading-workflows': Zap,
+  webhooks: Webhook,
+  'workflow-composition': Network,
 };
 
 export function getProviderLogo(
