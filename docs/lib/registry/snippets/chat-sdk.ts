@@ -41,13 +41,13 @@ export const bot = new Chat<typeof adapters, ThreadState>({
 }).registerSingleton();
 `;
 
-export const chatSdkWorkflowSource = `import { Message, reviver, type Thread } from "chat";
+export const chatSdkWorkflowSource = `import { Message, reviver, type Thread, type SerializedMessage } from "chat";
 import { defineHook, getWorkflowMetadata } from "workflow";
 import type { ThreadState } from "@/lib/bot";
 
-// Hook payload type lives in its own file so the webhook side can import
-// it without pulling in the workflow module.
-import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
+// Hook payload type — exported so webhook handlers can import it without
+// pulling in workflow-specific modules.
+export type ChatTurnPayload = { message: SerializedMessage };
 
 const chatTurnHook = defineHook<ChatTurnPayload>();
 
@@ -154,10 +154,13 @@ export const chatSdkWorkflowInstallSource = `/**
  *
  * DOCS: https://workflow-sdk.dev/patterns/chat-sdk
  */
-import { Message, reviver, type Thread } from "chat";
+import { Message, reviver, type Thread, type SerializedMessage } from "chat";
 import { defineHook, getWorkflowMetadata } from "workflow";
 import type { ThreadState } from "@/lib/bot";
-import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
+
+// Hook payload type — exported so webhook handlers can import it without
+// pulling in workflow-specific modules.
+export type ChatTurnPayload = { message: SerializedMessage };
 
 // One hook per run, token = runId. Reused every turn (created once outside
 // the loop to avoid HookConflictError on subsequent turns).
@@ -271,7 +274,7 @@ export const chatSdkHandlersSource = `import type { Message, Thread } from "chat
 import { getRun, resumeHook, start } from "workflow/api";
 import { bot, type ThreadState } from "@/lib/bot";
 import { durableChatSession } from "@/app/workflows/chat-sdk";
-import type { ChatTurnPayload } from "@/app/workflows/chat-turn-hook";
+import type { ChatTurnPayload } from "@/app/workflows/chat-sdk-workflow";
 
 async function startSession(
   thread: Thread<ThreadState>,

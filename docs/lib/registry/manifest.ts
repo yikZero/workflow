@@ -23,8 +23,6 @@ import {
 import {
   chatSdkBotSource,
   chatSdkHandlersSource,
-  chatSdkHookTypeSource,
-  chatSdkHookTypeInstallSource,
   chatSdkWebhookSource,
   chatSdkWorkflowSource,
   chatSdkWorkflowInstallSource,
@@ -757,11 +755,6 @@ export const registryItems: RegistryItem[] = [
           'The durable session workflow — `durableChatSession()` + `chatTurnHook`, with platform side-effects in dynamic-import steps.',
       },
       {
-        path: 'workflows/chat-turn-hook-workflow.ts',
-        description:
-          'Stand-alone `ChatTurnPayload` type so the webhook handler can import it without pulling in the workflow module.',
-      },
-      {
         path: 'lib/chat-session-handlers.ts',
         description:
           'Event handlers — decide whether each inbound message is a `start()` or a `resumeHook()`, with stale-runId fallback.',
@@ -785,13 +778,6 @@ export const registryItems: RegistryItem[] = [
         caption: 'workflows/chat-sdk-workflow.ts',
         code: chatSdkWorkflowSource,
         installCode: chatSdkWorkflowInstallSource,
-      },
-      {
-        label: 'Hook type',
-        lang: 'tsx',
-        caption: 'workflows/chat-turn-hook-workflow.ts',
-        code: chatSdkHookTypeSource,
-        installCode: chatSdkHookTypeInstallSource,
       },
       {
         label: 'Handlers',
