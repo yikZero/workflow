@@ -210,6 +210,8 @@ If `queueConcurrency` is smaller than the peak number of concurrent parent polls
 
 For `world-postgres`, the default `queueConcurrency` is set to **50**, which is comfortably above the ~24 concurrent polls `fibonacciWorkflow(6)` produces at peak. Workflows that fan out more aggressively must raise this ceiling. `packages/core/src/runtime/run.ts`, the `queueConcurrency` option on `createWorld()` for `world-postgres`, and the `fibonacciWorkflow` fixture in `workbench/example/workflows/99_e2e.ts` all carry pointers to this caveat.
 
+**Follow-up**: Replace the worker-pool sizing requirement with a polling design that does not occupy a worker slot. Options under consideration: (a) restore a runtime-side `TooEarlyError` re-enqueue path but make it visible to the user (rather than the silent guard the earlier iteration shipped), (b) move child-completion polling out of the step body into the suspension layer so a parent waiting on a child does not consume queue capacity at all, or (c) emit a `run_completed` notification on the parent's stream/queue so the parent only resumes when the child actually finishes. The current `queueConcurrency=50` default is a workaround, not a long-term answer — workflows with deep recursion or large fan-out can still exhaust workers regardless of how high we set the ceiling.
+
 ### VM Sandboxing
 
 Workflow code still runs in a Node.js VM for determinism and sandboxing. Step code runs in the Node.js host context. The only change is that both happen within the same function invocation.
@@ -320,7 +322,7 @@ In V1, each step ran in a separate function invocation. After the step completed
 
 3. **Why this only affects Vercel Prod**: On local (world-local), stream writes go to the filesystem — effectively instant. On Vercel (world-vercel), writes go through HTTP to workflow-server → S3, adding 50-100ms latency. The buffered write returns instantly but the HTTP round-trip is deferred. When the V2 loop continues and the function eventually returns, `waitUntil` may not have enough time to flush.
 
-**Future fix direction**: Make `WorkflowServerWritableStream.write()` return a promise that resolves after the scheduled flush completes (not just after buffering). This requires careful handling of the Web Streams backpressure model — a naïve `await flush()` inside `write()` causes deadlocks because the WritableStream's internal machinery blocks on the write callback. The fix likely needs to track a "flush complete" promise separately from the write callback's return.
+**Follow-up**: The flush-waiter design described under "Buffered Stream Flush with Waiter Promises" below is the landed fix and resolves the buffered-write race. The remaining work is to shrink the 500ms inline-ops budget once we have confidence that the flush-waiter path settles deterministically across all worlds (today the budget is a defensive ceiling, not a tuned latency target), and to surface a stronger contract for "ops settled" — currently a 500ms timeout means "probably settled, give up and queue a continuation", which is correct but coarse. A signaled "ops drained" event from the world layer would let `executeStep()` proceed without the timeout in the common case, removing latency for streaming workflows whose ops settle in well under 500ms.
 
 ### CJS `module.exports` Collision in BOA Bundles (RESOLVED)
 
@@ -373,7 +375,7 @@ The interval was originally 100ms. Measuring a synthetic workflow with 5 sequent
 
 **Fix**: dropped the polling interval from 100ms to 10ms in `packages/core/src/flushable-stream.ts`. Per-step wait drops from ~50ms average to ~5ms (a 10× improvement, expected to scale linearly with the number of writable-bearing steps in a workflow). For `DurableAgent.chat` with one tool call (4 writable-bearing steps), this removes ~180ms from the streaming chat response's critical path. Per-tick work is just `writable.locked` plus a `getWriter()`/`releaseLock()` probe — both microsecond-scale, so 10× more ticks during a stream's lifetime is not measurable in practice.
 
-A future enhancement would replace the polling entirely with an event-driven release signal — wrap the writable returned from the `WritableStream` reviver with a writer that fires on `releaseLock()` — bringing the wait to ~0ms. The polling change is the cheap path that captures most of the available win without that structural change.
+**Follow-up**: Replace the polling entirely with an event-driven release signal — wrap the writable returned from the `WritableStream` reviver with a writer that fires on `releaseLock()` — bringing the wait to ~0ms. The 10ms polling interval is the cheap path that captures most of the available win without the structural change, but every writable-bearing step still pays a ~5ms tax that the event-driven design would eliminate. The structural change is also worth pursuing because it removes a source of timing drift between `world-local` (filesystem-instant) and `world-vercel` (HTTP-deferred) — both would see truly synchronous lock-release detection rather than periodic-poll detection.
 
 ### Event Consumer Skip Logic Was Too Broad For Wait Replays
 
@@ -450,7 +452,9 @@ The local production and Postgres Next.js jobs stage the workbenches by packing 
 
 Merging `main` also pulled in a newer `hasStepSourceMaps()` expectation for Vercel preview deployments. On this branch, the non-Next workbench previews still emit step stacks without source filenames like `99_e2e.ts` or `helpers.ts`, so the Vercel step-error assertions regressed across the BOA-backed workbench matrix even though runtime behavior was otherwise unchanged.
 
-**Fix**: Revert the Vercel step source map expectation to the conservative branch behavior so preview e2e only asserts source filenames where this branch actually preserves them.
+**Fix**: Revert the Vercel step source map expectation to the conservative branch behavior so preview e2e only asserts source filenames where this branch actually preserves them. Concretely, `hasStepSourceMaps()` returns `false` for *every* framework on Vercel deployments — the V2 combined bundle's source-map pipeline is only known-good for `nextjs-webpack` and `sveltekit` today, and both of those already short-circuit to `false` via earlier branches in the helper. Re-applying the blanket Vercel carve-out is what keeps the 11-framework `e2e-vercel-prod` matrix green while V2 source-map coverage catches up.
+
+**Follow-up**: Wire up consumable inline source maps in the V2 step bundle for the BOA-backed framework integrations (Astro, Express, Fastify, Hono, Nitro, Nuxt, Vite, plus the standalone `example`) and for `nextjs-turbopack`. The plan is to let each builder's `createCombinedBundle()` call carry the same esbuild source-map pipeline that `nextjs-webpack` already benefits from, and then re-introduce the per-framework matrix in `hasStepSourceMaps()` so error stacks correctly point at `99_e2e.ts` / `helpers.ts` on Vercel preview deployments. Tracking this as a deferred follow-up rather than blocking the V2 cutover, since the runtime behavior is unaffected — only the surfaced filenames in step error stacks differ.
 
 ### Community Worlds Still Used The Pre-`world.streams` API
 
@@ -531,6 +535,10 @@ When called from outside a step (e.g., test code, API routes), `pollReturnValue(
 ### Unconsumed Event Check Two-Phase Drain
 
 After merging `main`, the `EventsConsumer`'s unconsumed event check was updated with a two-phase promise queue drain: yield once after the first drain (via `setTimeout(0)`) so cross-VM promise chains can append follow-up async work, then re-drain before checking. This improves timing for scenarios like `step_completed` → for-await loop resume → next hook hydration. The V2 `onUnconsumedEvent` skip logic (returning `true` to advance past known-safe events) was preserved through the merge.
+
+The check additionally arms a `DEFERRED_CHECK_DELAY_MS = 100` `setTimeout` after the second drain, since Node.js does not guarantee that `setTimeout(0)` fires after all cross-context microtasks settle. Any `subscribe()` call arriving during that 100ms window cancels the check via version invalidation + `clearTimeout`, so the delay only adds latency to genuine corruption — never to the happy path.
+
+**Follow-up**: 100ms is a heuristic chosen empirically to cover cross-VM microtask propagation under the workflow runtime's worst-case scheduling. A deterministic settlement signal — for example, a "VM idle" callback exposed by the workflow VM bridge that fires only after all pending cross-context promise chains have resolved — would let the consumer fire the unconsumed-event check immediately on quiescence instead of waiting for a wall-clock timeout. That would tighten corruption detection (no spurious 100ms wait) and remove the only remaining wall-clock heuristic from the V2 inline loop's correctness path.
 
 ### Nitro Builder Atomic File Writes
 
