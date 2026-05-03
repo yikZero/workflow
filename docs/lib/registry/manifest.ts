@@ -160,7 +160,7 @@ export const registryItems: RegistryItem[] = [
     ],
     files: [
       {
-        path: 'workflows/stoppable-agent.ts',
+        path: 'workflows/agent-cancellation.ts',
         description:
           'Durable agent + `stopHook` + `Promise.race` exit, with a final `data-stopped` part emitted on stop.',
       },
@@ -169,7 +169,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'workflows/stoppable-agent.ts',
+        caption: 'workflows/agent-cancellation.ts',
         code: agentCancellationWorkflowSource,
         installCode: agentCancellationWorkflowInstallSource,
       },
@@ -210,7 +210,7 @@ export const registryItems: RegistryItem[] = [
         label: 'Stop Signal',
         lang: 'tsx',
         caption:
-          'workflows/stoppable-agent.ts — hook + Promise.race graceful exit',
+          'workflows/agent-cancellation.ts — hook + Promise.race graceful exit',
         code: agentCancellationConceptStopSignalSource,
       },
       {
