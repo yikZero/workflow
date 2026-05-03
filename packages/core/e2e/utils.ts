@@ -64,7 +64,8 @@ export function hasStepSourceMaps(): boolean {
 
   // Vercel deployments (both production and preview) have proper source maps
   // for all frameworks EXCEPT sveltekit, thanks to ESM step bundles with
-  // inline source maps.
+  // inline source maps. The V2 combined bundle uses the same esbuild source-map
+  // pipeline as the previous separate bundles, so this expectation still holds.
   if (!isLocalDeployment()) {
     return appName !== 'sveltekit';
   }
