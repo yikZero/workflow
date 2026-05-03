@@ -218,7 +218,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Stop route',
         lang: 'tsx',
-        caption: 'app/api/agent/[runId]/stop/route.ts — resumes the hook',
+        caption: 'app/api/agent/[runId]/stop/route.ts',
         code: agentCancellationConceptStopRouteSource,
       },
     ],
@@ -380,8 +380,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption:
-          'workflows/support.ts — one workflow run = one full conversation',
+        caption: 'workflows/support.ts',
         code: aiSdkWorkflowSource,
         installCode: aiSdkWorkflowInstallSource,
       },
