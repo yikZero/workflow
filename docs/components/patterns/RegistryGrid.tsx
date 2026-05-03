@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { categoryLabels } from '@/lib/patterns/manifest';
 import type { RegistryCategory, RegistryItem } from '@/lib/patterns/types';
 import { RegistryCard } from './RegistryCard';
@@ -12,33 +14,47 @@ interface RegistryGridProps {
   items: RegistryItem[];
 }
 
+function matchesQuery(item: RegistryItem, query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    item.name.toLowerCase().includes(q) ||
+    item.description.toLowerCase().includes(q) ||
+    (item.longDescription?.toLowerCase().includes(q) ?? false) ||
+    item.tags.some((t) => t.toLowerCase().includes(q)) ||
+    item.categories.some((c) => categoryLabels[c].toLowerCase().includes(q))
+  );
+}
+
 export function RegistryGrid({ items }: RegistryGridProps) {
   const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
 
-  // Build the list of category filters dynamically — only the categories that
-  // actually have items get a chip. Items can belong to more than one
-  // category (e.g. AI SDK is both `agent` and `vercel`), so they appear under
-  // every relevant filter and contribute to each chip's count.
   const presentCategories = Array.from(
     new Set(items.flatMap((item) => item.categories))
   );
 
+  const afterSearch = query.trim()
+    ? items.filter((item) => matchesQuery(item, query.trim()))
+    : items;
+
   const filtered =
     filter === 'all'
-      ? items
-      : items.filter((item) => item.categories.includes(filter));
+      ? afterSearch
+      : afterSearch.filter((item) => item.categories.includes(filter));
 
   const filters: { id: Filter; label: string; count: number }[] = [
-    { id: 'all', label: 'Show all', count: items.length },
+    { id: 'all', label: 'Show all', count: afterSearch.length },
     ...presentCategories.map((category) => ({
       id: category as Filter,
       label: categoryLabels[category],
-      count: items.filter((item) => item.categories.includes(category)).length,
+      count: afterSearch.filter((item) => item.categories.includes(category))
+        .length,
     })),
   ];
 
   return (
     <>
+      {/* Category filters */}
       <div className="border-y px-4 py-6">
         <div className="flex flex-wrap justify-center gap-3">
           {filters.map(({ id, label, count }) => (
@@ -66,9 +82,27 @@ export function RegistryGrid({ items }: RegistryGridProps) {
         </div>
       </div>
 
+      {/* Search */}
+      <div className="max-w-md mx-auto px-4 pt-6">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="search"
+            placeholder="Search patterns…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setFilter('all');
+            }}
+            className="pl-9"
+          />
+        </div>
+      </div>
+
       {filtered.length === 0 ? (
         <p className="text-center text-muted-foreground py-12">
-          No registry items match this filter.
+          No patterns match
+          {query.trim() ? ` "${query.trim()}"` : ' this filter'}.
         </p>
       ) : (
         <section className="px-4 py-8">
