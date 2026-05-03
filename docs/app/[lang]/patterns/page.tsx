@@ -52,7 +52,7 @@ export default function PatternsPage() {
               </Button>
               <Button asChild variant="outline" size="lg">
                 <a
-                  href="https://ui.shadcn.com/docs/registry/registry-index"
+                  href="https://github.com/vercel/workflow"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
