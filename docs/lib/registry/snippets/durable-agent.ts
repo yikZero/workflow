@@ -116,6 +116,130 @@ export async function flightAgent(messages: ModelMessage[]) {
 }
 `;
 
+export const durableAgentWorkflowInstallSource = `/**
+ * Durable Agent — crash-safe AI agent with durable tool execution.
+ *
+ * THE PATTERN:
+ *   1. Each tool is a "use step" function — the runtime persists its input
+ *      before calling it and replays the recorded result on restart.
+ *   2. The agent workflow ("use workflow") drives the LLM loop via
+ *      DurableAgent.stream(). If the process crashes mid-tool-call, it
+ *      resumes from the last completed step on the next invocation.
+ *   3. getWritable<UIMessageChunk>() streams text, tool calls, and results
+ *      to the client in real time. The stream is durable — clients can
+ *      reconnect and resume from any offset.
+ *
+ * USEFUL WHEN:
+ *   - Your agent calls external APIs with side effects (bookings, payments)
+ *     and you can't afford to re-run them on failure.
+ *   - Tool calls are slow (seconds) and you want retry without duplicates.
+ *   - You need multi-turn conversation state to survive server restarts.
+ *   - You're building a chat UI where users can reconnect mid-generation.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Replace searchFlights / bookFlight / checkWeather with your tools.
+ *     Every "use step" function gets the same durability guarantees.
+ *   - Swap "anthropic/claude-haiku-4.5" for any AI Gateway model string
+ *     (openai/gpt-4o, google/gemini-2.0-flash, etc.).
+ *   - Tune maxSteps to match your agent's expected tool-call depth.
+ *   - Add a stopHook race (see Agent Cancellation pattern) for a Stop button.
+ *   - For human-in-the-loop approval gates, see the Human-in-the-Loop pattern.
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/durable-agent
+ */
+import { DurableAgent } from "@workflow/ai/agent";
+import { getWritable } from "workflow";
+import { z } from "zod";
+import type { ModelMessage, UIMessageChunk } from "ai";
+
+// "use step" turns any async function into a durable step:
+//   - automatic retries on failure (3x by default, configurable via .maxRetries)
+//   - one entry per call in the workflow event log
+//   - full Node.js access (fetch, fs, child_process, native modules, …)
+//   - replay-safe: re-runs return the recorded result without re-executing
+async function searchFlights({ from, to, date }: {
+  from: string;
+  to: string;
+  date: string;
+}) {
+  "use step";
+  const res = await fetch(
+    \`https://api.example.com/flights?from=\${from}&to=\${to}&date=\${date}\`,
+  );
+  if (!res.ok) throw new Error(\`Search failed: \${res.status}\`);
+  return res.json();
+}
+
+async function bookFlight({ flightId, passenger }: {
+  flightId: string;
+  passenger: string;
+}) {
+  "use step";
+  const res = await fetch("https://api.example.com/bookings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ flightId, passenger }),
+  });
+  if (!res.ok) throw new Error(\`Booking failed: \${res.status}\`);
+  return res.json();
+}
+
+async function checkWeather({ city }: { city: string }) {
+  "use step";
+  const res = await fetch(\`https://api.weather.com/forecast?city=\${city}\`);
+  return res.json();
+}
+
+// "use workflow" declares the orchestrator — its execution is replay-safe
+// and persisted to the event log. Each agent.stream() call drives the LLM
+// loop; tools fire as durable steps.
+export async function flightAgent(messages: ModelMessage[]) {
+  "use workflow";
+
+  const agent = new DurableAgent({
+    // Any AI Gateway model string works — swap providers without touching
+    // the durability layer.
+    model: "anthropic/claude-haiku-4.5",
+    instructions: "You are a helpful flight booking assistant.",
+    tools: {
+      searchFlights: {
+        description: "Search for available flights between two airports.",
+        inputSchema: z.object({
+          from: z.string().describe("Departure airport code"),
+          to: z.string().describe("Arrival airport code"),
+          date: z.string().describe("Travel date (YYYY-MM-DD)"),
+        }),
+        execute: searchFlights,
+      },
+      bookFlight: {
+        description: "Book a specific flight for a passenger.",
+        inputSchema: z.object({
+          flightId: z.string().describe("Flight ID from search results"),
+          passenger: z.string().describe("Passenger full name"),
+        }),
+        execute: bookFlight,
+      },
+      checkWeather: {
+        description: "Check the weather forecast for a city.",
+        inputSchema: z.object({ city: z.string().describe("City name") }),
+        execute: checkWeather,
+      },
+    },
+  });
+
+  // getWritable() streams chunks to the client in real time.
+  // maxSteps caps the LLM loop — tune for your agent's expected depth.
+  const result = await agent.stream({
+    messages,
+    writable: getWritable<UIMessageChunk>(),
+    maxSteps: 10,
+  });
+
+  // Return final messages so multi-turn callers can pass them back in.
+  return { messages: result.messages };
+}
+`;
+
 export const durableAgentStartRouteSource = `import type { UIMessage } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start } from "workflow/api";

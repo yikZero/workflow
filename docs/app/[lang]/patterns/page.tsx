@@ -5,12 +5,12 @@ import { RegistryGrid } from '@/components/registry/RegistryGrid';
 import { registryItems } from '@/lib/registry/manifest';
 
 export const metadata: Metadata = {
-  title: 'Registry | Workflow SDK',
+  title: 'Patterns | Workflow SDK',
   description:
     'Installable Workflow patterns for popular providers — durable, cancellable, replay-safe recipes you drop into your app with one shadcn command.',
 };
 
-export default function RegistryPage() {
+export default function PatternsPage() {
   return (
     <div className="[&_h1]:tracking-tighter [&_h2]:tracking-tighter [&_h3]:tracking-tighter sm:mt-24">
       <div className="mx-auto w-full max-w-[1080px]">
@@ -18,7 +18,7 @@ export default function RegistryPage() {
         <section className="relative px-4 text-center pt-12 pb-12 sm:pb-16">
           <div className="relative z-10 mx-auto w-full max-w-3xl space-y-3 sm:space-y-5">
             <h1 className="text-center font-semibold text-4xl leading-[1.1] tracking-tight sm:text-5xl xl:text-6xl text-balance">
-              Registry
+              Patterns
             </h1>
             <p className="text-balance text-muted-foreground sm:text-xl leading-relaxed">
               Installable Workflow patterns for popular providers. Durable,
@@ -48,7 +48,7 @@ export default function RegistryPage() {
             </p>
             <div className="flex justify-center gap-3 mt-8">
               <Button asChild size="lg">
-                <Link href="/docs/cookbook">Browse the cookbook</Link>
+                <Link href="/docs">Browse the docs</Link>
               </Button>
               <Button asChild variant="outline" size="lg">
                 <a

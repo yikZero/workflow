@@ -148,6 +148,171 @@ export async function approvalAgent(messages: ModelMessage[]) {
 }
 `;
 
+export const humanInTheLoopWorkflowInstallSource = `/**
+ * Human-in-the-Loop — pause a DurableAgent for human approval.
+ *
+ * THE PATTERN:
+ *   1. The agent calls requestApproval as a tool with a summary and payload.
+ *   2. Before suspending, emit a "data-approval-needed" stream part so the
+ *      client can render approval controls immediately — tool results don't
+ *      stream until the tool returns, so this emit is the only way to show UI.
+ *   3. Create an approvalHook keyed by toolCallId and await it, racing against
+ *      a 24h sleep() timeout so the workflow never hangs forever.
+ *   4. On approval/rejection, emit a "data-approval-resolved" part so the
+ *      client can update the card, then execute the real side effect.
+ *   5. The approval API route resumes the hook with { approved, comment }.
+ *
+ * USEFUL WHEN:
+ *   - An agent action is irreversible or high-value (payment, delete, publish).
+ *   - Compliance requires a human sign-off before automated side effects.
+ *   - You want an audit trail of who approved what and when.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Replace performAction with your real side effect (Stripe charge, DB
+ *     write, Slack post, etc.). It is a "use step" so it is durable.
+ *   - Change the timeout duration in sleep("24h") to suit your SLA.
+ *   - Add more fields to the approvalHook schema if you need structured
+ *     reviewer notes beyond a simple boolean + comment.
+ *   - Extend the ApprovalCard UI to display payload fields meaningfully
+ *     (e.g. formatted amount, recipient name).
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/human-in-the-loop
+ */
+import { DurableAgent } from "@workflow/ai/agent";
+import { defineHook, getWritable, sleep } from "workflow";
+import { z } from "zod";
+import type { ModelMessage, UIMessageChunk } from "ai";
+
+// Exported so the approval API route can resume with the human's decision.
+export const approvalHook = defineHook({
+  schema: z.object({
+    approved: z.boolean(),
+    comment: z.string().optional(),
+  }),
+});
+
+// Real side effect — replace with your action (charge, publish, delete…).
+// "use step" makes it durable: retried on failure, never re-run on replay.
+async function performAction({ summary }: { summary: string }) {
+  "use step";
+  console.log("Performing approved action:", summary);
+  return { ok: true, summary };
+}
+
+// Emit a custom stream part BEFORE suspending on the hook.
+// Without this, the client has no way to show approval controls because
+// tool invocations don't stream until the tool returns.
+async function emitApprovalRequest(details: {
+  toolCallId: string;
+  summary: string;
+  payload: Record<string, unknown>;
+}) {
+  "use step";
+  const writer = getWritable<UIMessageChunk>().getWriter();
+  try {
+    await writer.write({
+      type: "data-approval-needed",
+      id: details.toolCallId,
+      data: details,
+    } as UIMessageChunk);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+// Emit a resolution part so the client can update the approval card to
+// show the outcome (approved, rejected, or timed out).
+async function emitApprovalResolved(details: {
+  toolCallId: string;
+  result: string;
+}) {
+  "use step";
+  const writer = getWritable<UIMessageChunk>().getWriter();
+  try {
+    await writer.write({
+      type: "data-approval-resolved",
+      id: details.toolCallId,
+      data: details,
+    } as UIMessageChunk);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+// No "use step" here — requestApproval uses workflow-level primitives
+// (hook.create, Promise.race, sleep) that must run in workflow context.
+// The actual I/O (emit + perform) delegates to "use step" functions above.
+async function requestApproval(
+  { summary, payload }: {
+    summary: string;
+    payload: Record<string, unknown>;
+  },
+  { toolCallId }: { toolCallId: string },
+) {
+  // 1. Notify the client immediately before suspending.
+  await emitApprovalRequest({ toolCallId, summary, payload });
+
+  // 2. Suspend — the workflow pauses here until the reviewer responds or
+  //    the timeout fires. The run stays alive in the Workflow backend.
+  const hook = approvalHook.create({ token: toolCallId });
+  const result = await Promise.race([
+    hook.then((p) => ({ type: "decision" as const, ...p })),
+    sleep("24h").then(() => ({ type: "timeout" as const, approved: false as const })),
+  ]);
+
+  // 3. Resolve based on outcome.
+  if (result.type === "timeout") {
+    const msg = "Approval request expired.";
+    await emitApprovalResolved({ toolCallId, result: msg });
+    return msg;
+  }
+  if (!result.approved) {
+    const msg = \`Rejected: \${result.comment || "No reason given"}\`;
+    await emitApprovalResolved({ toolCallId, result: msg });
+    return msg;
+  }
+
+  const action = await performAction({ summary });
+  const msg = \`Approved and executed: \${action.summary}\`;
+  await emitApprovalResolved({ toolCallId, result: msg });
+  return msg;
+}
+
+export async function approvalAgent(messages: ModelMessage[]) {
+  "use workflow";
+
+  const agent = new DurableAgent({
+    model: "anthropic/claude-haiku-4.5",
+    // Instruct the model to ALWAYS request approval before side effects.
+    instructions:
+      "You are a careful assistant. ALWAYS call requestApproval before performing any consequential action.",
+    tools: {
+      requestApproval: {
+        description:
+          "Request human approval before performing a consequential action.",
+        inputSchema: z.object({
+          summary: z.string().describe("Short description of the action."),
+          payload: z
+            .record(z.string(), z.unknown())
+            .describe(
+              "Structured details rendered on the approval card — e.g. amount, recipient, etc.",
+            ),
+        }),
+        execute: requestApproval,
+      },
+    },
+  });
+
+  const result = await agent.stream({
+    messages,
+    writable: getWritable<UIMessageChunk>(),
+    maxSteps: 15,
+  });
+
+  return { messages: result.messages };
+}
+`;
+
 export const humanInTheLoopStartRouteSource = `import type { UIMessage } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start } from "workflow/api";

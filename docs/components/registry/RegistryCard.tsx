@@ -19,7 +19,7 @@ export function RegistryCard({ item }: RegistryCardProps) {
   const Logo = getProviderLogo(item.logo);
 
   return (
-    <Link href={`/registry/${item.id}`} className="block group">
+    <Link href={`/patterns/${item.id}`} className="block group">
       <Card className="h-full transition-colors cursor-pointer overflow-hidden py-0! gap-2">
         <CardHeader className="px-4 pt-4 pb-0">
           <div className="flex items-start gap-3">

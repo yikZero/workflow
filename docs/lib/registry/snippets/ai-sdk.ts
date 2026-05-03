@@ -106,6 +106,126 @@ export async function supportWorkflow(initialMessages: ModelMessage[]) {
 }
 `;
 
+export const aiSdkWorkflowInstallSource = `/**
+ * AI SDK Integration — durable multi-turn conversation with streamText.
+ *
+ * THE PATTERN:
+ *   1. One workflow run = one full conversation. The run stays alive across
+ *      all turns; each new message is delivered via a hook resume().
+ *   2. A per-turn "use step" function calls streamText() and pipes the
+ *      result into the durable writable (preventClose: true keeps it open
+ *      for the next turn).
+ *   3. The API route slices the run's stream from the current turn's start
+ *      index so each HTTP response only contains that turn's chunks.
+ *   4. MAX_TURNS caps the conversation; send "/done" to exit cleanly.
+ *
+ * USEFUL WHEN:
+ *   - You want durable multi-turn conversations that survive restarts.
+ *   - You need tool calls that are retried without re-running on replay.
+ *   - Users can reconnect mid-stream and receive the full response.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Replace lookupOrder / processRefund with your domain tools.
+ *   - Change "anthropic/claude-haiku-4.5" to any AI Gateway model string.
+ *   - Adjust MAX_TURNS for your expected conversation length.
+ *   - Change the system prompt in runTurn() to match your use case.
+ *   - Tune stopWhen: stepCountIs(8) to cap the tool-calling loop per turn.
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/ai-sdk
+ */
+import { streamText, stepCountIs } from "ai";
+import { defineHook, getWritable, getWorkflowMetadata } from "workflow";
+import type { ModelMessage, UIMessageChunk } from "ai";
+import { z } from "zod";
+
+const MAX_TURNS = 20;
+
+// One hook per run drives the multi-turn loop. Each .resume() from the API
+// route delivers the next user message to the suspended workflow.
+export const turnHook = defineHook({
+  schema: z.object({ message: z.string() }),
+});
+
+// Tool implementations are durable steps — recorded before execution,
+// replayed (not re-run) on restart, retried automatically on failure.
+async function lookupOrder({ orderId }: { orderId: string }) {
+  "use step";
+  const res = await fetch(\`https://api.store.com/orders/\${orderId}\`);
+  return res.json();
+}
+
+async function processRefund({
+  orderId,
+  reason,
+}: { orderId: string; reason: string }) {
+  "use step";
+  const res = await fetch("https://api.store.com/refunds", {
+    method: "POST",
+    body: JSON.stringify({ orderId, reason }),
+  });
+  return res.json();
+}
+
+const TOOLS = {
+  lookupOrder: {
+    description: "Look up an order by ID",
+    inputSchema: z.object({ orderId: z.string() }),
+    execute: lookupOrder,
+  },
+  processRefund: {
+    description: "Process a refund",
+    inputSchema: z.object({ orderId: z.string(), reason: z.string() }),
+    execute: processRefund,
+  },
+};
+
+// Per-turn step — streams one LLM response into the durable writable.
+// "use step" makes the entire turn replay-safe: if the process restarts
+// mid-stream, the next invocation replays from the last completed step.
+async function runTurn(messages: ModelMessage[]) {
+  "use step";
+
+  const result = streamText({
+    model: "anthropic/claude-haiku-4.5",
+    system: "You are a customer support agent.",
+    messages,
+    tools: TOOLS,
+    stopWhen: stepCountIs(8),
+  });
+
+  // preventClose: true keeps the durable writable open across turns.
+  // Each turn still emits its own start + finish chunks for slice detection.
+  const writable = getWritable<UIMessageChunk>();
+  await result.toUIMessageStream().pipeTo(writable, { preventClose: true });
+
+  const response = await result.response;
+  return { responseMessages: response.messages };
+}
+
+export async function supportWorkflow(initialMessages: ModelMessage[]) {
+  "use workflow";
+
+  const { workflowRunId } = getWorkflowMetadata();
+  // Create the hook ONCE outside the loop. Re-creating inside with the same
+  // token would throw HookConflictError. One hook, one token, reused every turn.
+  const hook = turnHook.create({ token: workflowRunId });
+  let allMessages = initialMessages;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const { responseMessages } = await runTurn(allMessages);
+    allMessages = [...allMessages, ...responseMessages];
+
+    // Suspend here — the workflow parks until the next user message arrives.
+    const { message } = await hook;
+    if (message === "/done") break;
+
+    allMessages = [...allMessages, { role: "user", content: message }];
+  }
+
+  return { turns: MAX_TURNS };
+}
+`;
+
 export const aiSdkRouteSource = `import type { UIMessage, UIMessageChunk } from "ai";
 import { convertToModelMessages, createUIMessageStreamResponse } from "ai";
 import { start, getRun } from "workflow/api";

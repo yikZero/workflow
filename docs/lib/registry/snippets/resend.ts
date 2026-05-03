@@ -121,6 +121,121 @@ async function sendSecondNudge(user: UserSignup) {
 }
 `;
 
+export const resendWorkflowInstallSource = `/**
+ * Resend — drip email sequence with cancellation.
+ *
+ * THE PATTERN:
+ *   1. On signup, store the user and send an immediate welcome email.
+ *   2. Open a cancelNudges hook (token = email) once — it persists for the
+ *      entire campaign so any race() below can fire it.
+ *   3. Race each sleep() against the hook. If the hook fires (user converts,
+ *      unsubscribes, or re-signs-up), exit early without sending more email.
+ *   4. If the sleep wins, send the nudge and continue to the next sleep.
+ *
+ * USEFUL WHEN:
+ *   - Sending a welcome → nudge → nudge drip sequence after signup.
+ *   - You need the sequence to stop early if the user takes the desired action.
+ *   - You want crash-safe delivery without a job queue or scheduler.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Add more nudge steps following the same sleep → race → send pattern.
+ *   - Replace storeUser with your real DB / CRM call.
+ *   - Replace the Resend email bodies with your real HTML templates.
+ *   - Tune the interval parameter (default "2d") — pass "5s" to test fast.
+ *   - The cancel route calls cancelNudges.resume(email) to stop the sequence;
+ *     fire this on checkout, unsubscribe, or any conversion event.
+ *
+ * IMPORTANT: Create the cancelHook ONCE before the first race, not inside
+ * each sleep block. Re-creating it with the same token would throw
+ * HookConflictError because the first hook is still pending.
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/resend
+ */
+import { defineHook, sleep } from "workflow";
+import type { StringValue } from "ms";
+import { Resend } from "resend";
+
+export interface UserSignup {
+  email: string;
+  name: string;
+}
+
+// Exported so the cancel API route can call .resume() to stop the sequence.
+export const cancelNudges = defineHook<{ reason?: string }>();
+
+export async function emailSequence(
+  input: UserSignup,
+  interval: StringValue = "2d"
+) {
+  "use workflow";
+
+  await storeUser(input);
+  await sendWelcomeEmail(input);
+
+  // Create the hook ONCE before any race. Reuse this single hook across
+  // every cancellable sleep — do NOT recreate it inside the loop.
+  const cancelHook = cancelNudges.create({
+    token: \`cancel-nudges:\${input.email}\`,
+  });
+
+  // First wait: sleep OR cancel.
+  if (await Promise.race([sleep(interval).then(() => false), cancelHook.then(() => true)])) {
+    return { status: "cancelled" as const, email: input.email };
+  }
+
+  await sendFirstNudge(input);
+
+  // Second wait: same hook, fresh sleep.
+  if (await Promise.race([sleep(interval).then(() => false), cancelHook.then(() => true)])) {
+    return { status: "cancelled" as const, email: input.email };
+  }
+
+  await sendSecondNudge(input);
+
+  return { status: "drip-complete" as const, email: input.email };
+}
+
+async function storeUser(user: UserSignup) {
+  "use step";
+  // Replace with your DB / CRM call:
+  //   await db.insert(users).values({ email: user.email, name: user.name });
+  console.log(\`Stored signup for \${user.email}\`);
+}
+
+async function sendWelcomeEmail(user: UserSignup) {
+  "use step";
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  await resend.emails.send({
+    from: "onboarding@resend.dev",
+    to: user.email,
+    subject: \`Welcome, \${user.name}!\`,
+    html: \`<p>Hey \${user.name},</p><p>Thanks for signing up!</p>\`,
+  });
+}
+
+async function sendFirstNudge(user: UserSignup) {
+  "use step";
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  await resend.emails.send({
+    from: "onboarding@resend.dev",
+    to: user.email,
+    subject: \`\${user.name}, check out what you can build\`,
+    html: \`<p>Hey \${user.name},</p><p>Here are a few things to try…</p>\`,
+  });
+}
+
+async function sendSecondNudge(user: UserSignup) {
+  "use step";
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  await resend.emails.send({
+    from: "onboarding@resend.dev",
+    to: user.email,
+    subject: \`\${user.name}, you're missing out\`,
+    html: \`<p>Hey \${user.name},</p><p>Need help getting started?</p>\`,
+  });
+}
+`;
+
 export const resendStartRouteSource = `import { start } from "workflow/api";
 import type { StringValue } from "ms";
 import { NextResponse } from "next/server";

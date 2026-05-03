@@ -13,16 +13,12 @@ export const nav = [
     href: '/docs',
   },
   {
-    label: 'Cookbook',
-    href: '/cookbook',
-  },
-  {
     label: 'Worlds',
     href: '/worlds',
   },
   {
-    label: 'Registry',
-    href: '/registry',
+    label: 'Patterns',
+    href: '/patterns',
   },
   {
     label: 'Examples',

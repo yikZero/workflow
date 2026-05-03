@@ -17,6 +17,7 @@ import { LogoScheduling } from './logo-scheduling';
 import { LogoSequentialAndParallel } from './logo-sequential-and-parallel';
 import { LogoTimeouts } from './logo-timeouts';
 import { LogoWebhooks } from './logo-webhooks';
+import { LogoUpgradingWorkflows } from './logo-upgrading-workflows';
 import { LogoWorkflowComposition } from './logo-workflow-composition';
 
 export interface ProviderLogoProps {
@@ -50,6 +51,7 @@ export const providerLogos: Record<
   webhooks: LogoWebhooks,
   'child-workflows': LogoChildWorkflows,
   'distributed-abort-controller': LogoDistributedAbortController,
+  'upgrading-workflows': LogoUpgradingWorkflows,
 };
 
 export function getProviderLogo(

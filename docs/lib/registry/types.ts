@@ -51,8 +51,22 @@ export interface RegistrySnippet {
   lang: string;
   /** Raw source code — rendered via shiki on the server. */
   code: string;
-  /** Optional caption rendered above the snippet. */
+  /**
+   * Richly-commented version of `code` installed via the shadcn CLI.
+   * When present, the `/r/[name]` route serves this instead of `code` so
+   * the file landing in the user's project includes agent-friendly comments
+   * (PATTERN, USEFUL WHEN, TO ADAPT, inline "why" notes) without cluttering
+   * the UI. Falls back to `code` when absent.
+   */
+  installCode?: string;
+  /** Optional caption rendered above the snippet (e.g. file path). */
   caption?: string;
+  /**
+   * Optional prose rendered between the caption and the code block.
+   * Use for per-tab context that isn't obvious from the code alone
+   * (e.g. "The approval route imports the hook definition and calls .resume()…").
+   */
+  description?: string;
 }
 
 /**
@@ -82,7 +96,162 @@ export type RegistryLogoId =
   | 'idempotency'
   | 'webhooks'
   | 'child-workflows'
-  | 'distributed-abort-controller';
+  | 'distributed-abort-controller'
+  | 'upgrading-workflows';
+
+/**
+ * Comparison table for patterns that have multiple valid approaches.
+ * First column is the "Aspect" label; remaining columns are approach names.
+ */
+export interface RegistryApproachTable {
+  /** Section heading. Defaults to "Choosing an approach" when omitted. */
+  title?: string;
+  /** Optional prose intro rendered above the bullet summaries and table. */
+  description?: string;
+  /** Short bullet summaries of each approach, rendered before the table. Supports **bold** and `code` inline syntax. */
+  bullets?: string[];
+  columns: string[];
+  rows: { aspect: string; values: string[] }[];
+  /** Optional closing sentence rendered below the table. */
+  closing?: string;
+}
+
+/**
+ * A per-approach section for patterns that have multiple distinct
+ * implementations (e.g. Hard Cancellation vs Stop Signal). When present on
+ * a guide, the detail page replaces the unified Overview/Concept layout with
+ * individual h2 sections — one per approach — each with its own code and an
+ * optional dedicated install command.
+ */
+export interface RegistryApproachSection {
+  /** Section heading — becomes an h2 on the detail page and a ToC entry. */
+  title: string;
+  /** Optional prose rendered under the heading. */
+  description?: string;
+  /**
+   * If this specific approach has its own shadcn install slug, show it here.
+   * Use when only one of the approaches is installable (e.g. Stop Signal),
+   * while the other is a one-liner built into the SDK (e.g. Hard Cancel).
+   */
+  installSlug?: string;
+  /**
+   * Which `conceptSnippets` to render for this approach, matched by label.
+   * Order is preserved.
+   */
+  snippetLabels: string[];
+  /**
+   * Bullet points rendered after the code (e.g. consequences of this approach).
+   * Supports **bold** and `code` inline syntax.
+   */
+  afterBullets?: string[];
+  /** Closing paragraph rendered after afterBullets. */
+  afterProse?: string;
+  /** Optional callout rendered after afterBullets/afterProse. */
+  callout?: {
+    type: 'info' | 'warn' | 'tip';
+    content: string;
+  };
+}
+
+/**
+ * Inline guide content that turns the registry detail page into a unified
+ * educational + plug-and-play surface. Replaces the need for a separate
+ * cookbook page for the same pattern.
+ */
+export interface RegistryGuide {
+  /**
+   * One or two educational paragraphs explaining the pattern and its variants.
+   * Rendered as prose before the when-to-use list and comparison table.
+   */
+  overview?: string;
+  /**
+   * Short feature bullets rendered directly under longDescription (no heading).
+   * Good for surfacing 3-4 concrete capabilities before the deeper sections.
+   */
+  introBullets?: string[];
+  /**
+   * Optional mermaid diagram string rendered after longDescription/introBullets.
+   * Use for patterns with a clear data-flow that's easier to understand
+   * visually. The section title defaults to "How it fits together".
+   */
+  diagram?: string;
+  /** Override the default "How it fits together" diagram section title. */
+  diagramTitle?: string;
+  /**
+   * Optional prose + bullets rendered immediately after the diagram.
+   * Use to explain the key integration points shown in the diagram
+   * (e.g. "Inbound — …" / "Outbound — …" for Chat SDK).
+   */
+  diagramContext?: {
+    prose?: string;
+    bullets?: string[];
+  };
+  /**
+   * Optional "Why use this" section rendered before "When to use this".
+   * Explains what the naive approach looks like without this pattern
+   * and what becomes possible with it. Defaults to "Why use this".
+   */
+  whySection?: {
+    title?: string;
+    /** Prose introducing the problem (e.g. "Without Workflow, you'd need…"). */
+    problemProse?: string;
+    /** Bullets describing the pain points of the naive approach. */
+    problemBullets?: string[];
+    /** Prose introducing what this pattern enables. */
+    solutionProse?: string;
+    /** Bullets describing what the pattern unlocks. */
+    solutionBullets?: string[];
+    /** Optional closing sentence after the solution bullets. */
+    closingProse?: string;
+  };
+  /** "When to use this" bullet points. */
+  whenToUse?: string[];
+  /**
+   * Side-by-side comparison of multiple approaches — e.g. Hard Cancel vs
+   * Stop Signal. Only needed when the pattern has meaningful trade-offs worth
+   * calling out explicitly.
+   */
+  approaches?: RegistryApproachTable;
+  /**
+   * When true, "When to use" and "Choosing an approach" render as top-level
+   * h2s instead of being nested under an "Overview" umbrella. Use this for
+   * single-pattern items (no approachSections) that still want a flat layout
+   * matching the cookbook structure.
+   */
+  flatLayout?: boolean;
+  /**
+   * When defined, the page splits into per-approach h2 sections instead of
+   * the unified Concept tab view. Each section shows its own code and an
+   * optional install command. "When to use" and "Choosing an approach" are
+   * promoted to top-level h2s (no umbrella Overview heading).
+   */
+  approachSections?: RegistryApproachSection[];
+  /** Numbered "how it works" steps. */
+  howItWorks?: string[];
+  /**
+   * Optional prose rendered after the numbered howItWorks list.
+   * Good for a single closing sentence that ties the steps together.
+   */
+  howItWorksClosing?: string;
+  /** Optional callout rendered inside the How it works section. */
+  callout?: {
+    type: 'info' | 'warn' | 'tip';
+    content: string;
+  };
+  /**
+   * Replaces the generic "A preview of the code that gets copied into your app."
+   * description in the Source section with a pattern-specific explanation.
+   */
+  sourceDescription?: string;
+  /** Bullet-point adaptation tips (or pitfalls, etc.). */
+  adapting?: string[];
+  /** Override the "Adapting this" heading. */
+  adaptingTitle?: string;
+  /** Optional prose intro rendered before the adapting bullets. */
+  adaptingIntro?: string;
+  /** Key API links rendered at the bottom of the page. */
+  keyApis?: { label: string; url: string }[];
+}
 
 export interface RegistryItem {
   /** Slug used in the URL — `/registry/${id}`. */
@@ -124,4 +293,17 @@ export interface RegistryItem {
   files: RegistryFile[];
   /** Code snippets shown on the detail page (workflow source, usage, etc.). */
   snippets: RegistrySnippet[];
+  /**
+   * Inline guide content — when present, the detail page renders educational
+   * sections (overview, how it works, adapting, key APIs) so the page serves
+   * as both cookbook and plug-and-play reference.
+   */
+  guide?: RegistryGuide;
+  /**
+   * Simplified conceptual snippets for patterns where the educational code is
+   * genuinely different from the plug-and-play shadcn code. When present,
+   * the Source section renders these under a "Concept" heading before the
+   * production snippets.
+   */
+  conceptSnippets?: RegistrySnippet[];
 }
