@@ -62,7 +62,8 @@ export async function GET(
       content: snippet.installCode ?? snippet.code,
       type: 'registry:lib',
       // target controls where shadcn places the file in the user's project.
-      target: filePath,
+      // Workflow files live under app/workflows/ in a Next.js app-router project.
+      target: `app/${filePath}`,
     });
   }
 
@@ -77,7 +78,7 @@ export async function GET(
         path: filePath,
         content: snippet.installCode ?? snippet.code,
         type: 'registry:lib',
-        target: filePath,
+        target: `app/${filePath}`,
       });
     }
   }
