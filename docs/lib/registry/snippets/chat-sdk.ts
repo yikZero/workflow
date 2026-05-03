@@ -225,6 +225,36 @@ export type ChatTurnPayload = {
 };
 `;
 
+export const chatSdkHookTypeInstallSource = `/**
+ * Chat SDK — ChatTurnPayload hook type.
+ *
+ * THE PATTERN:
+ *   This file defines only the payload type used by the chat-turn hook.
+ *   Keeping it in a separate module means the workflow file can import the
+ *   type without pulling in handler-level dependencies (Chat SDK adapters,
+ *   DB clients, etc.) into the workflow's import graph.
+ *
+ * USEFUL WHEN:
+ *   - Your workflow and webhook handler live in different modules and you want
+ *     a clean shared type without circular imports.
+ *   - You are building on top of the Chat SDK durable-chat-session pattern.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Add any extra fields your handler needs to pass to the workflow turn
+ *     (e.g. userId, metadata, attachments).
+ *   - Import this type from both the workflow and the webhook handler.
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/chat-sdk
+ */
+import type { SerializedMessage } from "chat";
+
+// Importing this from the handler module keeps adapter dependencies out
+// of the workflow's import graph.
+export type ChatTurnPayload = {
+  message: SerializedMessage;
+};
+`;
+
 export const chatSdkHandlersSource = `import type { Message, Thread } from "chat";
 import { getRun, resumeHook, start } from "workflow/api";
 import { bot, type ThreadState } from "@/lib/bot";

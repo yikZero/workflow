@@ -607,6 +607,57 @@ export function SandboxRunner() {
 }
 `;
 
+export const sandboxPipelineInstallSource = `/**
+ * Vercel Sandbox — one-shot pipeline (quickstart).
+ *
+ * THE PATTERN:
+ *   Each \`Sandbox\` method (\`create\`, \`runCommand\`, \`stop\`) is an implicit
+ *   workflow step. The runtime persists the result of every call so on a
+ *   restart the workflow skips already-completed steps and resumes from the
+ *   last successful one — no duplicate sandbox charges, no lost output.
+ *
+ * USEFUL WHEN:
+ *   - You need to run a short, finite list of shell commands in a clean VM.
+ *   - You want crash-safety for free without managing the full session loop.
+ *   - You are prototyping before graduating to the full sandbox-session pattern.
+ *
+ * TO ADAPT THIS TO YOUR USE CASE:
+ *   - Replace the \`commands\` array with whatever shell commands your use
+ *     case needs (install deps, run tests, compile, etc.).
+ *   - Change the runtime to \`python3.13\`, \`deno2\`, etc. as needed.
+ *   - For long-running interactive sessions with a persistent sandbox,
+ *     see the full sandbox-session pattern instead.
+ *
+ * DOCS: https://workflow-sdk.dev/patterns/sandbox
+ */
+import { Sandbox } from "@vercel/sandbox";
+
+export async function sandboxPipeline(input: { commands: string[] }) {
+  "use workflow";
+
+  const sandbox = await Sandbox.create({ runtime: "node22" });
+
+  try {
+    const results = [];
+    for (const command of input.commands) {
+      const result = await sandbox.runCommand({
+        cmd: "bash",
+        args: ["-c", command],
+      });
+      results.push({
+        command,
+        exitCode: result.exitCode,
+        stdout: await result.stdout(),
+        stderr: await result.stderr(),
+      });
+    }
+    return { status: "completed", results };
+  } finally {
+    await sandbox.stop();
+  }
+}
+`;
+
 export const sandboxUsageSource = `// Quickstart — one-shot pipeline.
 // Each \`Sandbox\` method (\`create\`, \`runCommand\`, \`stop\`, \`snapshot\`) is an
 // implicit step, so the event log records every command and the workflow

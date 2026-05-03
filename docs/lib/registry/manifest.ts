@@ -24,6 +24,7 @@ import {
   chatSdkBotSource,
   chatSdkHandlersSource,
   chatSdkHookTypeSource,
+  chatSdkHookTypeInstallSource,
   chatSdkWebhookSource,
   chatSdkWorkflowSource,
   chatSdkWorkflowInstallSource,
@@ -81,6 +82,7 @@ import {
   sandboxCommandRouteSource,
   sandboxStartRouteSource,
   sandboxUsageSource,
+  sandboxPipelineInstallSource,
   sandboxWorkflowSource,
   sandboxWorkflowInstallSource,
 } from './snippets/sandbox';
@@ -790,6 +792,7 @@ export const registryItems: RegistryItem[] = [
         lang: 'tsx',
         caption: 'workflows/chat-turn-hook.ts',
         code: chatSdkHookTypeSource,
+        installCode: chatSdkHookTypeInstallSource,
       },
       {
         label: 'Handlers',
@@ -962,11 +965,11 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Quickstart',
         lang: 'tsx',
-        caption:
-          'workflows/sandbox-pipeline.ts — simpler one-shot pipeline (no session loop)',
+        caption: 'workflows/sandbox-pipeline.ts',
         description:
           'Before the full session pattern, the simplest shape. Each `Sandbox` method is an implicit step, so the event log records every command and the workflow replays from the last completed call on restart.',
         code: sandboxUsageSource,
+        installCode: sandboxPipelineInstallSource,
       },
     ],
     guide: {
@@ -1941,7 +1944,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Lib',
         lang: 'tsx',
-        caption: 'lib/distributed-abort-controller.ts',
+        caption: 'workflows/distributed-abort-controller.ts',
         code: distributedAbortControllerLibSource,
         installCode: distributedAbortControllerLibInstallSource,
       },
@@ -2115,7 +2118,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Workflow',
         lang: 'tsx',
-        caption: 'app/workflows/providers/resendWorkflow.ts',
+        caption: 'workflows/providers/resendWorkflow.ts',
         code: resendWorkflowSource,
         installCode: resendWorkflowInstallSource,
       },
