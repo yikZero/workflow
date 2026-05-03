@@ -10,7 +10,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { registryItems } from '@/lib/registry/manifest';
+import { registryItems } from '@/lib/patterns/manifest';
 
 export const dynamic = 'force-dynamic';
 

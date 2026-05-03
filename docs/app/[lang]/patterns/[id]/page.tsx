@@ -3,15 +3,15 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { codeToHtml } from 'shiki';
 import { Mermaid } from '@/components/geistdocs/mermaid';
-import { RegistryCodeTabs } from '@/components/registry/RegistryCodeTabs';
-import { RegistryDetailHero } from '@/components/registry/RegistryDetailHero';
+import { RegistryCodeTabs } from '@/components/patterns/RegistryCodeTabs';
+import { RegistryDetailHero } from '@/components/patterns/RegistryDetailHero';
 import {
   RegistryDetailToc,
   type RegistryTocItem,
-} from '@/components/registry/RegistryDetailToc';
-import { RegistryInstallTabs } from '@/components/registry/RegistryInstallTabs';
-import { getRegistryItem, getRegistryItemIds } from '@/lib/registry/manifest';
-import type { RegistryGuide, RegistrySnippet } from '@/lib/registry/types';
+} from '@/components/patterns/RegistryDetailToc';
+import { RegistryInstallTabs } from '@/components/patterns/RegistryInstallTabs';
+import { getRegistryItem, getRegistryItemIds } from '@/lib/patterns/manifest';
+import type { RegistryGuide, RegistrySnippet } from '@/lib/patterns/types';
 import { cn } from '@/lib/utils';
 
 interface PageProps {

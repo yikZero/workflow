@@ -7,8 +7,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { categoryLabels } from '@/lib/registry/manifest';
-import type { RegistryItem } from '@/lib/registry/types';
+import { categoryLabels } from '@/lib/patterns/manifest';
+import type { RegistryItem } from '@/lib/patterns/types';
 import { getProviderLogo } from './logos';
 
 interface RegistryCardProps {

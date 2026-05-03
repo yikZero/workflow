@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { categoryLabels } from '@/lib/registry/manifest';
-import type { RegistryCategory, RegistryItem } from '@/lib/registry/types';
+import { categoryLabels } from '@/lib/patterns/manifest';
+import type { RegistryCategory, RegistryItem } from '@/lib/patterns/types';
 import { RegistryCard } from './RegistryCard';
 
 type Filter = 'all' | RegistryCategory;

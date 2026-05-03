@@ -8,7 +8,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import type { RegistryItem } from '@/lib/registry/types';
+import type { RegistryItem } from '@/lib/patterns/types';
 import { getProviderLogo } from './logos';
 
 interface RegistryDetailHeroProps {

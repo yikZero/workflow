@@ -54,7 +54,7 @@ export function RegistryDetailToc({
   if (items.length === 0) return null;
 
   const githubEditUrl = githubPath
-    ? `https://github.com/vercel/workflow/edit/main/docs/lib/registry/${githubPath}`
+    ? `https://github.com/vercel/workflow/edit/main/docs/lib/patterns/${githubPath}`
     : undefined;
 
   return (

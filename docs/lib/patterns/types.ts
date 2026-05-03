@@ -3,7 +3,7 @@
  *
  * Each `RegistryItem` is a recipe (workflow + API routes + UI) you can drop
  * into your app via the shadcn CLI. The data here drives both the listing
- * page (`/registry`) and the per-item detail page (`/registry/[id]`).
+ * page (`/patterns`) and the per-item detail page (`/patterns/[id]`).
  *
  * To add a new provider:
  *   1. Append a new `RegistryItem` to `manifest.ts`.
@@ -71,11 +71,11 @@ export interface RegistrySnippet {
 
 /**
  * Identifier for a provider brand mark. The Card / Detail hero look this up
- * in `components/registry/logos` to render the actual SVG. Adding a new
+ * in `components/patterns/logos` to render the actual SVG. Adding a new
  * provider:
- *   1. Drop a `logo-<id>.tsx` SVG component in `components/registry/logos`
+ *   1. Drop a `logo-<id>.tsx` SVG component in `components/patterns/logos`
  *      that paints with `currentColor`.
- *   2. Register it in `components/registry/logos/index.ts`.
+ *   2. Register it in `components/patterns/logos/index.ts`.
  *   3. Reference its key here.
  */
 export type RegistryLogoId =
@@ -154,7 +154,7 @@ export interface RegistryApproachSection {
 }
 
 /**
- * Inline guide content that turns the registry detail page into a unified
+ * Inline guide content that turns the patterns detail page into a unified
  * educational + plug-and-play surface. Replaces the need for a separate
  * cookbook page for the same pattern.
  */
@@ -254,7 +254,7 @@ export interface RegistryGuide {
 }
 
 export interface RegistryItem {
-  /** Slug used in the URL — `/registry/${id}`. */
+  /** Slug used in the URL — `/patterns/${id}`. */
   id: string;
   /** Display name. */
   name: string;

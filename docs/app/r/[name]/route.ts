@@ -18,7 +18,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { registryItems } from '@/lib/registry/manifest';
+import { registryItems } from '@/lib/patterns/manifest';
 
 const WORKFLOW_PATH_PREFIX = 'workflows/';
 

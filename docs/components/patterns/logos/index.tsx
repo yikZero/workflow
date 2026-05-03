@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { RegistryLogoId } from '@/lib/registry/types';
+import type { RegistryLogoId } from '@/lib/patterns/types';
 import { LogoAgentCancellation } from './logo-agent-cancellation';
 import { LogoAiSdk } from './logo-ai-sdk';
 import { LogoBatching } from './logo-batching';
