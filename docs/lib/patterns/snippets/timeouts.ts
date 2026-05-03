@@ -44,11 +44,11 @@ export async function fetchWithFallback(key: string, fallback: string) {
 export async function waitForApproval(requestId: string) {
   "use workflow";
 
-  const webhook = createWebhook<{ approved: boolean }>();
+  const webhook = createWebhook();
   await sendApprovalRequest(requestId, webhook.url);
 
   const result = await Promise.race([
-    webhook.then((req) => req.json()),
+    webhook.then((req) => req.json() as Promise<{ approved: boolean }>),
     sleep("7 days").then(() => ({ timedOut: true } as const)),
   ]);
 
@@ -154,11 +154,11 @@ export async function fetchWithFallback(key: string, fallback: string) {
 export async function waitForApproval(requestId: string) {
   "use workflow";
 
-  const webhook = createWebhook<{ approved: boolean }>();
+  const webhook = createWebhook();
   await sendApprovalRequest(requestId, webhook.url);
 
   const result = await Promise.race([
-    webhook.then((req) => req.json()),
+    webhook.then((req) => req.json() as Promise<{ approved: boolean }>),
     sleep("7 days").then(() => ({ timedOut: true } as const)),
   ]);
 
