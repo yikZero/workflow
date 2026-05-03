@@ -1640,9 +1640,14 @@ export const registryItems: RegistryItem[] = [
     shadcnSlug: 'https://workflow-sdk.dev/r/webhooks',
     files: [
       {
-        path: 'workflows/webhooks-workflow.ts',
+        path: 'workflows/webhooks-event-listener-workflow.ts',
         description:
-          'Two patterns — `paymentWebhook()` (long-running event ledger) and `asyncVerification()` (request-reply with deadline).',
+          '`paymentWebhook()` — long-running event ledger that processes multiple requests from one URL and exits on a terminal event.',
+      },
+      {
+        path: 'workflows/webhooks-request-reply-workflow.ts',
+        description:
+          '`asyncVerification()` — submits a request with your webhook URL as callback and races the response against a deadline.',
       },
       {
         path: 'app/api/webhooks/route.ts',
@@ -1654,7 +1659,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Event listener',
         lang: 'tsx',
-        caption: 'workflows/webhooks-workflow.ts',
+        caption: 'workflows/webhooks-event-listener-workflow.ts',
         description:
           'Long-running listener that processes multiple requests from one URL and exits on a terminal event — Stripe-style payment ledger.',
         code: webhooksEventListenerSource,
@@ -1663,7 +1668,7 @@ export const registryItems: RegistryItem[] = [
       {
         label: 'Request-reply',
         lang: 'tsx',
-        caption: 'workflows/webhooks-workflow.ts',
+        caption: 'workflows/webhooks-request-reply-workflow.ts',
         description:
           'Submit a request to an external vendor with your webhook URL as the callback, then race the response against a 30-second deadline.',
         code: webhooksRequestReplySource,

@@ -258,7 +258,7 @@ async function processCallback(
 
 export const webhooksStartRouteSource = `import { start, getRun } from "workflow/api";
 import { NextResponse } from "next/server";
-import { paymentWebhook } from "@/app/workflows/webhooks";
+import { paymentWebhook } from "@/app/workflows/webhooks-event-listener-workflow";
 
 // POST /api/webhooks { orderId }
 // Returns the auto-generated webhook URL — register it with the external service.
