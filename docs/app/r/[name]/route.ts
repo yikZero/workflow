@@ -48,7 +48,7 @@ export async function GET(
   const files: Array<{
     path: string;
     content: string;
-    type: 'registry:lib';
+    type: 'registry:file';
     target: string;
   }> = [];
 
@@ -60,8 +60,9 @@ export async function GET(
     files.push({
       path: filePath,
       content: snippet.installCode ?? snippet.code,
-      type: 'registry:lib',
-      // target controls where shadcn places the file in the user's project.
+      // registry:file tells the shadcn CLI to write the inline `content` field
+      // directly to `target` without trying to resolve `path` as a URL.
+      type: 'registry:file',
       // Workflow files live under app/workflows/ in a Next.js app-router project.
       target: `app/${filePath}`,
     });
@@ -77,7 +78,7 @@ export async function GET(
       files.push({
         path: filePath,
         content: snippet.installCode ?? snippet.code,
-        type: 'registry:lib',
+        type: 'registry:file',
         target: `app/${filePath}`,
       });
     }
@@ -86,7 +87,7 @@ export async function GET(
   const registryItem = {
     $schema: 'https://ui.shadcn.com/schema/registry-item.json',
     name: item.id,
-    type: 'registry:lib' as const,
+    type: 'registry:file' as const,
     title: item.name,
     description: item.description,
     files,
