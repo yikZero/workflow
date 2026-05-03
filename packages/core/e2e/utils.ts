@@ -56,9 +56,13 @@ export function hasStepSourceMaps(): boolean {
   if (appName === 'nextjs-turbopack') {
     return false;
   }
-  // Webpack dev imports original step sources directly, so source filenames are
-  // available. Production-style builds still do not expose them consistently.
-  if (appName === 'nextjs-webpack' && !process.env.DEV_TEST_CONFIG) {
+  // V2: webpack inlines the step bundle into the combined flow route, and the
+  // re-bundled output no longer surfaces original step filenames in error
+  // stacks (neither dev mode nor production builds). Pre-V2 dev mode imported
+  // step sources directly and preserved filenames, but the combined route
+  // pipeline collapses them. Treat both dev and prod as "no source maps".
+  // TODO: revisit once webpack's combined-bundle source maps surface step paths.
+  if (appName === 'nextjs-webpack') {
     return false;
   }
 
