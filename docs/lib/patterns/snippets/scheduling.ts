@@ -31,7 +31,7 @@ export async function scheduleAction(action: ScheduledAction) {
   // wins — no manual flag-checking, no extra database tables.
   const hook = cancelSchedule.create({ token: \`schedule:\${action.id}\` });
   const cancelled = await Promise.race([
-    sleep(action.delay).then(() => false as const),
+    sleep(action.delay as any).then(() => false as const),
     hook.then(() => true as const),
   ]);
 
@@ -102,7 +102,7 @@ export async function scheduleAction(action: ScheduledAction) {
   // No manual flag-checking or extra DB tables — the runtime handles it.
   const hook = cancelSchedule.create({ token: \`schedule:\${action.id}\` });
   const cancelled = await Promise.race([
-    sleep(action.delay).then(() => false as const),
+    sleep(action.delay as any).then(() => false as const),
     hook.then(() => true as const),
   ]);
 
