@@ -24,17 +24,39 @@ const WORKFLOW_PATH_PREFIX = 'workflows/';
 
 export const dynamic = 'force-dynamic';
 
+function wantsBrowserRedirect(request: Request): boolean {
+  const accept = request.headers.get('accept') ?? '';
+  const userAgent = request.headers.get('user-agent') ?? '';
+  // shadcn CLI sends Accept: application/json; browsers send text/html first.
+  if (accept.includes('application/json')) return false;
+  if (/shadcn/i.test(userAgent)) return false;
+  if (accept.includes('text/html')) return true;
+  return false;
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params;
 
   const item = registryItems.find((r) => r.id === name);
   if (!item) {
+    // For browser requests, redirect to the patterns index.
+    if (wantsBrowserRedirect(request)) {
+      return NextResponse.redirect(new URL('/patterns', request.url), 302);
+    }
     return NextResponse.json(
       { error: `Pattern "${name}" not found` },
       { status: 404 }
+    );
+  }
+
+  // Browsers visiting /r/durable-agent get the pretty detail page instead.
+  if (wantsBrowserRedirect(request)) {
+    return NextResponse.redirect(
+      new URL(`/patterns/${name}`, request.url),
+      302
     );
   }
 

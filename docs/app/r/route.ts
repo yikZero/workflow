@@ -14,7 +14,19 @@ import { registryItems } from '@/lib/patterns/manifest';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+function wantsBrowserRedirect(request: Request): boolean {
+  const accept = request.headers.get('accept') ?? '';
+  const userAgent = request.headers.get('user-agent') ?? '';
+  if (accept.includes('application/json')) return false;
+  if (/shadcn/i.test(userAgent)) return false;
+  if (accept.includes('text/html')) return true;
+  return false;
+}
+
+export async function GET(request: Request) {
+  if (wantsBrowserRedirect(request)) {
+    return NextResponse.redirect(new URL('/patterns', request.url), 302);
+  }
   const items = registryItems.map((item) => ({
     name: item.id,
     type: 'registry:lib' as const,

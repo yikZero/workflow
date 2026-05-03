@@ -147,7 +147,7 @@ export const registryItems: RegistryItem[] = [
     docsUrl:
       'https://workflow-sdk.dev/cookbook/agent-patterns/agent-cancellation',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/agent-patterns/agent-cancellation.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/agent-cancellation.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/agent-cancellation',
     envVars: [
       {
@@ -355,7 +355,7 @@ export const registryItems: RegistryItem[] = [
     homepage: 'https://ai-sdk.dev',
     docsUrl: 'https://ai-sdk.dev/docs',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/integrations/ai-sdk.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/ai-sdk.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/ai-sdk',
     files: [
       {
@@ -517,9 +517,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['agents', 'ai', 'durable', 'tools', 'streaming'],
     categories: ['agent'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/agent-patterns/durable-agent',
+    docsUrl: 'https://workflow-sdk.dev/patterns/durable-agent',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/agent-patterns/durable-agent.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/durable-agent.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/durable-agent',
     files: [
       {
@@ -620,7 +620,7 @@ export const registryItems: RegistryItem[] = [
     docsUrl:
       'https://workflow-sdk.dev/cookbook/agent-patterns/human-in-the-loop',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/agent-patterns/human-in-the-loop.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/human-in-the-loop.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/human-in-the-loop',
     files: [
       {
@@ -741,7 +741,7 @@ export const registryItems: RegistryItem[] = [
     homepage: 'https://chat-sdk.dev',
     docsUrl: 'https://chat-sdk.dev/docs/guides/durable-chat-sessions-nextjs',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/integrations/chat-sdk.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/chat-sdk.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/chat-sdk',
     files: [
       {
@@ -893,7 +893,7 @@ export const registryItems: RegistryItem[] = [
     homepage: 'https://vercel.com/docs/vercel-sandbox',
     docsUrl: 'https://vercel.com/docs/vercel-sandbox',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/integrations/sandbox.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/sandbox.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/sandbox',
     files: [
       {
@@ -1037,9 +1037,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['batching', 'fan-out', 'parallel', 'bulk-import'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/batching',
+    docsUrl: 'https://workflow-sdk.dev/patterns/batching',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/batching.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/batching.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/batching',
     files: [
       {
@@ -1119,9 +1119,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['idempotency', 'stripe', 'retries', 'exactly-once'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/idempotency',
+    docsUrl: 'https://workflow-sdk.dev/patterns/idempotency',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/idempotency.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/idempotency.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/idempotency',
     files: [
       {
@@ -1193,9 +1193,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['rate-limit', 'retry', 'backoff', '429'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/rate-limiting',
+    docsUrl: 'https://workflow-sdk.dev/patterns/rate-limiting',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/rate-limiting.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/rate-limiting.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/rate-limiting',
     files: [
       {
@@ -1275,9 +1275,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['saga', 'transactions', 'rollback', 'compensation'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/saga',
+    docsUrl: 'https://workflow-sdk.dev/patterns/saga',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/saga.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/saga.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/saga',
     files: [
       {
@@ -1358,9 +1358,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['scheduling', 'reminders', 'cancellable', 'sleep'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/scheduling',
+    docsUrl: 'https://workflow-sdk.dev/patterns/scheduling',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/scheduling.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/scheduling.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/scheduling',
     files: [
       {
@@ -1459,7 +1459,7 @@ export const registryItems: RegistryItem[] = [
     docsUrl:
       'https://workflow-sdk.dev/cookbook/common-patterns/sequential-and-parallel',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/sequential-and-parallel.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/sequential-and-parallel.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/sequential-and-parallel',
     files: [
       {
@@ -1547,9 +1547,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['timeout', 'deadline', 'race', 'sleep'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/timeouts',
+    docsUrl: 'https://workflow-sdk.dev/patterns/timeouts',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/timeouts.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/timeouts.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/timeouts',
     files: [
       {
@@ -1634,9 +1634,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['webhook', 'callback', 'integration', 'external-api'],
     categories: ['common'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/common-patterns/webhooks',
+    docsUrl: 'https://workflow-sdk.dev/patterns/webhooks',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/webhooks.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/webhooks.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/webhooks',
     files: [
       {
@@ -1729,7 +1729,7 @@ export const registryItems: RegistryItem[] = [
     docsUrl:
       'https://workflow-sdk.dev/cookbook/common-patterns/workflow-composition',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/common-patterns/workflow-composition.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/workflow-composition.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/workflow-composition',
     files: [
       {
@@ -1823,9 +1823,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['fan-out', 'spawn', 'poll', 'orchestration'],
     categories: ['advanced'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/advanced/child-workflows',
+    docsUrl: 'https://workflow-sdk.dev/patterns/child-workflows',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/advanced/child-workflows.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/child-workflows.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/child-workflows',
     files: [
       {
@@ -1906,7 +1906,7 @@ export const registryItems: RegistryItem[] = [
     docsUrl:
       'https://workflow-sdk.dev/cookbook/advanced/distributed-abort-controller',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/advanced/distributed-abort-controller.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/distributed-abort-controller.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/distributed-abort-controller',
     files: [
       {
@@ -2006,9 +2006,9 @@ export const registryItems: RegistryItem[] = [
     tags: ['upgrade', 'respawn', 'deployment', 'long-running', 'versioning'],
     categories: ['common', 'advanced'],
     homepage: 'https://workflow-sdk.dev',
-    docsUrl: 'https://workflow-sdk.dev/cookbook/advanced/upgrading-workflows',
+    docsUrl: 'https://workflow-sdk.dev/patterns/upgrading-workflows',
     sourceUrl:
-      'https://github.com/vercel/workflow/tree/main/docs/content/docs/cookbook/advanced/upgrading-workflows.mdx',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/upgrading-workflows.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/upgrading-workflows',
     files: [
       {
@@ -2072,7 +2072,7 @@ export const registryItems: RegistryItem[] = [
     homepage: 'https://resend.com',
     docsUrl: 'https://resend.com/docs/send-with-nodejs',
     sourceUrl:
-      'https://github.com/vercel-labs/workflow_onboarding/tree/main/nextjs_workflow/app/workflows/providers',
+      'https://github.com/vercel/workflow/blob/main/docs/lib/patterns/snippets/resend.ts',
     shadcnSlug: 'https://workflow-sdk.dev/r/resend',
     envVars: [
       {

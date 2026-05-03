@@ -28,9 +28,16 @@ export async function generateMetadata({
   const { id } = await params;
   const item = getRegistryItem(id);
   if (!item) return { title: 'Registry item not found' };
+  const ogImage = `/og/patterns/${id}`;
   return {
     title: `${item.name} | Workflow Registry`,
     description: item.description,
+    openGraph: {
+      images: [ogImage],
+    },
+    twitter: {
+      images: [ogImage],
+    },
   };
 }
 
