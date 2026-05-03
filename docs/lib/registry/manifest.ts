@@ -290,7 +290,7 @@ export const registryItems: RegistryItem[] = [
           title: 'Stop Signal',
           description:
             'The workflow races the agent against a `stopHook` keyed by the run ID. When Stop is triggered, the workflow exits at its next `await` boundary, runs any cleanup, and emits a `data-stopped` stream part so the client renders a clean ending. The route falls back to hard cancel automatically if the hook is already gone.',
-          installSlug: '@workflow-sdk/agent-cancellation',
+          installSlug: 'https://workflow-sdk.dev/r/agent-cancellation',
           snippetLabels: ['Stop Signal', 'Stop route'],
           callout: {
             type: 'warn',
