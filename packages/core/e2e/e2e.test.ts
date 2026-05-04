@@ -95,6 +95,49 @@ const e2e = (fn: string) =>
   getWorkflowMetadata(deploymentUrl, 'workflows/99_e2e.ts', fn);
 
 /**
+ * Polls `getHookByToken(token)` until it resolves or the timeout is hit.
+ * Replaces fixed `setTimeout(N)` waits in hook tests, which are flaky on
+ * slower runtimes (notably the snapshot runtime on Vercel where each
+ * workflow round-trip is several seconds longer than replay) and
+ * unnecessarily slow on faster runtimes. Throws the most recent
+ * underlying error on timeout for diagnostics.
+ */
+async function waitForHook(
+  token: string,
+  options: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    runId?: string;
+  } = {}
+): Promise<Awaited<ReturnType<typeof getHookByToken>>> {
+  const { timeoutMs = 30_000, intervalMs = 250, runId } = options;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = new Error(
+    `waitForHook(${token}) timed out before any attempt`
+  );
+  while (Date.now() < deadline) {
+    try {
+      const hook = await getHookByToken(token);
+      // If a runId was provided, ensure we found the hook belonging to
+      // the expected run — important for token-reuse tests where an
+      // older run may still be associated with the same token in
+      // eventually-consistent backends until cleanup catches up.
+      if (runId && hook.runId !== runId) {
+        lastError = new Error(
+          `waitForHook(${token}) saw runId=${hook.runId}, expected ${runId}`
+        );
+      } else {
+        return hook;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    await sleep(intervalMs);
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
  * Triggers a workflow via HTTP POST. Used only for Pages Router tests
  * that specifically need to validate the HTTP trigger endpoint.
  */
@@ -313,12 +356,10 @@ describe('e2e', () => {
 
     const run = await start(await e2e('hookWorkflow'), [token, customData]);
 
-    // Wait a few seconds so that the hook is registered.
-    // TODO: make this more efficient when we add subscription support.
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-
-    // Look up the hook and resume it with the first payload
-    let hook = await getHookByToken(token);
+    // Wait until the hook is registered using a polling-based retry loop;
+    // this is faster than a fixed sleep on quick runtimes and tolerant of
+    // slow ones like the snapshot runtime on Vercel.
+    let hook = await waitForHook(token, { runId: run.runId });
     expect(hook.runId).toBe(run.runId);
     await resumeHook(hook, {
       message: 'one',
@@ -368,11 +409,8 @@ describe('e2e', () => {
 
       const run = await start(await e2e('hookWorkflow'), [token, customData]);
 
-      // Wait for the hook to be registered
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-
-      // Verify the hook exists via server-side API
-      const hook = await getHookByToken(token);
+      // Wait until the hook is registered, then verify via server-side API.
+      const hook = await waitForHook(token, { runId: run.runId });
       expect(hook.runId).toBe(run.runId);
 
       // Attempt to resume via the public webhook endpoint — should get 404
@@ -1258,11 +1296,8 @@ describe('e2e', () => {
         customData,
       ]);
 
-      // Wait for hook to be registered
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-
-      // Send payload to first workflow
-      let hook = await getHookByToken(token);
+      // Wait until the hook is registered for run1, then send the payload.
+      let hook = await waitForHook(token, { runId: run1.runId });
       expect(hook.runId).toBe(run1.runId);
       await resumeHook(hook, {
         message: 'test-message-1',
@@ -1283,11 +1318,10 @@ describe('e2e', () => {
         customData,
       ]);
 
-      // Wait for hook to be registered
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-
-      // Send payload to second workflow using same token
-      hook = await getHookByToken(token);
+      // Wait until the hook is registered for run2 (eventually-consistent
+      // backends may briefly still report run1's hook after run1 completes
+      // — waitForHook with runId filters those stale entries out).
+      hook = await waitForHook(token, { runId: run2.runId });
       expect(hook.runId).toBe(run2.runId);
       await resumeHook(hook, {
         message: 'test-message-2',
@@ -1324,8 +1358,8 @@ describe('e2e', () => {
         customData,
       ]);
 
-      // Wait for the hook to be registered by workflow 1
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      // Wait until run1 has registered the hook before starting run2.
+      await waitForHook(token, { runId: run1.runId });
 
       // Start second workflow with the SAME token while first is still running
       // This should fail because the hook token is already in use
@@ -1372,27 +1406,6 @@ describe('e2e', () => {
     async () => {
       const token = Math.random().toString(36).slice(2);
       const customData = Math.random().toString(36).slice(2);
-      const waitForHook = async (expectedRunId: string) => {
-        const timeoutAt = Date.now() + 20_000;
-        let lastSeenRunId: string | undefined;
-        while (Date.now() < timeoutAt) {
-          try {
-            const currentHook = await getHookByToken(token);
-            lastSeenRunId = currentHook.runId;
-            if (currentHook.runId === expectedRunId) {
-              return currentHook;
-            }
-          } catch (error) {
-            if (!HookNotFoundError.is(error)) {
-              throw error;
-            }
-          }
-          await sleep(1_000);
-        }
-        throw new Error(
-          `Timed out waiting for hook ${token} to belong to ${expectedRunId}. Last runId: ${lastSeenRunId ?? 'missing'}`
-        );
-      };
       const waitForHookDisposal = async () => {
         const timeoutAt = Date.now() + 20_000;
         while (Date.now() < timeoutAt) {
@@ -1415,8 +1428,9 @@ describe('e2e', () => {
         customData,
       ]);
 
-      // Verify the hook exists and belongs to workflow 1
-      let hook = await waitForHook(run1.runId);
+      // Wait until run1 has registered the hook.
+      let hook = await waitForHook(token, { runId: run1.runId });
+      expect(hook.runId).toBe(run1.runId);
 
       // Send payload to first workflow - this will trigger it to dispose the hook
       await resumeHook(hook, {
@@ -1435,8 +1449,10 @@ describe('e2e', () => {
         customData,
       ]);
 
-      // Verify the hook now belongs to workflow 2
-      hook = await waitForHook(run2.runId);
+      // Wait until the hook is re-registered for run2 (the runId filter
+      // skips any stale lookup that still resolves to run1's hook).
+      hook = await waitForHook(token, { runId: run2.runId });
+      expect(hook.runId).toBe(run2.runId);
 
       // Send payload to workflow 2
       await resumeHook(hook, {
@@ -2306,11 +2322,9 @@ describe('e2e', () => {
 
       const run = await start(await e2e('hookWithSleepWorkflow'), [token]);
 
-      // Wait for the hook to be registered
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-
-      // Send 3 payloads: two normal ones, then one with done=true
-      let hook = await getHookByToken(token);
+      // Send 3 payloads: two normal ones, then one with done=true.
+      // Wait until the hook is registered before sending the first payload.
+      let hook = await waitForHook(token, { runId: run.runId });
       expect(hook.runId).toBe(run.runId);
       await resumeHook(hook, { type: 'subscribe', id: 1 });
 
@@ -2556,17 +2570,16 @@ describe('e2e', () => {
         [controllerId, 60_000, 10_000] // 60s TTL, 10s grace
       );
 
-      // Wait for the hook to be registered
-      await sleep(3_000);
+      // Wait until the abort hook is registered.
+      const token = `distributed-abort:${controllerId}`;
+      const hook = await waitForHook(token, { runId: run.runId });
+      expect(hook.runId).toBe(run.runId);
 
       // Get the abort signal (reads from stream)
       const readable = await run.getReadable();
       const reader = readable.getReader();
 
       // Trigger abort via hook
-      const token = `distributed-abort:${controllerId}`;
-      const hook = await getHookByToken(token);
-      expect(hook.runId).toBe(run.runId);
       await resumeHook(token, { reason: 'User cancelled' });
 
       // Read the abort message from the stream
@@ -2622,11 +2635,8 @@ describe('e2e', () => {
         [controllerId, 60_000, 10_000]
       );
 
-      // Wait for hook to be registered
-      await sleep(3_000);
-
-      // Look up the hook - should find the same run
-      const hook = await getHookByToken(token);
+      // Wait until the hook is registered, then verify the run association.
+      const hook = await waitForHook(token, { runId: run1.runId });
       expect(hook.runId).toBe(run1.runId);
 
       // A second lookup should still find the same run (hook persists)
