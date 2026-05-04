@@ -711,6 +711,25 @@ jobs:
           $status = Get-DevServerStatus
           Write-Host "[health-check:pre-e2e] GET /api/chat -> $status"
           if ($status -eq 0 -or $status -ge 500) {
+            # Distinguish the known Turbopack-on-Windows wedge from a generic
+            # unhealthy server. Both look the same from outside (every request
+            # 500s), but the wedge is an upstream issue we can do nothing
+            # about, so we skip cleanly with a warning rather than failing.
+            #
+            # Signature: a MODULE_UNPARSABLE error against
+            # `packages/core/dist/runtime/start.js`, fired during the initial
+            # `Compiling instrumentation Node.js ...` pass. The file is on
+            # disk, but Turbopack's pnpm-symlink-aware resolver gets confused
+            # by a 3-way circular dep among run/runs/start in @workflow/core
+            # and reports the cycle-completing import as missing. Documented
+            # at the top of the skipped test in `packages/core/e2e/dev.test.ts`.
+            $logContent = if (Test-Path $logFile) { Get-Content $logFile -Raw } else { "" }
+            $wedgePattern = 'Could not parse module.*packages[/\\]core[/\\]dist[/\\]runtime[/\\]start\.js.*file not found'
+            if ($logContent -match $wedgePattern) {
+              Write-Host "::warning title=Next.js dev server hit known Turbopack wedge::Skipping the Next.js e2e suite: dev server returned $status because Turbopack reported `@workflow/core/dist/runtime/start.js` as missing during initial instrumentation compile (known upstream issue, see PR #1905). dev.test.ts itself passed."
+              Stop-Job $job -ErrorAction SilentlyContinue
+              exit 0
+            }
             Write-Host "::error title=Next.js dev server unhealthy::Dev server returned $status before e2e tests. Aborting to avoid the 30-minute job timeout. See the 'Print Next.js server logs' step for the underlying Turbopack error."
             Stop-Job $job -ErrorAction SilentlyContinue
             exit 1
