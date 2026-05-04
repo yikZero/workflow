@@ -83,17 +83,19 @@ describe('stripEventDataRefs', () => {
     expect(result.eventData).not.toHaveProperty('error');
   });
 
-  it('should strip error from step_failed, keep stack', () => {
+  it('should strip error from step_failed, leaving no eventData when it was the only field', () => {
+    // step_failed eventData only holds the (opaque, large) `error` payload.
+    // When resolveData is 'none' the error is stripped; since nothing else
+    // remains, eventData is dropped from the event entirely.
     const event = {
       ...baseEvent,
       eventType: 'step_failed' as const,
       correlationId: 'step_1',
-      eventData: { error: 'failed', stack: 'Error: failed\n  at ...' },
+      eventData: { error: new Uint8Array([1, 2, 3]) },
     } as Event;
 
     const result = stripEventDataRefs(event, 'none') as any;
-    expect(result.eventData).toEqual({ stack: 'Error: failed\n  at ...' });
-    expect(result.eventData).not.toHaveProperty('error');
+    expect(result).not.toHaveProperty('eventData');
   });
 
   it('should not strip anything when resolveData is "all"', () => {
@@ -268,13 +270,26 @@ describe('Storage', () => {
           input: new Uint8Array(),
         });
 
+        // The `error` field is now opaque SerializedData (Uint8Array) produced
+        // by dehydrateRunError. The storage layer persists it verbatim; the
+        // original thrown value is reconstructed by hydrateRunError at read
+        // time on the consumer side.
+        const serializedError = new Uint8Array([1, 2, 3]);
         const updated = await updateRun(storage, created.runId, 'run_failed', {
-          error: 'Something went wrong',
+          error: serializedError,
         });
 
         expect(updated.status).toBe('failed');
-        expect(updated.error?.message).toBe('Something went wrong');
+        expect(updated.error).toEqual(serializedError);
         expect(updated.completedAt).toBeInstanceOf(Date);
+      });
+
+      it('should reject run_failed on non-existent run', async () => {
+        await expect(
+          updateRun(storage, 'wrun_nonexistent', 'run_failed', {
+            error: 'Something went wrong',
+          })
+        ).rejects.toMatchObject({ name: 'WorkflowRunNotFoundError' });
       });
     });
 
@@ -480,16 +495,19 @@ describe('Storage', () => {
           input: new Uint8Array([1]),
         });
 
+        // The `error` field is now opaque SerializedData (Uint8Array) produced
+        // by dehydrateStepError. The storage layer persists it verbatim.
+        const serializedError = new Uint8Array([1, 2, 3]);
         const updated = await updateStep(
           storage,
           testRunId,
           'step_123',
           'step_failed',
-          { error: 'Step failed' }
+          { error: serializedError }
         );
 
         expect(updated.status).toBe('failed');
-        expect(updated.error?.message).toBe('Step failed');
+        expect(updated.error).toEqual(serializedError);
         expect(updated.completedAt).toBeInstanceOf(Date);
       });
     });
@@ -2496,17 +2514,20 @@ describe('Storage', () => {
       });
       await updateStep(storage, testRunId, 'step_retry_1', 'step_started');
 
+      // The `error` field is opaque SerializedData (Uint8Array) produced by
+      // dehydrateStepError. The storage layer persists it verbatim.
+      const serializedError = new Uint8Array([9, 9, 9]);
       const result = await storage.events.create(testRunId, {
         eventType: 'step_retrying',
         correlationId: 'step_retry_1',
         eventData: {
-          error: 'Temporary failure',
+          error: serializedError,
           retryAfter: new Date(Date.now() + 5000),
         },
       });
 
       expect(result.step?.status).toBe('pending');
-      expect(result.step?.error?.message).toBe('Temporary failure');
+      expect(result.step?.error).toEqual(serializedError);
       expect(result.step?.retryAfter).toBeInstanceOf(Date);
     });
 
@@ -3032,6 +3053,80 @@ describe('Storage', () => {
 
       expect(result.run).toBeDefined();
       expect(result.run!.runId).toMatch(/^wrun_/);
+    });
+  });
+
+  // Regression tests for VULN-916: path-traversal via request-controlled IDs.
+  //
+  // Prior to the fix, a client could supply a `runId` like `../../../package`
+  // and cause the backend to read/write files outside the storage root, since
+  // the IDs flowed straight into `path.join(basedir, 'runs', ...)`. The
+  // sanitization in `assertSafeEntityId` rejects any separator/`..`/leading
+  // dot before the value is used in a filesystem path.
+  describe('path traversal prevention (VULN-916)', () => {
+    const traversalIds = [
+      '../../../package',
+      '../runs/wrun_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      '../nonexistent/wrun_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      'a/b',
+      'a\\b',
+      '.hidden',
+      '.locks',
+    ];
+
+    for (const runId of traversalIds) {
+      it(`rejects traversal runId on events.create: ${JSON.stringify(runId)}`, async () => {
+        await expect(
+          storage.events.create(runId, { eventType: 'run_started' })
+        ).rejects.toThrow(/Unsafe runId/);
+      });
+
+      it(`rejects traversal runId on runs.get: ${JSON.stringify(runId)}`, async () => {
+        await expect(storage.runs.get(runId)).rejects.toThrow(/Unsafe runId/);
+      });
+
+      it(`rejects traversal runId on steps.list: ${JSON.stringify(runId)}`, async () => {
+        await expect(storage.steps.list({ runId } as any)).rejects.toThrow(
+          /Unsafe runId/
+        );
+      });
+
+      it(`rejects traversal runId on events.list: ${JSON.stringify(runId)}`, async () => {
+        await expect(storage.events.list({ runId } as any)).rejects.toThrow(
+          /Unsafe runId/
+        );
+      });
+    }
+
+    it('rejects traversal stepId on steps.get', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'deployment-123',
+        workflowName: 'test-workflow',
+        input: new Uint8Array(),
+      });
+      await expect(storage.steps.get(run.runId, '../escape')).rejects.toThrow(
+        /Unsafe stepId/
+      );
+    });
+
+    it('rejects traversal correlationId on events.create', async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'deployment-123',
+        workflowName: 'test-workflow',
+        input: new Uint8Array(),
+      });
+      await expect(
+        storage.events.create(run.runId, {
+          eventType: 'step_started',
+          correlationId: '../escape',
+        })
+      ).rejects.toThrow(/Unsafe correlationId/);
+    });
+
+    it('rejects traversal hookId on hooks.get', async () => {
+      await expect(storage.hooks.get('../escape')).rejects.toThrow(
+        /Unsafe hookId/
+      );
     });
   });
 });

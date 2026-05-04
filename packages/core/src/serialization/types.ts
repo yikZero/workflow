@@ -55,18 +55,33 @@ export interface SerializableSpecial {
     stack?: string;
     cause?: unknown;
   };
+  FatalError: { message: string; stack?: string; cause?: unknown };
   Float32Array: string; // base64 string
   Float64Array: string; // base64 string
-  Error: Record<string, any>;
+  Error: { name: string; message: string; stack?: string; cause?: unknown };
+  EvalError: { message: string; stack?: string; cause?: unknown };
   Headers: [string, string][];
   Int8Array: string; // base64 string
   Int16Array: string; // base64 string
   Int32Array: string; // base64 string
   Map: [any, any][];
+  RangeError: { message: string; stack?: string; cause?: unknown };
   ReadableStream:
     | { name: string; type?: 'bytes'; startIndex?: number }
     | { bodyInit: any };
+  ReferenceError: { message: string; stack?: string; cause?: unknown };
   RegExp: { source: string; flags: string };
+  /**
+   * `retryAfter` is serialized as a numeric epoch timestamp rather than a
+   * `Date` to be realm-safe. The Date reducer uses `instanceof global.Date`,
+   * which fails for Dates from a different VM realm.
+   */
+  RetryableError: {
+    message: string;
+    stack?: string;
+    cause?: unknown;
+    retryAfter: number;
+  };
   Request: {
     method: string;
     url: string;
@@ -92,10 +107,13 @@ export interface SerializableSpecial {
     data: unknown;
   };
   Set: any[];
+  SyntaxError: { message: string; stack?: string; cause?: unknown };
   StepFunction: {
     stepId: string;
     closureVars?: Record<string, any>;
   };
+  TypeError: { message: string; stack?: string; cause?: unknown };
+  URIError: { message: string; stack?: string; cause?: unknown };
   URL: string;
   WorkflowFunction: {
     workflowId: string;
@@ -105,6 +123,12 @@ export interface SerializableSpecial {
   Uint8ClampedArray: string; // base64 string
   Uint16Array: string; // base64 string
   Uint32Array: string; // base64 string
+  AggregateError: {
+    message: string;
+    stack?: string;
+    cause?: unknown;
+    errors: unknown[];
+  };
   WritableStream: { name: string };
 }
 

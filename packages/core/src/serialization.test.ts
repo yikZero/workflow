@@ -1,5 +1,6 @@
 import { runInContext } from 'node:vm';
 import type { WorkflowRuntimeError } from '@workflow/errors';
+import { FatalError, RetryableError } from '@workflow/errors';
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from '@workflow/serde';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerSerializationClass } from './class-serialization.js';
@@ -7,7 +8,9 @@ import { decrypt, encrypt, importKey } from './encryption.js';
 import { getStepFunction, registerStepFunction } from './private.js';
 import {
   decodeFormatPrefix,
+  dehydrateRunError,
   dehydrateStepArguments,
+  dehydrateStepError,
   dehydrateStepReturnValue,
   dehydrateWorkflowArguments,
   dehydrateWorkflowReturnValue,
@@ -16,7 +19,9 @@ import {
   getSerializeStream,
   getStreamType,
   getWorkflowReducers,
+  hydrateRunError,
   hydrateStepArguments,
+  hydrateStepError,
   hydrateStepReturnValue,
   hydrateWorkflowArguments,
   hydrateWorkflowReturnValue,
@@ -1779,7 +1784,10 @@ describe('workflow arguments', () => {
     }
     expect(err).toBeDefined();
     expect(err?.message).toContain(
-      `Ensure you're passing serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`
+      // Hint text comes from `formatSerializationError` and now points at
+      // the foundations docs instead of a hardcoded type list. See
+      // packages/core/src/serialization/errors.ts.
+      `Ensure you're passing workflow serializable types. Check the serialization docs to see what's serializable: https://workflow-sdk.dev/docs/foundations/serialization`
     );
   });
 });
@@ -1795,7 +1803,7 @@ describe('workflow return value', () => {
     }
     expect(err).toBeDefined();
     expect(err?.message).toContain(
-      `Ensure you're returning serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`
+      `Ensure you're returning workflow serializable types. Check the serialization docs to see what's serializable: https://workflow-sdk.dev/docs/foundations/serialization`
     );
   });
 });
@@ -1816,7 +1824,10 @@ describe('step arguments', () => {
     }
     expect(err).toBeDefined();
     expect(err?.message).toContain(
-      `Ensure you're passing serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`
+      // Hint text comes from `formatSerializationError` and now points at
+      // the foundations docs instead of a hardcoded type list. See
+      // packages/core/src/serialization/errors.ts.
+      `Ensure you're passing workflow serializable types. Check the serialization docs to see what's serializable: https://workflow-sdk.dev/docs/foundations/serialization`
     );
   });
 });
@@ -1836,12 +1847,16 @@ describe('cross-VM Error serialization', () => {
   vmGlobalThis.WritableStream = globalThis.WritableStream;
 
   it('should serialize a host-context Error when using VM globalThis', async () => {
-    // This simulates the scenario where a FatalError (created in the host
+    // This simulates the scenario where an Error (created in the host
     // context) is passed as an argument to a step function. The serialization
     // uses VM's globalThis, so `instanceof vmGlobal.Error` would fail for
     // host-context errors. Using types.isNativeError() fixes this.
+    //
+    // The custom `name` is intentionally NOT one of the dedicated subclass
+    // names (FatalError, RetryableError, TypeError, …) so the value falls
+    // through to the generic Error reducer, which is the path under test.
     const hostError = new Error('host error');
-    hostError.name = 'FatalError';
+    hostError.name = 'CustomError';
 
     const serialized = await dehydrateStepArguments(
       [hostError],
@@ -1861,7 +1876,7 @@ describe('cross-VM Error serialization', () => {
 
     // The reviver creates errors with `new global.Error()` (VM's Error),
     // so `instanceof` against the host Error fails. Check duck-type instead.
-    expect((hydrated[0] as Error).name).toBe('FatalError');
+    expect((hydrated[0] as Error).name).toBe('CustomError');
     expect((hydrated[0] as Error).message).toBe('host error');
     // Verify it's an instance of the VM's Error
     vmGlobalThis.__testVal = hydrated[0];
@@ -1869,8 +1884,10 @@ describe('cross-VM Error serialization', () => {
   });
 
   it('should serialize a VM-context Error when using VM globalThis', async () => {
+    // See note on the previous test about the custom `name` being
+    // intentionally chosen to bypass the dedicated subclass reducers.
     const vmError = runInContext(
-      '(() => { const e = new Error("vm error"); e.name = "FatalError"; return e; })()',
+      '(() => { const e = new Error("vm error"); e.name = "CustomError"; return e; })()',
       context
     );
 
@@ -1892,7 +1909,7 @@ describe('cross-VM Error serialization', () => {
 
     // The reviver creates errors with `new global.Error()` (VM's Error),
     // so `instanceof` against the host Error fails. Check duck-type instead.
-    expect((hydrated[0] as Error).name).toBe('FatalError');
+    expect((hydrated[0] as Error).name).toBe('CustomError');
     expect((hydrated[0] as Error).message).toBe('vm error');
     // Verify it's an instance of the VM's Error
     vmGlobalThis.__testVal = hydrated[0];
@@ -1900,13 +1917,16 @@ describe('cross-VM Error serialization', () => {
   });
 
   it('should serialize Error subclass from host context through workflow reducers', async () => {
-    class FatalError extends Error {
+    // User-defined subclass with a non-special `name` so the value flows
+    // through the generic Error reducer (which uses `new global.Error(...)`)
+    // rather than one of the dedicated subclass reducers.
+    class CustomError extends Error {
       constructor(message: string) {
         super(message);
-        this.name = 'FatalError';
+        this.name = 'CustomError';
       }
     }
-    const error = new FatalError('step failed');
+    const error = new CustomError('step failed');
 
     const serialized = await dehydrateStepArguments(
       { error },
@@ -1925,7 +1945,7 @@ describe('cross-VM Error serialization', () => {
     )) as { error: Error };
 
     // The reviver creates errors with `new global.Error()` (VM's Error)
-    expect(hydrated.error.name).toBe('FatalError');
+    expect(hydrated.error.name).toBe('CustomError');
     expect(hydrated.error.message).toBe('step failed');
     // Verify it's an instance of the VM's Error
     vmGlobalThis.__testVal = hydrated.error;
@@ -1945,7 +1965,7 @@ describe('step return value', () => {
 
     expect(err).toBeDefined();
     expect(err?.message).toContain(
-      `Ensure you're returning serializable types (plain objects, arrays, primitives, Date, RegExp, Map, Set).`
+      `Ensure you're returning workflow serializable types. Check the serialization docs to see what's serializable: https://workflow-sdk.dev/docs/foundations/serialization`
     );
   });
 });
@@ -2144,7 +2164,9 @@ describe('step function serialization', () => {
 
     expect(err).toBeDefined();
     expect(err?.message).toContain('Step function "nonExistentStep" not found');
-    expect(err?.message).toContain('Make sure the step function is registered');
+    expect(err?.message).toContain(
+      'Make sure the step file is included in your build'
+    );
   });
 
   it('should dehydrate step function passed as argument to a step', async () => {
@@ -3183,6 +3205,196 @@ describe('custom Error subclass serialization', () => {
   });
 });
 
+describe('built-in Error subclass serialization', () => {
+  const { context, globalThis: vmGlobalThis } = createContext({
+    seed: 'test-error-subclass',
+    fixedTimestamp: 1714857600000,
+  });
+  vmGlobalThis.Request = globalThis.Request;
+  vmGlobalThis.Response = globalThis.Response;
+  vmGlobalThis.ReadableStream = globalThis.ReadableStream;
+  vmGlobalThis.WritableStream = globalThis.WritableStream;
+
+  // Round-trip within the same (host) context — for testing type preservation
+  async function roundTrip(value: unknown) {
+    const serialized = await dehydrateStepReturnValue(
+      value,
+      mockRunId,
+      noEncryptionKey
+    );
+    return hydrateStepReturnValue(
+      serialized,
+      mockRunId,
+      noEncryptionKey,
+      globalThis
+    );
+  }
+
+  it('should round-trip TypeError', async () => {
+    const error = new TypeError('bad argument');
+    const hydrated = (await roundTrip(error)) as TypeError;
+    expect(hydrated).toBeInstanceOf(TypeError);
+    expect(hydrated.message).toBe('bad argument');
+    expect(hydrated.stack).toBeDefined();
+  });
+
+  it('should round-trip RangeError', async () => {
+    const error = new RangeError('out of bounds');
+    const hydrated = (await roundTrip(error)) as RangeError;
+    expect(hydrated).toBeInstanceOf(RangeError);
+    expect(hydrated.message).toBe('out of bounds');
+  });
+
+  it('should round-trip SyntaxError', async () => {
+    const error = new SyntaxError('unexpected token');
+    const hydrated = (await roundTrip(error)) as SyntaxError;
+    expect(hydrated).toBeInstanceOf(SyntaxError);
+    expect(hydrated.message).toBe('unexpected token');
+  });
+
+  it('should round-trip URIError', async () => {
+    const error = new URIError('bad URI');
+    const hydrated = (await roundTrip(error)) as URIError;
+    expect(hydrated).toBeInstanceOf(URIError);
+    expect(hydrated.message).toBe('bad URI');
+  });
+
+  it('should round-trip ReferenceError', async () => {
+    const error = new ReferenceError('x is not defined');
+    const hydrated = (await roundTrip(error)) as ReferenceError;
+    expect(hydrated).toBeInstanceOf(ReferenceError);
+    expect(hydrated.message).toBe('x is not defined');
+  });
+
+  it('should round-trip EvalError', async () => {
+    const error = new EvalError('eval failed');
+    const hydrated = (await roundTrip(error)) as EvalError;
+    expect(hydrated).toBeInstanceOf(EvalError);
+    expect(hydrated.message).toBe('eval failed');
+  });
+
+  it('should round-trip AggregateError', async () => {
+    const errors = [new Error('first'), new TypeError('second')];
+    const aggregate = new AggregateError(errors, 'multiple failures');
+    const hydrated = (await roundTrip(aggregate)) as AggregateError;
+    expect(hydrated).toBeInstanceOf(AggregateError);
+    expect(hydrated.message).toBe('multiple failures');
+    expect(hydrated.errors).toHaveLength(2);
+    expect(hydrated.errors[0]).toBeInstanceOf(Error);
+    expect((hydrated.errors[0] as Error).message).toBe('first');
+    expect(hydrated.errors[1]).toBeInstanceOf(TypeError);
+    expect((hydrated.errors[1] as Error).message).toBe('second');
+  });
+
+  it('should round-trip AggregateError with non-Error entries in errors array', async () => {
+    const aggregate = new AggregateError(
+      ['string error', 42, { code: 'ERR' }],
+      'mixed errors'
+    );
+    const hydrated = (await roundTrip(aggregate)) as AggregateError;
+    expect(hydrated).toBeInstanceOf(AggregateError);
+    expect(hydrated.errors).toHaveLength(3);
+    expect(hydrated.errors[0]).toBe('string error');
+    expect(hydrated.errors[1]).toBe(42);
+    expect(hydrated.errors[2]).toEqual({ code: 'ERR' });
+  });
+
+  it('should round-trip plain Error with custom name', async () => {
+    const error = new Error('something failed');
+    error.name = 'CustomError';
+    const hydrated = (await roundTrip(error)) as Error;
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.name).toBe('CustomError');
+    expect(hydrated.message).toBe('something failed');
+  });
+
+  it('should preserve cause on Error', async () => {
+    const cause = new TypeError('root cause');
+    const error = new Error('wrapper', { cause });
+    const hydrated = (await roundTrip(error)) as Error;
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.message).toBe('wrapper');
+    expect(hydrated.cause).toBeInstanceOf(TypeError);
+    expect((hydrated.cause as TypeError).message).toBe('root cause');
+  });
+
+  it('should preserve deeply nested cause chain', async () => {
+    const root = new ReferenceError('x is not defined');
+    const middle = new TypeError('invalid operation', { cause: root });
+    const outer = new Error('operation failed', { cause: middle });
+    const hydrated = (await roundTrip(outer)) as Error;
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.message).toBe('operation failed');
+    const hydratedMiddle = hydrated.cause as TypeError;
+    expect(hydratedMiddle).toBeInstanceOf(TypeError);
+    expect(hydratedMiddle.message).toBe('invalid operation');
+    const hydratedRoot = hydratedMiddle.cause as ReferenceError;
+    expect(hydratedRoot).toBeInstanceOf(ReferenceError);
+    expect(hydratedRoot.message).toBe('x is not defined');
+  });
+
+  it('should preserve non-Error cause values', async () => {
+    const error = new Error('failed', { cause: 'string cause' });
+    const hydrated = (await roundTrip(error)) as Error;
+    expect(hydrated.cause).toBe('string cause');
+  });
+
+  it('should not set cause on hydrated Error when original had no cause', async () => {
+    const error = new Error('no cause');
+    expect('cause' in error).toBe(false);
+    const hydrated = (await roundTrip(error)) as Error;
+    expect(hydrated.message).toBe('no cause');
+    expect('cause' in hydrated).toBe(false);
+  });
+
+  it('should use specific serialization key for Error subclasses', async () => {
+    const error = new TypeError('test');
+    const serialized = await dehydrateStepReturnValue(
+      error,
+      mockRunId,
+      noEncryptionKey
+    );
+    const str = new TextDecoder().decode(
+      (serialized as Uint8Array).subarray(4)
+    );
+    expect(str).toContain('TypeError');
+    expect(str).not.toMatch(/"Error"/);
+  });
+
+  it('should use generic Error key for unrecognized Error subclass', async () => {
+    class MyError extends Error {
+      constructor(message: string) {
+        super(message);
+        this.name = 'MyError';
+      }
+    }
+    const error = new MyError('custom');
+    const hydrated = (await roundTrip(error)) as Error;
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.name).toBe('MyError');
+    expect(hydrated.message).toBe('custom');
+  });
+
+  it('should round-trip TypeError across VM boundaries', async () => {
+    const hostError = new TypeError('host type error');
+    const serialized = await dehydrateStepReturnValue(
+      hostError,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = await hydrateStepReturnValue(
+      serialized,
+      mockRunId,
+      noEncryptionKey,
+      vmGlobalThis
+    );
+    runInContext('var __testVal = null', context);
+    (vmGlobalThis as any).__testVal = hydrated;
+    expect(runInContext('__testVal instanceof TypeError', context)).toBe(true);
+    expect(runInContext('__testVal.message', context)).toBe('host type error');
+  });
+});
+
 describe('DOMException serialization', () => {
   const { context, globalThis: vmGlobalThis } = createContext({
     seed: 'test-domexception',
@@ -3305,6 +3517,446 @@ describe('DOMException serialization', () => {
     expect(result).toBeInstanceOf(DOMException);
     expect(result.name).toBe('AbortError');
     expect(result.message).toBe('test');
+  });
+});
+
+describe('FatalError and RetryableError serialization', () => {
+  // FatalError and RetryableError are first-class serialization targets
+  // (handled by dedicated reducers/revivers in the common reducers module),
+  // so unlike user-defined classes they round-trip without any
+  // `registerSerializationClass` setup. This is what makes them usable
+  // from environments that don't run the SWC plugin (e.g. the vitest e2e
+  // runner, ad-hoc Node scripts, etc.).
+
+  async function roundTrip(value: unknown) {
+    const serialized = await dehydrateStepReturnValue(
+      value,
+      mockRunId,
+      noEncryptionKey
+    );
+    return hydrateStepReturnValue(
+      serialized,
+      mockRunId,
+      noEncryptionKey,
+      globalThis
+    );
+  }
+
+  it('should round-trip FatalError preserving type and message', async () => {
+    const error = new FatalError('step failed permanently');
+    const hydrated = (await roundTrip(error)) as FatalError;
+    expect(hydrated).toBeInstanceOf(FatalError);
+    expect(hydrated.message).toBe('step failed permanently');
+    expect(hydrated.fatal).toBe(true);
+    expect(hydrated.name).toBe('FatalError');
+    expect(FatalError.is(hydrated)).toBe(true);
+  });
+
+  it('should round-trip FatalError preserving stack', async () => {
+    const error = new FatalError('with stack');
+    const originalStack = error.stack;
+    const hydrated = (await roundTrip(error)) as FatalError;
+    expect(hydrated.stack).toBe(originalStack);
+  });
+
+  it('should serialize FatalError using its dedicated reducer key', async () => {
+    const error = new FatalError('test');
+    const serialized = await dehydrateStepReturnValue(
+      error,
+      mockRunId,
+      noEncryptionKey
+    );
+    const str = new TextDecoder().decode(
+      (serialized as Uint8Array).subarray(4)
+    );
+    // devalue marks reduced values with `["KeyName",N]` arrays. Asserting on
+    // the literal marker (not just the string "FatalError") proves the
+    // dedicated FatalError reducer matched, rather than the generic Error
+    // reducer producing a payload that happens to contain "FatalError" in
+    // the `name` field.
+    expect(str).toContain('["FatalError",');
+    expect(str).not.toContain('["Error",');
+    expect(str).not.toContain('Instance');
+  });
+
+  it('should round-trip RetryableError preserving type, message, and retryAfter', async () => {
+    const retryDate = new Date('2025-01-01T00:00:00.000Z');
+    const error = new RetryableError('temporary failure', {
+      retryAfter: retryDate,
+    });
+    const hydrated = (await roundTrip(error)) as RetryableError;
+    expect(hydrated).toBeInstanceOf(RetryableError);
+    expect(hydrated.message).toBe('temporary failure');
+    expect(hydrated.name).toBe('RetryableError');
+    expect(hydrated.retryAfter).toBeInstanceOf(Date);
+    expect(hydrated.retryAfter.toISOString()).toBe('2025-01-01T00:00:00.000Z');
+    expect(RetryableError.is(hydrated)).toBe(true);
+  });
+
+  it('should round-trip RetryableError preserving stack', async () => {
+    const error = new RetryableError('with stack');
+    const originalStack = error.stack;
+    const hydrated = (await roundTrip(error)) as RetryableError;
+    expect(hydrated.stack).toBe(originalStack);
+  });
+
+  it('should serialize RetryableError using its dedicated reducer key', async () => {
+    const error = new RetryableError('test');
+    const serialized = await dehydrateStepReturnValue(
+      error,
+      mockRunId,
+      noEncryptionKey
+    );
+    const str = new TextDecoder().decode(
+      (serialized as Uint8Array).subarray(4)
+    );
+    // See note on the FatalError variant above: assert on the devalue
+    // marker `["KeyName",N]` to prove the dedicated reducer matched.
+    expect(str).toContain('["RetryableError",');
+    expect(str).not.toContain('["Error",');
+    expect(str).not.toContain('Instance');
+  });
+
+  it('should preserve cause on FatalError when present', async () => {
+    const cause = new Error('underlying issue');
+    const error = new FatalError('fatal with cause');
+    (error as Error).cause = cause;
+    const hydrated = (await roundTrip(error)) as FatalError;
+    expect(hydrated).toBeInstanceOf(FatalError);
+    expect(hydrated.message).toBe('fatal with cause');
+    expect((hydrated as Error).cause).toBeInstanceOf(Error);
+    expect(((hydrated as Error).cause as Error).message).toBe(
+      'underlying issue'
+    );
+  });
+
+  it('should not set cause on hydrated FatalError when original had no cause', async () => {
+    const error = new FatalError('no cause');
+    expect('cause' in error).toBe(false);
+    const hydrated = (await roundTrip(error)) as FatalError;
+    expect('cause' in hydrated).toBe(false);
+  });
+
+  it('should preserve cause on RetryableError when present', async () => {
+    const cause = new Error('underlying retry issue');
+    const error = new RetryableError('retry with cause');
+    (error as Error).cause = cause;
+    const hydrated = (await roundTrip(error)) as RetryableError;
+    expect(hydrated).toBeInstanceOf(RetryableError);
+    expect(hydrated.message).toBe('retry with cause');
+    expect((hydrated as Error).cause).toBeInstanceOf(Error);
+    expect(((hydrated as Error).cause as Error).message).toBe(
+      'underlying retry issue'
+    );
+  });
+
+  it('should round-trip RetryableError with retryAfter Date that has specific value', async () => {
+    const retryDate = new Date('2099-12-31T23:59:59.999Z');
+    const error = new RetryableError('future retry', {
+      retryAfter: retryDate,
+    });
+    const hydrated = (await roundTrip(error)) as RetryableError;
+    expect(hydrated.retryAfter).toBeInstanceOf(Date);
+    expect(hydrated.retryAfter.getTime()).toBe(retryDate.getTime());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dehydrate/hydrate{Step,Run}Error helpers
+//
+// These dedicated helpers wrap the step/workflow reducers + format-prefix
+// encoding + optional encryption for the values that flow through
+// `step_failed` / `step_retrying` / `run_failed` events. The tests below
+// exercise the public API directly (rather than through a workflow context)
+// to lock down the round-trip contract.
+// ---------------------------------------------------------------------------
+describe('dehydrate/hydrateStepError', () => {
+  // FatalError needs to be registered (the SWC plugin does this in production
+  // by inlining the registration; in unit tests we register manually).
+  beforeAll(() => {
+    registerSerializationClass('@workflow/errors//FatalError', FatalError);
+    registerSerializationClass(
+      '@workflow/errors//RetryableError',
+      RetryableError
+    );
+  });
+
+  it('should round-trip a FatalError preserving class identity, message, and stack', async () => {
+    const original = new FatalError('boom');
+    original.stack = 'Error: boom\n    at someFn (file.js:1:1)';
+    const serialized = await dehydrateStepError(
+      original,
+      mockRunId,
+      noEncryptionKey
+    );
+    expect(serialized).toBeInstanceOf(Uint8Array);
+
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as FatalError;
+
+    expect(hydrated).toBeInstanceOf(FatalError);
+    expect(FatalError.is(hydrated)).toBe(true);
+    expect(hydrated.message).toBe('boom');
+    expect(hydrated.stack).toBe(original.stack);
+    expect(hydrated.fatal).toBe(true);
+  });
+
+  it('should round-trip a generic Error preserving name, message, and stack', async () => {
+    const original = new Error('plain error');
+    original.stack = 'Error: plain error\n    at somewhere (a.js:1:1)';
+    const serialized = await dehydrateStepError(
+      original,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as Error;
+
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.name).toBe('Error');
+    expect(hydrated.message).toBe('plain error');
+    expect(hydrated.stack).toBe(original.stack);
+  });
+
+  it('should round-trip a built-in Error subclass (TypeError) with its identity', async () => {
+    const original = new TypeError('bad type');
+    const serialized = await dehydrateStepError(
+      original,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as TypeError;
+
+    expect(hydrated).toBeInstanceOf(TypeError);
+    expect(hydrated.name).toBe('TypeError');
+    expect(hydrated.message).toBe('bad type');
+  });
+
+  it('should round-trip non-Error thrown values (string)', async () => {
+    // Steps may throw any JS value, not only Errors. Ensure the helper
+    // round-trips strings, numbers, and plain objects without coercion.
+    const serialized = await dehydrateStepError(
+      'thrown string',
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    );
+    expect(hydrated).toBe('thrown string');
+  });
+
+  it('should round-trip non-Error thrown values (plain object)', async () => {
+    const obj = { code: 'X', detail: { nested: true } };
+    const serialized = await dehydrateStepError(
+      obj,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as typeof obj;
+    expect(hydrated).toEqual(obj);
+    expect(hydrated).not.toBe(obj);
+  });
+
+  it('should round-trip an Error cause chain', async () => {
+    const root = new Error('root cause');
+    const wrapped = new FatalError('wrapped');
+    (wrapped as Error).cause = root;
+    const serialized = await dehydrateStepError(
+      wrapped,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as FatalError;
+    expect(FatalError.is(hydrated)).toBe(true);
+    expect(hydrated.message).toBe('wrapped');
+    expect((hydrated as Error).cause).toBeInstanceOf(Error);
+    expect(((hydrated as Error).cause as Error).message).toBe('root cause');
+  });
+
+  it('should round-trip through encryption when a key is provided', async () => {
+    const key = await importKey(crypto.getRandomValues(new Uint8Array(32)));
+    const original = new FatalError('encrypted');
+    const serialized = await dehydrateStepError(original, mockRunId, key);
+    expect(serialized).toBeInstanceOf(Uint8Array);
+    // The ciphertext should not contain the plaintext message.
+    expect(new TextDecoder().decode(serialized)).not.toContain('encrypted');
+
+    const hydrated = (await hydrateStepError(
+      serialized,
+      mockRunId,
+      key
+    )) as FatalError;
+    expect(FatalError.is(hydrated)).toBe(true);
+    expect(hydrated.message).toBe('encrypted');
+  });
+
+  it('should produce binary output prefixed with the DEVALUE_V1 format byte', async () => {
+    // Lock down the wire contract so storage backends keep working.
+    const serialized = await dehydrateStepError(
+      new Error('x'),
+      mockRunId,
+      noEncryptionKey
+    );
+    const { format } = decodeFormatPrefix(serialized);
+    expect(format).toBe(SerializationFormat.DEVALUE_V1);
+  });
+
+  it('should throw WorkflowRuntimeError when given an unserializable value', async () => {
+    // A class instance with no WORKFLOW_SERIALIZE/registration is not
+    // serializable and must surface a runtime error rather than producing
+    // bogus output.
+    class Unregistered {
+      foo = 'bar';
+    }
+    let err: WorkflowRuntimeError | undefined;
+    try {
+      await dehydrateStepError(new Unregistered(), mockRunId, noEncryptionKey);
+    } catch (e) {
+      err = e as WorkflowRuntimeError;
+    }
+    expect(err).toBeDefined();
+    expect(err?.message).toContain('step error');
+  });
+
+  it('hydrateStepError should reject unknown format prefixes', async () => {
+    // Manufacture a payload with a bogus format byte to assert the
+    // helper rejects it instead of returning garbage.
+    const bogus = new Uint8Array([0xff, 0, 0, 0, 0]);
+    await expect(
+      hydrateStepError(bogus, mockRunId, noEncryptionKey)
+    ).rejects.toThrow(/(Unknown|Invalid) (serialization )?format/i);
+  });
+});
+
+describe('dehydrate/hydrateRunError', () => {
+  // The run-error helpers use the workflow reducers (vs. the step reducers
+  // used above), but the surface contract is the same. These tests cover the
+  // run-side specifically so the two pipelines can evolve independently.
+  beforeAll(() => {
+    registerSerializationClass('@workflow/errors//FatalError', FatalError);
+  });
+
+  it('should round-trip a FatalError preserving class identity', async () => {
+    const original = new FatalError('run-level fatal');
+    const serialized = await dehydrateRunError(
+      original,
+      mockRunId,
+      noEncryptionKey
+    );
+    expect(serialized).toBeInstanceOf(Uint8Array);
+
+    const hydrated = (await hydrateRunError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as FatalError;
+
+    expect(hydrated).toBeInstanceOf(FatalError);
+    expect(FatalError.is(hydrated)).toBe(true);
+    expect(hydrated.message).toBe('run-level fatal');
+    expect(hydrated.fatal).toBe(true);
+  });
+
+  it('should round-trip a custom property bag thrown by the workflow', async () => {
+    // Workflows may throw arbitrary values; ensure plain object shape is
+    // preserved including nested structures.
+    const value = {
+      reason: 'bad-input',
+      attempted: [1, 2, 3],
+      meta: { user: 'alice' },
+    };
+    const serialized = await dehydrateRunError(
+      value,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = await hydrateRunError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    );
+    expect(hydrated).toEqual(value);
+  });
+
+  it('should round-trip through encryption when a key is provided', async () => {
+    const key = await importKey(crypto.getRandomValues(new Uint8Array(32)));
+    const original = new Error('top-secret message');
+    const serialized = await dehydrateRunError(original, mockRunId, key);
+    expect(new TextDecoder().decode(serialized)).not.toContain('top-secret');
+
+    const hydrated = (await hydrateRunError(
+      serialized,
+      mockRunId,
+      key
+    )) as Error;
+    expect(hydrated).toBeInstanceOf(Error);
+    expect(hydrated.message).toBe('top-secret message');
+  });
+
+  it('should preserve the cause chain on a thrown FatalError', async () => {
+    const root = new TypeError('root type error');
+    const wrapped = new FatalError('outer fatal');
+    (wrapped as Error).cause = root;
+    const serialized = await dehydrateRunError(
+      wrapped,
+      mockRunId,
+      noEncryptionKey
+    );
+    const hydrated = (await hydrateRunError(
+      serialized,
+      mockRunId,
+      noEncryptionKey
+    )) as FatalError;
+    expect(FatalError.is(hydrated)).toBe(true);
+    expect(hydrated.message).toBe('outer fatal');
+    const cause = (hydrated as Error).cause as Error;
+    expect(cause).toBeInstanceOf(TypeError);
+    expect(cause.message).toBe('root type error');
+  });
+
+  it('should produce DEVALUE_V1-prefixed binary output', async () => {
+    const serialized = await dehydrateRunError(
+      new Error('x'),
+      mockRunId,
+      noEncryptionKey
+    );
+    const { format } = decodeFormatPrefix(serialized);
+    expect(format).toBe(SerializationFormat.DEVALUE_V1);
+  });
+
+  it('should throw WorkflowRuntimeError when given an unserializable value', async () => {
+    class Unregistered {
+      foo = 'bar';
+    }
+    let err: WorkflowRuntimeError | undefined;
+    try {
+      await dehydrateRunError(new Unregistered(), mockRunId, noEncryptionKey);
+    } catch (e) {
+      err = e as WorkflowRuntimeError;
+    }
+    expect(err).toBeDefined();
+    expect(err?.message).toContain('run error');
   });
 });
 

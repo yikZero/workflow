@@ -1,5 +1,5 @@
-import { WorkflowRuntimeError } from '@workflow/errors';
-import { parse, stringify } from 'devalue';
+import { SerializationError, WorkflowRuntimeError } from '@workflow/errors';
+import { parse, stringify, unflatten } from 'devalue';
 import { monotonicFactory } from 'ulid';
 import {
   decrypt as aesGcmDecrypt,
@@ -13,7 +13,13 @@ import {
   pollWritableLock,
 } from './flushable-stream.js';
 import { getStepFunction } from './private.js';
-import { getWorld } from './runtime/world.js';
+// V2: use getWorldLazy in step-side code paths so Turbopack can statically
+// resolve the world bridge from the step bundle without dragging the full
+// world.ts module (and its dynamic-import behaviour) into the flow route.
+// See `packages/core/src/runtime/get-world-lazy.ts` and the
+// "Turbopack NFT Tracing Errors in V2 Combined Flow Route" section of
+// `docs/content/docs/changelog/eager-processing.mdx`.
+import { getWorldLazy } from './runtime/get-world-lazy.js';
 import * as clientModule from './serialization/client.js';
 import {
   decrypt,
@@ -107,6 +113,25 @@ export function getStreamType(stream: ReadableStream): 'bytes' | undefined {
  */
 const FRAME_HEADER_SIZE = 4;
 
+/**
+ * The mode-specific serializers (`./serialization/{client,step,workflow}.ts`)
+ * already throw a `SerializationError` whose `.cause` is the underlying
+ * devalue / serde failure. The outer dehydrate/hydrate wrappers want to
+ * re-frame that error with a more specific context label (e.g. "workflow
+ * arguments" instead of generic "workflow value"), so they unwrap the
+ * inner SerializationError and reformat with the original cause. Errors
+ * that aren't already SerializationError flow through unchanged.
+ */
+function unwrapSerializationCause(error: unknown): unknown {
+  if (error instanceof SerializationError && error.cause !== undefined) {
+    return error.cause;
+  }
+  if (error instanceof WorkflowRuntimeError && error.cause !== undefined) {
+    return error.cause;
+  }
+  return error;
+}
+
 export function getSerializeStream(
   reducers: Partial<Reducers>,
   cryptoKey: EncryptionKeyParam
@@ -148,11 +173,12 @@ export function getSerializeStream(
         frame.set(prefixed, FRAME_HEADER_SIZE);
         controller.enqueue(frame);
       } catch (error) {
+        const { message, hint } = formatSerializationError(
+          'stream chunk',
+          error
+        );
         controller.error(
-          new WorkflowRuntimeError(
-            formatSerializationError('stream chunk', error),
-            { slug: 'serialization-failed', cause: error }
-          )
+          new SerializationError(message, { hint, cause: error })
         );
       }
     },
@@ -279,7 +305,7 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
 
   constructor(runId: string, name: string, startIndex?: number) {
     if (typeof name !== 'string' || name.length === 0) {
-      throw new Error(`"name" is required, got "${name}"`);
+      throw new WorkflowRuntimeError(`"name" is required, got "${name}"`);
     }
     super({
       // @ts-expect-error Not sure why TypeScript is complaining about this
@@ -288,7 +314,7 @@ export class WorkflowServerReadableStream extends ReadableStream<Uint8Array> {
       pull: async (controller) => {
         let reader = this.#reader;
         if (!reader) {
-          const world = await getWorld();
+          const world = await getWorldLazy();
           const stream = await world.streams.get(runId, name, startIndex);
           reader = this.#reader = stream.getReader();
         }
@@ -326,12 +352,14 @@ const STREAM_FLUSH_INTERVAL_MS = 10;
 export class WorkflowServerWritableStream extends WritableStream<Uint8Array> {
   constructor(runId: string, name: string) {
     if (typeof runId !== 'string') {
-      throw new Error(`"runId" must be a string, got "${typeof runId}"`);
+      throw new WorkflowRuntimeError(
+        `"runId" must be a string, got "${typeof runId}"`
+      );
     }
     if (typeof name !== 'string' || name.length === 0) {
-      throw new Error(`"name" is required, got "${name}"`);
+      throw new WorkflowRuntimeError(`"name" is required, got "${name}"`);
     }
-    const worldPromise = getWorld();
+    const worldPromise = getWorldLazy();
 
     // Buffering state for batched writes
     // Encryption/decryption is handled at the framing level by
@@ -538,7 +566,12 @@ export function getExternalReducers(
 
       // Stream must not be locked when passing across execution boundary
       if (value.locked) {
-        throw new Error('ReadableStream is locked');
+        throw new SerializationError(
+          'ReadableStream is locked and cannot be passed across a workflow boundary.',
+          {
+            hint: 'Pass the stream before calling .getReader() / .pipeThrough() / .pipeTo(), or tee it with .tee() and pass one of the branches.',
+          }
+        );
       }
 
       const streamId = ((global as any)[STABLE_ULID] || defaultUlid)();
@@ -608,7 +641,7 @@ export function getWorkflowReducers(
 
       const name = value[STREAM_NAME_SYMBOL];
       if (!name) {
-        throw new Error('ReadableStream `name` is not set');
+        throw new WorkflowRuntimeError('ReadableStream `name` is not set');
       }
       const s: SerializableSpecial['ReadableStream'] = { name };
       const type = value[STREAM_TYPE_SYMBOL];
@@ -619,7 +652,7 @@ export function getWorkflowReducers(
       if (!(value instanceof global.WritableStream)) return false;
       const name = value[STREAM_NAME_SYMBOL];
       if (!name) {
-        throw new Error('WritableStream `name` is not set');
+        throw new WorkflowRuntimeError('WritableStream `name` is not set');
       }
       return { name };
     },
@@ -649,7 +682,12 @@ function getStepReducers(
 
       // Stream must not be locked when passing across execution boundary
       if (value.locked) {
-        throw new Error('ReadableStream is locked');
+        throw new SerializationError(
+          'ReadableStream is locked and cannot be passed across a workflow boundary.',
+          {
+            hint: 'Pass the stream before calling .getReader() / .pipeThrough() / .pipeTo(), or tee it with .tee() and pass one of the branches.',
+          }
+        );
       }
 
       // Check if the stream already has the name symbol set, in which case
@@ -741,16 +779,22 @@ export function getExternalRevivers(
 
     // StepFunction should not be returned from workflows to clients
     StepFunction: () => {
-      throw new Error(
-        'Step functions cannot be deserialized in client context. Step functions should not be returned from workflows.'
+      throw new SerializationError(
+        'Step functions cannot be deserialized in client context. Step functions should not be returned from workflows.',
+        {
+          hint: 'A step function reference reached the client. Return a serializable value (e.g. the step result) instead of the step itself.',
+        }
       );
     },
 
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: 'Wrap the workflow with `start(workflowFn, { ... })` from `workflow` to begin a run instead of invoking it like a normal function.',
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -875,8 +919,11 @@ export function getWorkflowRevivers(
         (value as any)[WEBHOOK_RESPONSE_WRITABLE] = responseWritable;
         delete value.responseWritable;
         (value as any).respondWith = () => {
-          throw new Error(
-            '`respondWith()` must be called from within a step function'
+          throw new SerializationError(
+            '`respondWith()` must be called from within a step function.',
+            {
+              hint: 'Move the `respondWith(...)` call inside a `"use step"` function — it cannot be invoked from a workflow context.',
+            }
           );
         };
       }
@@ -887,8 +934,11 @@ export function getWorkflowRevivers(
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: 'Wrap the workflow with `start(workflowFn, { ... })` from `workflow` to begin a run instead of invoking it like a normal function.',
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -958,8 +1008,11 @@ function getStepRevivers(
 
       const stepFn = getStepFunction(stepId);
       if (!stepFn) {
-        throw new Error(
-          `Step function "${stepId}" not found. Make sure the step function is registered.`
+        throw new SerializationError(
+          `Step function "${stepId}" not found. Make sure the step function is registered.`,
+          {
+            hint: 'Make sure the step file is included in your build (i.e. it is listed in the workflow manifest), and that the SWC plugin is configured for the file.',
+          }
         );
       }
 
@@ -971,7 +1024,7 @@ function getStepRevivers(
           const currentContext = contextStorage.getStore();
 
           if (!currentContext) {
-            throw new Error(
+            throw new WorkflowRuntimeError(
               'Cannot call step function with closure variables outside step context'
             );
           }
@@ -1009,8 +1062,11 @@ function getStepRevivers(
     WorkflowFunction: (value) =>
       Object.assign(
         () => {
-          throw new Error(
-            'Workflow functions cannot be called directly. Use start() to invoke them.'
+          throw new SerializationError(
+            'Workflow functions cannot be called directly. Use start() to invoke them.',
+            {
+              hint: 'Wrap the workflow with `start(workflowFn, { ... })` from `workflow` to begin a run instead of invoking it like a normal function.',
+            }
           );
         },
         { workflowId: value.workflowId }
@@ -1180,16 +1236,12 @@ export async function dehydrateWorkflowArguments(
       ),
     });
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError(
-        'workflow arguments',
-        error instanceof WorkflowRuntimeError ? error.cause : error
-      ),
-      {
-        slug: 'serialization-failed',
-        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
-      }
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError(
+      'workflow arguments',
+      cause
     );
+    throw new SerializationError(message, { hint, cause });
   }
 }
 
@@ -1233,16 +1285,12 @@ export async function dehydrateWorkflowReturnValue(
       extraReducers: getStreamAndRequestReducers(getWorkflowReducers(global)),
     });
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError(
-        'workflow return value',
-        error instanceof WorkflowRuntimeError ? error.cause : error
-      ),
-      {
-        slug: 'serialization-failed',
-        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
-      }
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError(
+      'workflow return value',
+      cause
     );
+    throw new SerializationError(message, { hint, cause });
   }
 }
 
@@ -1290,16 +1338,9 @@ export async function dehydrateStepArguments(
       extraReducers: getStreamAndRequestReducers(getWorkflowReducers(global)),
     });
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError(
-        'step arguments',
-        error instanceof WorkflowRuntimeError ? error.cause : error
-      ),
-      {
-        slug: 'serialization-failed',
-        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
-      }
-    );
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError('step arguments', cause);
+    throw new SerializationError(message, { hint, cause });
   }
 }
 
@@ -1348,20 +1389,191 @@ export async function dehydrateStepReturnValue(
       ),
     });
   } catch (error) {
-    throw new WorkflowRuntimeError(
-      formatSerializationError(
-        'step return value',
-        error instanceof WorkflowRuntimeError ? error.cause : error
-      ),
-      {
-        slug: 'serialization-failed',
-        cause: error instanceof WorkflowRuntimeError ? error.cause : error,
-      }
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError(
+      'step return value',
+      cause
     );
+    throw new SerializationError(message, { hint, cause });
   }
 }
 
 /**
+ * Called from the step handler when a step throws. Dehydrates the thrown
+ * value from within the step execution environment into a format that can
+ * be saved to the database in a `step_failed` or `step_retrying` event.
+ *
+ * Any JavaScript value can be thrown (strings, numbers, objects, Errors,
+ * Error subclasses), so the same serialization pipeline used for step
+ * arguments and return values is applied here.
+ *
+ * @param value - The thrown value to serialize (can be any type)
+ * @param runId - Run ID for encryption context
+ * @param key - Encryption key (undefined to skip encryption)
+ * @param ops - Promise array for stream operations
+ * @param global - Global object for serialization context
+ * @returns The dehydrated value as binary data (Uint8Array) with format prefix
+ */
+export async function dehydrateStepError(
+  value: unknown,
+  runId: string,
+  key: CryptoKey | undefined,
+  ops: Promise<any>[] = [],
+  global: Record<string, any> = globalThis
+): Promise<Uint8Array> {
+  try {
+    const str = stringify(value, getStepReducers(global, ops, runId, key));
+    const payload = new TextEncoder().encode(str);
+    const serialized = encodeWithFormatPrefix(
+      SerializationFormat.DEVALUE_V1,
+      payload
+    ) as Uint8Array;
+    return (await maybeEncrypt(serialized, key)) as Uint8Array;
+  } catch (error) {
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError('step error', cause);
+    throw new SerializationError(message, { hint, cause });
+  }
+}
+
+/**
+ * Called from the workflow handler when replaying the event log of a
+ * `step_failed` or `step_retrying` event. Hydrates the thrown value from
+ * the database so the workflow can see the original thrown value.
+ *
+ * @param value - Binary serialized data (Uint8Array) with format prefix
+ * @param runId - Run ID for decryption context
+ * @param key - Encryption key (undefined to skip decryption)
+ * @param global - Global object for deserialization context
+ * @param extraRevivers - Additional revivers for custom types
+ * @returns The hydrated thrown value, ready to reject the step promise
+ */
+export async function hydrateStepError(
+  value: Uint8Array | unknown,
+  _runId: string,
+  key: CryptoKey | undefined,
+  global: Record<string, any> = globalThis,
+  extraRevivers: Record<string, (value: any) => any> = {}
+): Promise<unknown> {
+  const decrypted = await maybeDecrypt(value, key);
+
+  if (!(decrypted instanceof Uint8Array)) {
+    // Treated as a devalue "flattened" array. In production this branch is
+    // exercised by legacy code paths that bypassed `dehydrateStepError`; the
+    // SDK version is pinned per workflow run via skew protection, so a
+    // current-version producer always emits a Uint8Array here. If a
+    // misshapen value reaches us, `unflatten` throws — that's intentional:
+    // the higher-level hydration helpers (`hydrateStepIO`,
+    // `hydrateResourceIO`) already wrap us in a try/catch that leaves the
+    // field un-hydrated for o11y display, and surfacing the throw to logs
+    // is more debuggable than silently masking the unsupported shape.
+    return unflatten(decrypted as any[], {
+      ...getWorkflowRevivers(global),
+      ...extraRevivers,
+    });
+  }
+
+  const { format, payload } = decodeFormatPrefix(decrypted);
+
+  if (format === SerializationFormat.DEVALUE_V1) {
+    const str = new TextDecoder().decode(payload);
+    return parse(str, {
+      ...getWorkflowRevivers(global),
+      ...extraRevivers,
+    });
+  }
+
+  throw new Error(`Unsupported serialization format: ${format}`);
+}
+
+/**
+ * Called from the workflow handler when the workflow itself throws.
+ * Dehydrates the thrown value from within the workflow execution environment
+ * into a format that can be saved to the database in a `run_failed` event.
+ *
+ * @param value - The thrown value to serialize (can be any type)
+ * @param runId - Run ID for encryption context
+ * @param key - Encryption key (undefined to skip encryption)
+ * @param global - Global object for serialization context
+ * @returns The dehydrated value as binary data (Uint8Array) with format prefix
+ */
+export async function dehydrateRunError(
+  value: unknown,
+  _runId: string,
+  key: CryptoKey | undefined,
+  global: Record<string, any> = globalThis
+): Promise<Uint8Array> {
+  try {
+    const str = stringify(value, getWorkflowReducers(global));
+    const payload = new TextEncoder().encode(str);
+    const serialized = encodeWithFormatPrefix(
+      SerializationFormat.DEVALUE_V1,
+      payload
+    ) as Uint8Array;
+    return (await maybeEncrypt(serialized, key)) as Uint8Array;
+  } catch (error) {
+    const cause = unwrapSerializationCause(error);
+    const { message, hint } = formatSerializationError('run error', cause);
+    throw new SerializationError(message, { hint, cause });
+  }
+}
+
+/**
+ * Called from the client side (or observability tools) to hydrate the run
+ * error value of a failed workflow run.
+ *
+ * @param value - Binary serialized data (Uint8Array) with format prefix
+ * @param runId - Run ID for decryption context
+ * @param key - Encryption key (undefined to skip decryption)
+ * @param ops - Promise array for stream operations
+ * @param global - Global object for deserialization context
+ * @param extraRevivers - Additional revivers for custom types
+ * @returns The hydrated thrown value, ready to be consumed by the client
+ */
+export async function hydrateRunError(
+  value: Uint8Array | unknown,
+  runId: string,
+  key: CryptoKey | undefined,
+  ops: Promise<void>[] = [],
+  global: Record<string, any> = globalThis,
+  extraRevivers: Record<string, (value: any) => any> = {}
+): Promise<unknown> {
+  const decrypted = await maybeDecrypt(value, key);
+
+  if (!(decrypted instanceof Uint8Array)) {
+    // See the matching note in `hydrateStepError`: this branch is for
+    // devalue flattened arrays from legacy callers; current SDK versions
+    // always emit a Uint8Array, and a misshapen value here intentionally
+    // throws via `unflatten` so the surrounding try/catch in o11y helpers
+    // surfaces the issue rather than masking it.
+    return unflatten(decrypted as any[], {
+      ...getExternalRevivers(global, ops, runId, key),
+      ...extraRevivers,
+    });
+  }
+
+  const { format, payload } = decodeFormatPrefix(decrypted);
+
+  if (format === SerializationFormat.DEVALUE_V1) {
+    const str = new TextDecoder().decode(payload);
+    return parse(str, {
+      ...getExternalRevivers(global, ops, runId, key),
+      ...extraRevivers,
+    });
+  }
+
+  throw new Error(`Unsupported serialization format: ${format}`);
+}
+
+/**
+ * Called from the workflow handler when replaying the event log of a `step_completed` event.
+ * Hydrates the return value of a step from the database.
+ *
+ * @param value - Binary serialized data (Uint8Array) with format prefix
+ * @param runId - Run ID for decryption context
+ * @param key - Encryption key (undefined to skip decryption)
+ * @param global - Global object for deserialization context
+ * @param extraRevivers - Additional revivers for custom types
  * Called from the workflow handler when replaying the event log
  * of a `step_completed` event.
  */

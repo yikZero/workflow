@@ -13,7 +13,7 @@ import {
   RetryableError,
   sleep,
 } from 'workflow';
-import { getHookByToken, getRun, resumeHook, Run, start } from 'workflow/api';
+import { getHookByToken, getRun, Run, resumeHook, start } from 'workflow/api';
 import { importedStepOnly } from './_imported_step_only';
 import { callThrower, stepThatThrowsFromHelper } from './helpers';
 
@@ -342,6 +342,39 @@ export async function outputStreamInsideStepWorkflow() {
   await sleep('1s');
   await stepCloseOutputStreamInsideStep();
   await stepCloseOutputStreamInsideStep('step-ns');
+  return 'done';
+}
+
+//////////////////////////////////////////////////////////
+
+async function stepWriteUtf8Text(writable: WritableStream, text: string) {
+  'use step';
+  const writer = writable.getWriter();
+  await writer.write(new TextEncoder().encode(text));
+  writer.releaseLock();
+}
+
+async function stepWriteUtf8Json(writable: WritableStream, value: unknown) {
+  'use step';
+  const writer = writable.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(value)));
+  writer.releaseLock();
+}
+
+// Emits a sequence of Uint8Array chunks containing UTF-8 encoded text,
+// including multi-byte sequences (Latin Extended, CJK, emoji, RTL), plus
+// one chunk whose decoded text is a valid JSON document. Used to validate
+// that typed-array stream chunks round-trip as UTF-8 end-to-end.
+export async function utf8StreamWorkflow() {
+  'use workflow';
+  const writable = getWritable();
+  await sleep('1s');
+  await stepWriteUtf8Text(writable, 'Hello, world!');
+  await stepWriteUtf8Text(writable, 'Café — naïve résumé');
+  await stepWriteUtf8Text(writable, '你好，世界！🌍✨');
+  await stepWriteUtf8Text(writable, 'مرحبا بالعالم');
+  await stepWriteUtf8Json(writable, { greeting: '안녕하세요', emoji: '🎉' });
+  await stepCloseOutputStream(writable);
   return 'done';
 }
 
@@ -928,6 +961,125 @@ export async function errorFatalCatchable() {
   }
 }
 
+/**
+ * Test: a step throws a FatalError; the workflow catches it and inspects
+ * the hydrated thrown value. Exercises the step error serialization
+ * pipeline (step throw → step_failed event → workflow catch).
+ */
+async function throwFatalErrorWithCause() {
+  'use step';
+  const root = new TypeError('underlying type error');
+  const wrapped = new FatalError('fatal with cause');
+  (wrapped as Error).cause = root;
+  throw wrapped;
+}
+
+export async function errorStepThrowFatalRoundTrip() {
+  'use workflow';
+  try {
+    await throwFatalErrorWithCause();
+    return { caught: false } as any;
+  } catch (err: any) {
+    return {
+      caught: true,
+      isFatal: FatalError.is(err),
+      isInstanceOf: err instanceof FatalError,
+      message: err.message,
+      name: err.name,
+      hasFatalProp: err.fatal === true,
+      causeIsTypeError: err.cause instanceof TypeError,
+      causeName: err.cause?.name,
+      causeMessage: err.cause?.message,
+    };
+  }
+}
+
+// ---
+
+/**
+ * Test: a workflow itself throws a FatalError with a cause chain.
+ * Exercises the run-error serialization pipeline (workflow throw →
+ * run_failed event → WorkflowRunFailedError.cause on the client side).
+ */
+export async function errorWorkflowThrowFatalRoundTrip() {
+  'use workflow';
+  const root = new RangeError('out of bounds');
+  const top = new FatalError('workflow exploded');
+  (top as Error).cause = root;
+  throw top;
+}
+
+// ---
+
+/**
+ * Test: a workflow throws a non-Error value (a plain object). The
+ * client-side hydrated `cause` on WorkflowRunFailedError should be
+ * exactly that object — not coerced into an Error.
+ */
+export async function errorWorkflowThrowNonErrorValue() {
+  'use workflow';
+  const value: Record<string, unknown> = {
+    kind: 'business-rule-violation',
+    code: 'INVOICE_LOCKED',
+    detail: { invoiceId: 'inv_123', userId: 'usr_456' },
+  };
+  // Throw a non-Error value (any JS value can be thrown). The serialization
+  // pipeline must round-trip this verbatim — not coerce it into an Error.
+  throw value;
+}
+
+// ---
+
+/**
+ * Test: a step throws a non-Error value (a plain object). Non-Error
+ * throws are NOT recognized as `FatalError` (no `name === 'FatalError'`)
+ * nor as `RetryableError`, so they take the transient retry path. With
+ * `maxRetries = 0` the step fails on first attempt; the runtime wraps
+ * the original thrown value as `cause` on a `FatalError` and the
+ * workflow catches that.
+ */
+async function throwNonErrorFromStep() {
+  'use step';
+  // Same shape as `errorWorkflowThrowNonErrorValue` so the test asserts
+  // a parallel round-trip on both throw boundaries.
+  const value: Record<string, unknown> = {
+    kind: 'business-rule-violation',
+    code: 'INVOICE_LOCKED',
+    detail: { invoiceId: 'inv_123', userId: 'usr_456' },
+  };
+  throw value;
+}
+throwNonErrorFromStep.maxRetries = 0;
+
+export async function errorStepThrowNonErrorValue() {
+  'use workflow';
+  try {
+    await throwNonErrorFromStep();
+    return { caught: false } as any;
+  } catch (err: any) {
+    // After max retries the step handler wraps the underlying thrown value
+    // as `cause` on a FatalError. The wrapping FatalError is what reaches
+    // the workflow's catch; the original non-Error object is on `err.cause`.
+    return {
+      caught: true,
+      isFatal: FatalError.is(err),
+      isInstanceOf: err instanceof FatalError,
+      // The wrapping message includes the retry count + the original
+      // non-Error value's `JSON.stringify` form.
+      messageIncludesKind:
+        typeof err?.message === 'string' &&
+        err.message.includes('business-rule-violation'),
+      causeIsObject:
+        err?.cause !== null &&
+        typeof err?.cause === 'object' &&
+        !(err.cause instanceof Error),
+      causeKind: err?.cause?.kind,
+      causeCode: err?.cause?.code,
+      causeDetail: err?.cause?.detail,
+    };
+  }
+}
+
 // ------------------------------------------------------------
 // SECTION 4: NOT REGISTERED ERRORS
 // Tests for step/workflow not registered in the current deployment
@@ -1283,8 +1435,38 @@ export async function crossContextSerdeWorkflow() {
 }
 
 //////////////////////////////////////////////////////////
-// Instance Method Step Tests
+// Built-in Error subclass round-trip
 //////////////////////////////////////////////////////////
+
+/**
+ * Step that echoes an array of thrown values straight back through the
+ * step return-value boundary. Used by `errorSubclassRoundTripWorkflow` to
+ * verify that built-in Error subclasses survive the step serialization
+ * boundary with their type identity, message, stack, and cause intact.
+ */
+async function echoErrors(errors: unknown[]): Promise<unknown[]> {
+  'use step';
+  return errors;
+}
+
+/**
+ * Round-trips an array of built-in Error subclass instances through every
+ * serialization boundary:
+ *
+ *   client (start args) → workflow → step (echoErrors) → workflow → client (return)
+ *
+ * This exercises the per-subclass reducers/revivers added in the
+ * "Add first-class serialization for built-in Error subclasses" change.
+ * Each subclass reducer must run BEFORE the generic Error reducer
+ * (devalue is first-match-wins); a regression would silently downgrade
+ * `TypeError` etc. to plain `Error` instances.
+ */
+export async function errorSubclassRoundTripWorkflow(
+  errors: unknown[]
+): Promise<unknown[]> {
+  'use workflow';
+  return await echoErrors(errors);
+}
 
 /**
  * A class with instance methods that are marked as steps.
@@ -1447,6 +1629,43 @@ export async function hookWithSleepWorkflow(token: string) {
   }
 
   return results;
+}
+
+//////////////////////////////////////////////////////////
+
+/**
+ * https://github.com/vercel/workflow/pull/1528 Regression test for false-positive
+ * unconsumed event in for-await hook loops with steps: a hook iteration with
+ * an unawaited sleep where the step is only invoked on the final payload.
+ * The replay event log ends up with two `hook_received` events before a
+ * single `step_created`, which is the exact shape that triggered the
+ * false-positive "Corrupted event log" error in production.
+ */
+export async function hookWithSleepFinalStepWorkflow(token: string) {
+  'use workflow';
+
+  type Payload = { type: string; id?: number; done?: boolean };
+
+  using hook = createHook<Payload>({ token });
+
+  // Fire-and-forget timeout — the "concurrent pending entity" that interacts
+  // with the hook iteration during replay.
+  void sleep('1d');
+
+  const seen: number[] = [];
+  let finalResult: any;
+
+  for await (const payload of hook) {
+    if (typeof payload.id === 'number') {
+      seen.push(payload.id);
+    }
+    if (payload.done) {
+      finalResult = await processPayload(payload);
+      break;
+    }
+  }
+
+  return { seen, finalResult };
 }
 
 //////////////////////////////////////////////////////////
@@ -1703,6 +1922,16 @@ export async function startFromWorkflow(inputValue: number) {
 /**
  * Recursive Fibonacci workflow. start() is called directly to spawn
  * child workflows for fib(n-1) and fib(n-2).
+ *
+ * WORKER POOL CAVEAT: each `runA.returnValue` / `runB.returnValue` await
+ * resolves by polling the child run's status inside a step that holds a
+ * worker slot until the child completes. In worker-based worlds (notably
+ * `world-postgres`), the peak number of these in-flight polls must fit
+ * within `queueConcurrency`, or the workflow will deadlock — all slots
+ * end up held by parents waiting for children that can't get a slot to
+ * start. For `fib(n)`, the recursion tree produces roughly `2·(T(n)−leaves)`
+ * concurrent polls at peak; fib(6) needs ~24 slots, fib(10) needs
+ * hundreds. If you raise `n`, raise `queueConcurrency` accordingly.
  */
 export async function fibonacciWorkflow(n: number): Promise<number> {
   'use workflow';

@@ -24,21 +24,6 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 // ---- Reducer/Reviver composition per mode ----
-//
-// Note: These modular mode modules (workflow.ts, step.ts, client.ts)
-// are NOT used in the current runtime's event replay flow. All
-// serialization in the current runtime goes through the dehydrate*/
-// hydrate* functions in serialization.ts, which pass a `global`
-// parameter (either the VM's sandboxed global or host globalThis)
-// through to the reducer/reviver factories for correct `instanceof`
-// checks across VM boundaries.
-//
-// The modular modules here default to `globalThis` and are designed
-// for the future snapshot runtime where serialization runs inside the
-// VM sandbox itself (where `globalThis` IS the VM's global). If the
-// modular modules ever need to be called from the host side with a
-// different `global`, the Codec interface would need to be extended
-// to accept a `global` parameter.
 
 function getReducersForMode(
   mode: SerializationMode,
