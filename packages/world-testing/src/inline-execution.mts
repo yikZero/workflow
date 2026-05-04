@@ -1,5 +1,5 @@
-import { expect, test, vi } from 'vitest';
 import { hydrateWorkflowReturnValue } from '@workflow/core/serialization';
+import { expect, test, vi } from 'vitest';
 import { createFetcher, startServer } from './util.mjs';
 
 /**
@@ -12,13 +12,20 @@ import { createFetcher, startServer } from './util.mjs';
  * - Parallel steps (Promise.all): 1-3 invocations depending on whether the
  *   embedded harness observes the background step and continuation separately
  * - Hook + resume: 2 invocations (hook requires external resume)
+ *
+ * These tests pin to the event-replay runtime — invocation-count assertions
+ * are V2-replay-specific. Snapshot runtime makes a separate flow invocation
+ * per resume point, so the same workflow produces a different (larger)
+ * invocation count under snapshot mode.
  */
+const INLINE_EXEC_ENV = { WORKFLOW_RUNTIME: 'replay' };
+
 export function inlineExecution(world: string) {
   test(
     'sequential steps complete in a single flow invocation',
     { timeout: 30_000 },
     async () => {
-      const server = await startServer({ world }).then(createFetcher);
+      const server = await startServer({ world, env: INLINE_EXEC_ENV }).then(createFetcher);
       const result = await server.invoke(
         'workflows/inline-execution.ts',
         'sequentialStepsWorkflow',
@@ -50,7 +57,7 @@ export function inlineExecution(world: string) {
     'sequential steps with stream complete in a single flow invocation',
     { timeout: 30_000 },
     async () => {
-      const server = await startServer({ world }).then(createFetcher);
+      const server = await startServer({ world, env: INLINE_EXEC_ENV }).then(createFetcher);
       const result = await server.invoke(
         'workflows/inline-execution.ts',
         'sequentialStepsWithStreamWorkflow',
@@ -82,7 +89,7 @@ export function inlineExecution(world: string) {
     'sleep workflow requires exactly 2 flow invocations',
     { timeout: 30_000 },
     async () => {
-      const server = await startServer({ world }).then(createFetcher);
+      const server = await startServer({ world, env: INLINE_EXEC_ENV }).then(createFetcher);
       const result = await server.invoke(
         'workflows/inline-execution.ts',
         'sleepWorkflow',
@@ -116,7 +123,7 @@ export function inlineExecution(world: string) {
     'parallel steps (Promise.all) complete in 1-3 flow invocations',
     { timeout: 30_000 },
     async () => {
-      const server = await startServer({ world }).then(createFetcher);
+      const server = await startServer({ world, env: INLINE_EXEC_ENV }).then(createFetcher);
       const result = await server.invoke(
         'workflows/inline-execution.ts',
         'parallelStepsWorkflow',

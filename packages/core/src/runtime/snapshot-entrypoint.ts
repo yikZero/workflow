@@ -33,8 +33,8 @@ import {
 } from '../serialization/encryption.js';
 import { remapErrorStack, stripInlineSourceMap } from '../source-map.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
-import { trace } from '../telemetry.js';
-import { queueMessage } from './helpers.js';
+import { serializeTraceCarrier, trace } from '../telemetry.js';
+import { getWorkflowQueueName, queueMessage } from './helpers.js';
 import {
   type PendingHook,
   type PendingStep,
@@ -678,20 +678,21 @@ export async function runWorkflowWithSnapshots(params: {
               throw err;
             }
 
-            // Queue the step execution. Queue name is __wkf_step_<stepName>;
-            // step handler expects: workflowName, workflowRunId,
-            // workflowStartedAt, stepId.
-            const startedAtMs = workflowRun.startedAt
-              ? +workflowRun.startedAt
-              : Date.now();
+            // Queue the step execution via the unified workflow queue
+            // (V2 architecture). The combined handler in runtime.ts
+            // dispatches messages with `stepId` to executeStep, which
+            // works for both replay and snapshot modes — so snapshot
+            // mode reuses the same step execution path as V2 replay
+            // instead of needing a separate step route.
+            const traceCarrier = await serializeTraceCarrier();
             await queueMessage(
               world,
-              `__wkf_step_${step.stepId}`,
+              getWorkflowQueueName(workflowRun.workflowName),
               {
-                workflowName: workflowRun.workflowName,
-                workflowRunId: runId,
-                workflowStartedAt: startedAtMs,
+                runId,
                 stepId: step.correlationId,
+                stepName: step.stepId,
+                traceCarrier,
                 requestedAt: new Date(),
               },
               {
