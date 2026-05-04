@@ -331,7 +331,15 @@ ${apiFileContent}`
       }
     );
 
-    test.skipIf(!usesDeferredBuilder)(
+    // Skipped on Windows: same Turbopack-on-Windows flakiness as
+    // `should rebuild on imported step dependency change` above. The
+    // manifest-additive half (writing a new workflow + step file and
+    // polling for the step to appear) succeeds, but the cleanup half
+    // (deleting the files and polling for the step to drop) is racy
+    // because Windows file watchers can lag the deferred builder's
+    // re-scan, leaving the deleted step name in the manifest past the
+    // 25s poll deadline. The test still runs on Linux/macOS.
+    test.skipIf(!usesDeferredBuilder || process.platform === 'win32')(
       'should include steps discovered from workflow imports',
       { timeout: 60_000 },
       async () => {
