@@ -234,7 +234,12 @@ export async function myNewStep() {
 
     test.skipIf(!usesDeferredBuilder)(
       'should rebuild on imported step dependency change',
-      { timeout: 60_000 },
+      // retry covers a Turbopack-on-Windows wedge where HMR leaves
+      // `packages/core/dist/runtime/*.js` in a MODULE_UNPARSABLE state and
+      // every request returns 500 for ~tens of seconds. The dev server
+      // self-heals (later tests in the file pass), so a clean re-run after
+      // afterEach restores files is enough to recover.
+      { timeout: 60_000, retry: 2 },
       async () => {
         const importedStepFile = path.join(
           appPath,
@@ -258,6 +263,12 @@ export async function ${marker}() {
 
         const apiFile = path.join(appPath, finalConfig.apiFilePath);
         const apiFileContent = await fs.readFile(apiFile, 'utf8');
+        // The recovery path below mutates apiFile, so register a restore
+        // entry up front. Without this, a failed attempt leaves the
+        // cache-busting prefix in place and the next retry would accumulate
+        // prefixes across iterations.
+        restoreFiles.push({ path: apiFile, content: apiFileContent });
+        let recoveryAttempt = 0;
 
         await pollUntil({
           description:
@@ -271,10 +282,15 @@ export async function ${marker}() {
               // failure (e.g. `Could not parse module
               // '@workflow/core/dist/runtime/start.js'`) after an HMR
               // cascade and returns 500 to every request until something
-              // invalidates its cache. Rewriting the api file is enough to
-              // force a fresh resolve on the next request, so we treat the
-              // 500 as transient and keep polling instead of bailing out.
-              await fs.writeFile(apiFile, apiFileContent);
+              // invalidates its cache. Rewriting the api file with a
+              // distinct cache-busting prefix each iteration forces
+              // Turbopack to treat it as a meaningful change (identical
+              // content writes can be no-ops for its hash-based cache).
+              recoveryAttempt += 1;
+              await fs.writeFile(
+                apiFile,
+                `// turbopack-recover ${Date.now()} ${recoveryAttempt}\n${apiFileContent}`
+              );
               throw error;
             }
             const manifestFunctionNames = await readManifestStepFunctionNames();
