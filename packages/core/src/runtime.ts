@@ -12,6 +12,7 @@ import {
   type WorkflowRun,
 } from '@workflow/world';
 import { classifyRunError } from './classify-error.js';
+import { describeError } from './describe-error.js';
 import { importKey } from './encryption.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
@@ -147,10 +148,22 @@ export function workflowEntrypoint(
         // --- Max delivery check ---
         // Enforce max delivery limit before any infrastructure calls.
         // This prevents runaway workflows from consuming infinite queue deliveries.
+        // Scoped logger for this run — attaches runId/workflowName to every
+        // log line and child loggers below, so callers don't repeat it.
+        const runLogger = runtimeLogger.forRun(runId, workflowName);
+
         if (metadata.attempt > MAX_QUEUE_DELIVERIES) {
-          runtimeLogger.error(
+          const maxDeliveriesDescription = describeError(
+            undefined,
+            RUN_ERROR_CODES.MAX_DELIVERIES_EXCEEDED
+          );
+          runLogger.error(
             `Workflow handler exceeded max deliveries (${metadata.attempt}/${MAX_QUEUE_DELIVERIES})`,
-            { workflowRunId: runId, workflowName, attempt: metadata.attempt }
+            {
+              attempt: metadata.attempt,
+              errorCode: maxDeliveriesDescription.errorCode,
+              errorAttribution: maxDeliveriesDescription.attribution,
+            }
           );
           try {
             const world = await getWorld();
@@ -173,16 +186,17 @@ export function workflowEntrypoint(
               // Run already finished, consume the message silently
               return;
             }
-            runtimeLogger.error(
+            runLogger.error(
               `Failed to mark run as failed after ${metadata.attempt} delivery attempts. ` +
                 `A persistent error is preventing the run from being terminated. ` +
                 `The run will remain in its current state until manually resolved. ` +
                 `This is most likely due to a persistent outage of the workflow backend ` +
                 `or a bug in the workflow runtime and should be reported to the Workflow team.`,
               {
-                workflowRunId: runId,
-                error: err instanceof Error ? err.message : String(err),
                 attempt: metadata.attempt,
+                errorName: err instanceof Error ? err.name : 'UnknownError',
+                errorMessage: err instanceof Error ? err.message : String(err),
+                errorStack: err instanceof Error ? err.stack : undefined,
               }
             );
           }
@@ -198,18 +212,34 @@ export function workflowEntrypoint(
         let replayTimeout: NodeJS.Timeout | undefined;
         if (process.env.VERCEL_URL !== undefined) {
           replayTimeout = setTimeout(async () => {
-            runtimeLogger.error('Workflow replay exceeded timeout', {
-              workflowRunId: runId,
-              timeoutMs: REPLAY_TIMEOUT_MS,
-              attempt: metadata.attempt,
-              maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
-            });
-
             // Allow a few retries before permanently failing the run.
             // On early attempts, just exit so the queue retries the message.
             if (metadata.attempt <= REPLAY_TIMEOUT_MAX_RETRIES) {
+              runLogger.warn(
+                'Workflow replay exceeded timeout but will be re-attempted (attempt < maxRetries)',
+                {
+                  timeoutMs: REPLAY_TIMEOUT_MS,
+                  attempt: metadata.attempt,
+                  maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+                }
+              );
               process.exit(1);
             }
+
+            const replayTimeoutDescription = describeError(
+              undefined,
+              RUN_ERROR_CODES.REPLAY_TIMEOUT
+            );
+            runLogger.error(
+              'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
+              {
+                timeoutMs: REPLAY_TIMEOUT_MS,
+                attempt: metadata.attempt,
+                maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+                errorCode: replayTimeoutDescription.errorCode,
+                errorAttribution: replayTimeoutDescription.attribution,
+              }
+            );
 
             try {
               const world = await getWorld();
@@ -227,8 +257,19 @@ export function workflowEntrypoint(
                 },
                 { requestId }
               );
-            } catch {
-              // Best effort — process exits regardless
+            } catch (err) {
+              // Best effort — process exits regardless. Surface why so
+              // operators can diagnose repeat timeouts against the backend.
+              runLogger.warn(
+                'Unable to mark run as failed. The queue will continue to retry',
+                {
+                  attempt: metadata.attempt,
+                  errorName: err instanceof Error ? err.name : 'UnknownError',
+                  errorMessage:
+                    err instanceof Error ? err.message : String(err),
+                  errorStack: err instanceof Error ? err.stack : undefined,
+                }
+              );
             }
             // Note that this also prevents the runtime from acking the queue message,
             // so the queue will call back once, after which a 410 will get it to exit early.
@@ -761,7 +802,6 @@ export function workflowEntrypoint(
                         });
                         const suspensionMessage =
                           buildWorkflowSuspensionMessage(
-                            runId,
                             err.stepCount,
                             err.hookCount,
                             err.waitCount
