@@ -1026,6 +1026,7 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
           token: string;
           metadata?: any;
           isWebhook?: boolean;
+          isSystem?: boolean;
         };
 
         // Check for duplicate token using prepared statement
@@ -1088,6 +1089,7 @@ export function createEventsStorage(drizzle: Drizzle): Storage['events'] {
             // Propagate specVersion from the event to the hook entity
             specVersion: effectiveSpecVersion,
             isWebhook: eventData.isWebhook,
+            isSystem: eventData.isSystem ?? false,
           })
           .onConflictDoNothing()
           .returning();

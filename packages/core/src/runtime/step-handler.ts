@@ -17,6 +17,7 @@ import { describeError } from '../describe-error.js';
 import { runtimeLogger, stepLogger } from '../logger.js';
 import { getStepFunction } from '../private.js';
 import {
+  cancelAbortReaders,
   dehydrateStepError,
   dehydrateStepReturnValue,
   hydrateStepArguments,
@@ -595,6 +596,8 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
             }
             const executionTimeMs = Date.now() - executionStartTime;
 
+            cancelAbortReaders(...args, thisVal, hydratedInput.closureVars);
+
             span?.setAttributes({
               ...Attribute.QueueExecutionTimeMs(executionTimeMs),
             });
@@ -658,18 +661,29 @@ const stepHandler = (worldHandlers: WorldHandlers) =>
                 }
               }
 
-              const normalizedError = await normalizeUnknownError(err);
+              // Wrap AbortError in FatalError — abort is intentional cancellation, not retryable
+              let effectiveErr: unknown = err;
+              if (
+                err instanceof Error &&
+                err.name === 'AbortError' &&
+                !FatalError.is(err)
+              ) {
+                const fatalErr = new FatalError(`Aborted: ${err.message}`);
+                fatalErr.stack = err.stack;
+                effectiveErr = fatalErr;
+              }
+              const normalizedError = await normalizeUnknownError(effectiveErr);
               const normalizedStack =
-                normalizedError.stack || getErrorStack(err) || '';
+                normalizedError.stack || getErrorStack(effectiveErr) || '';
 
               // Record exception for OTEL error tracking
-              if (err instanceof Error) {
-                span?.recordException?.(err);
+              if (effectiveErr instanceof Error) {
+                span?.recordException?.(effectiveErr);
               }
 
               // Determine error category and retryability
-              const isFatal = FatalError.is(err);
-              const isRetryable = RetryableError.is(err);
+              const isFatal = FatalError.is(effectiveErr);
+              const isRetryable = RetryableError.is(effectiveErr);
               const errorCategory = isFatal
                 ? 'fatal'
                 : isRetryable

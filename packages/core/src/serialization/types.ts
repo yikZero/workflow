@@ -85,6 +85,7 @@ export interface SerializableSpecial {
     body: Request['body'];
     duplex: Request['duplex'];
     responseWritable?: WritableStream<Response>;
+    signal?: AbortSignal;
   };
   Response: {
     type: Response['type'];
@@ -126,6 +127,18 @@ export interface SerializableSpecial {
     errors: unknown[];
   };
   WritableStream: { name: string };
+  AbortController: {
+    streamName: string;
+    hookToken: string;
+    aborted: boolean;
+    reason?: unknown;
+  };
+  AbortSignal: {
+    streamName: string;
+    hookToken: string;
+    aborted: boolean;
+    reason?: unknown;
+  };
 }
 
 export type Reducers = {
