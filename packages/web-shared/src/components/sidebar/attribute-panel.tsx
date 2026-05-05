@@ -441,6 +441,7 @@ const attributeToDisplayFn: Record<
   // Hook details
   token: (value: unknown) => String(value),
   isWebhook: (value: unknown) => String(value),
+  isSystem: (value: unknown) => String(value),
   receivedCount: (value: unknown) => String(value),
   lastReceivedAt: localMillisecondTimeOrNull,
   disposedAt: localMillisecondTimeOrNull,
@@ -623,6 +624,10 @@ const attributeToDisplayFn: Record<
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
     if (!hasDisplayContent(value)) return null;
     return <DetailCard summary="Event Data">{JsonBlock(value)}</DetailCard>;
+  },
+  errorCode: (value: unknown) => {
+    if (typeof value !== 'string' || value.length === 0) return null;
+    return String(value);
   },
 };
 
