@@ -187,8 +187,8 @@ describe('doStreamStep', () => {
       { sendStart: false }
     );
 
-    expect(result.step.toolCalls).toHaveLength(1);
-    expect(result.step.toolCalls[0]?.input).toBe('{"city":"San Francisco"');
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.input).toBe('{"city":"San Francisco"');
     expect(writtenChunks).toContainEqual(
       expect.objectContaining({
         type: 'tool-input-available',
