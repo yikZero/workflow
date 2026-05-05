@@ -31,6 +31,11 @@ import {
   decrypt as decryptSerializedData,
   encrypt as encryptSerializedData,
 } from '../serialization/encryption.js';
+import {
+  dehydrateRunError,
+  hydrateRunError,
+  maybeEncrypt,
+} from '../serialization.js';
 import { remapErrorStack, stripInlineSourceMap } from '../source-map.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 import { serializeTraceCarrier, trace } from '../telemetry.js';
@@ -918,16 +923,119 @@ export async function runWorkflowWithSnapshots(params: {
       });
     }
 
-    // Create run_failed event
+    // Create run_failed event. Serialize the error through the
+    // first-class dehydration pipeline so consumers (CLI, observability,
+    // run.returnValue) get the same hydrated value shape as the replay
+    // runtime emits. Two paths:
+    //   * Modern (valueBytes present): the VM-side rejection handler
+    //     serialized the original thrown value (Error subclass with
+    //     cause chain, plain object, primitive, etc.) using the VM's
+    //     workflow-serialize. Pass those bytes through directly so
+    //     type identity, cause chains, and non-Error throws survive.
+    //     We just need to apply encryption if configured (the VM's
+    //     serializer doesn't have access to the encryption key).
+    //   * Legacy fallback: reconstruct an Error from the host-visible
+    //     {name, message, stack} fields and run it through
+    //     `dehydrateRunError`. Used when valueBytes is absent (e.g.
+    //     extractError pseudo-failures from VM bootstrap).
+    let dehydratedError: Uint8Array;
+    if (result.failed.valueBytes) {
+      // Hydrate the VM-side bytes, remap the error stack with the
+      // host-side source map (the VM can't do this — it lacks both the
+      // source map and `remapErrorStack`), and re-dehydrate. This
+      // preserves the original value's type identity / cause chain
+      // while fixing up frames to point at the user's source files.
+      try {
+        const hydrated = await hydrateRunError(
+          result.failed.valueBytes,
+          runId,
+          undefined // VM bytes are unencrypted
+        );
+        if (
+          hydrated &&
+          typeof hydrated === 'object' &&
+          'stack' in (hydrated as object) &&
+          typeof (hydrated as { stack?: unknown }).stack === 'string'
+        ) {
+          const parsedName = parseWorkflowName(workflowName);
+          const filename = parsedName?.moduleSpecifier || workflowName;
+          (hydrated as { stack?: string }).stack = remapErrorStack(
+            (hydrated as { stack: string }).stack,
+            filename,
+            workflowCode
+          );
+        }
+        // Walk the cause chain and remap nested stacks too.
+        const seen = new WeakSet<object>();
+        let node = (hydrated as { cause?: unknown })?.cause;
+        while (node && typeof node === 'object' && !seen.has(node as object)) {
+          seen.add(node as object);
+          const nodeStack = (node as { stack?: unknown }).stack;
+          if (typeof nodeStack === 'string') {
+            const parsedName = parseWorkflowName(workflowName);
+            const filename = parsedName?.moduleSpecifier || workflowName;
+            (node as { stack?: string }).stack = remapErrorStack(
+              nodeStack,
+              filename,
+              workflowCode
+            );
+          }
+          node = (node as { cause?: unknown }).cause;
+        }
+        dehydratedError = await dehydrateRunError(
+          hydrated,
+          runId,
+          encryptionKey
+        );
+      } catch (rehydrateErr) {
+        // If hydration / re-dehydration fails for any reason, fall
+        // back to passing through the original VM bytes (just apply
+        // encryption if configured). Better to lose source-mapped
+        // frames than to lose the error entirely.
+        runtimeLogger.warn(
+          'Snapshot runtime: failed to remap workflow error stack, passing VM bytes through',
+          {
+            workflowRunId: runId,
+            message: (rehydrateErr as Error)?.message,
+          }
+        );
+        dehydratedError = (await maybeEncrypt(
+          result.failed.valueBytes,
+          encryptionKey
+        )) as Uint8Array;
+      }
+    } else {
+      if (errorStack) {
+        reconstructed.stack = errorStack;
+      }
+      try {
+        dehydratedError = await dehydrateRunError(
+          reconstructed,
+          runId,
+          encryptionKey
+        );
+      } catch (serErr) {
+        // Fall back to a minimal payload so the run still terminates
+        // even when the error itself contains unserializable values.
+        runtimeLogger.warn(
+          'Snapshot runtime: failed to dehydrate run error, falling back to bare Error',
+          { workflowRunId: runId, message: (serErr as Error)?.message }
+        );
+        dehydratedError = await dehydrateRunError(
+          Object.assign(new Error(result.failed.message), {
+            name: result.failed.name,
+          }),
+          runId,
+          encryptionKey
+        );
+      }
+    }
     try {
       await world.events.create(runId, {
         eventType: 'run_failed',
         specVersion: SPEC_VERSION_CURRENT,
         eventData: {
-          error: {
-            message: result.failed.message,
-            stack: errorStack,
-          },
+          error: dehydratedError,
           errorCode,
         },
       });

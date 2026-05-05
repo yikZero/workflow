@@ -43,6 +43,48 @@ function reviveArrayBuffer(value: string): ArrayBuffer {
   return bytes.buffer as ArrayBuffer;
 }
 
+// ---- Error subclass helper ----
+
+// Creates a reducer for a built-in Error subclass whose serialized shape
+// is exactly { message, stack, cause? }. Matches by `value.name`
+// (instance property) for cross-realm + bundler-output robustness — see
+// the host-side common.ts for full rationale.
+function makeNamedErrorSubclassReducer(subclassName: string) {
+  return (
+    value: unknown
+  ): { message: string; stack?: string; cause?: unknown } | false => {
+    if (!(value instanceof Error)) return false;
+    if (value.name !== subclassName) return false;
+    const reduced: { message: string; stack?: string; cause?: unknown } = {
+      message: value.message,
+      stack: value.stack,
+    };
+    if ('cause' in value) reduced.cause = (value as { cause: unknown }).cause;
+    return reduced;
+  };
+}
+
+// Creates a reviver for a built-in Error subclass. Looks up the
+// constructor on globalThis so the resulting object passes
+// `instanceof TypeError` etc. in the consuming realm. Falls back to
+// a base Error with the right `.name` if the constructor is not
+// available (defensive — built-ins always exist).
+function makeNamedErrorSubclassReviver(subclassName: string) {
+  return (value: { message: string; stack?: string; cause?: unknown }) => {
+    const Cls = (globalThis as any)[subclassName];
+    let error: Error;
+    if (typeof Cls === 'function') {
+      error = new Cls(value.message);
+    } else {
+      error = new Error(value.message);
+      error.name = subclassName;
+    }
+    if (value.stack !== undefined) error.stack = value.stack;
+    if ('cause' in value) (error as any).cause = (value as any).cause;
+    return error;
+  };
+}
+
 // ---- Reducers ----
 
 export function getCommonReducers(): Partial<Reducers> {
@@ -72,14 +114,74 @@ export function getCommonReducers(): Partial<Reducers> {
       if ('cause' in value) reduced.cause = (value as any).cause;
       return reduced;
     },
+    // First-class Error subclass reducers. Order matters: each subclass
+    // reducer is checked before the generic `Error` catch-all so that
+    // e.g. a TypeError instance routes through the TypeError reducer
+    // instead of the base Error reducer. Matching is by `value.name`
+    // (the instance property) for cross-realm + bundler robustness;
+    // see common.ts for full rationale.
+    AggregateError: (value) => {
+      if (!(value instanceof Error) || value.name !== 'AggregateError')
+        return false;
+      const reduced: SerializableSpecial['AggregateError'] = {
+        message: value.message,
+        stack: value.stack,
+        errors: (value as AggregateError).errors,
+      };
+      if ('cause' in value) reduced.cause = (value as any).cause;
+      return reduced;
+    },
+    EvalError: makeNamedErrorSubclassReducer('EvalError'),
+    FatalError: makeNamedErrorSubclassReducer('FatalError'),
+    RangeError: makeNamedErrorSubclassReducer('RangeError'),
+    ReferenceError: makeNamedErrorSubclassReducer('ReferenceError'),
+    // RetryableError carries an extra retryAfter; serialize as numeric
+    // epoch timestamp for cross-realm safety (see host-side common.ts).
+    RetryableError: (value) => {
+      if (!(value instanceof Error) || value.name !== 'RetryableError')
+        return false;
+      const retryAfterRaw = (value as any).retryAfter;
+      let retryAfter: number;
+      if (
+        retryAfterRaw &&
+        typeof retryAfterRaw === 'object' &&
+        typeof (retryAfterRaw as { getTime?: unknown }).getTime === 'function'
+      ) {
+        const t = (retryAfterRaw as Date).getTime();
+        retryAfter = Number.isNaN(t) ? Date.now() + 1000 : t;
+      } else if (
+        typeof retryAfterRaw === 'string' ||
+        typeof retryAfterRaw === 'number'
+      ) {
+        const t = new Date(retryAfterRaw).getTime();
+        retryAfter = Number.isNaN(t) ? Date.now() + 1000 : t;
+      } else {
+        retryAfter = Date.now() + 1000;
+      }
+      const reduced: SerializableSpecial['RetryableError'] = {
+        message: value.message,
+        stack: value.stack,
+        retryAfter,
+      };
+      if ('cause' in value) reduced.cause = (value as any).cause;
+      return reduced;
+    },
+    SyntaxError: makeNamedErrorSubclassReducer('SyntaxError'),
+    TypeError: makeNamedErrorSubclassReducer('TypeError'),
+    URIError: makeNamedErrorSubclassReducer('URIError'),
+    // Base Error reducer — catch-all. Matched LAST after subclass-specific
+    // reducers above. Preserves `name` so user Error subclasses without
+    // dedicated reducers retain their identity through the round-trip.
     Error: (value) => {
       // In the VM, use instanceof Error (no node:util available)
       if (!(value instanceof Error)) return false;
-      return {
+      const reduced: SerializableSpecial['Error'] = {
         name: value.name,
         message: value.message,
         stack: value.stack,
       };
+      if ('cause' in value) reduced.cause = (value as any).cause;
+      return reduced;
     },
     Float32Array: (value) =>
       value instanceof Float32Array && viewToBase64(value),
@@ -214,10 +316,65 @@ export function getCommonRevivers(): Partial<Revivers> {
       if ('cause' in value) (error as any).cause = value.cause;
       return error;
     },
+    AggregateError: (value) => {
+      const error = new AggregateError(value.errors ?? [], value.message);
+      if (value.stack !== undefined) error.stack = value.stack;
+      if ('cause' in value) (error as any).cause = value.cause;
+      return error;
+    },
+    EvalError: makeNamedErrorSubclassReviver('EvalError'),
+    FatalError: (value) => {
+      // Prefer the host-registered FatalError class (registered via
+      // Symbol.for keys by @workflow/errors so `instanceof FatalError`
+      // works across realms). Fall back to a synthesized Error with
+      // the right .name when no registration is present.
+      // FatalError's constructor takes only `message`, so cause is
+      // attached as a property after construction (matching the host
+      // reviver in common.ts).
+      const Cls = (globalThis as any)[
+        Symbol.for('@workflow/errors//FatalError')
+      ];
+      let error: Error;
+      if (typeof Cls === 'function') {
+        error = new Cls(value.message);
+      } else {
+        error = new Error(value.message);
+        error.name = 'FatalError';
+      }
+      if (value.stack !== undefined) error.stack = value.stack;
+      if ('cause' in value) (error as any).cause = (value as any).cause;
+      return error;
+    },
+    RangeError: makeNamedErrorSubclassReviver('RangeError'),
+    ReferenceError: makeNamedErrorSubclassReviver('ReferenceError'),
+    RetryableError: (value) => {
+      // RetryableError's constructor accepts (message, { retryAfter }).
+      // Cause is attached after construction (the constructor does not
+      // forward it). retryAfter is stored as a Date in the VM realm.
+      const Cls = (globalThis as any)[
+        Symbol.for('@workflow/errors//RetryableError')
+      ];
+      const retryAfter = new Date(value.retryAfter);
+      let error: Error;
+      if (typeof Cls === 'function') {
+        error = new Cls(value.message, { retryAfter });
+      } else {
+        error = new Error(value.message);
+        error.name = 'RetryableError';
+        (error as any).retryAfter = retryAfter;
+      }
+      if (value.stack !== undefined) error.stack = value.stack;
+      if ('cause' in value) (error as any).cause = (value as any).cause;
+      return error;
+    },
+    SyntaxError: makeNamedErrorSubclassReviver('SyntaxError'),
+    TypeError: makeNamedErrorSubclassReviver('TypeError'),
+    URIError: makeNamedErrorSubclassReviver('URIError'),
     Error: (value) => {
       const error = new Error(value.message);
       error.name = value.name;
-      error.stack = value.stack;
+      if (value.stack !== undefined) error.stack = value.stack;
+      if ('cause' in value) (error as any).cause = (value as any).cause;
       return error;
     },
     Float32Array: (value: string) => new Float32Array(reviveArrayBuffer(value)),

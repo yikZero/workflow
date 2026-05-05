@@ -85,6 +85,17 @@ export interface SnapshotRuntimeResult {
     message: string;
     stack?: string;
     name?: string;
+    /**
+     * Format-prefixed devalue bytes of the original thrown value
+     * (Error subclass with cause chain, plain object, primitive, etc.).
+     * Set when the VM-side rejection handler successfully serializes
+     * the thrown value. The host uses these bytes to reconstruct the
+     * original value through the standard error hydration pipeline,
+     * preserving type identity (TypeError, FatalError) and non-Error
+     * throws verbatim. Falls back to the message/stack/name fields
+     * when this is undefined (e.g. extractError pseudo-failures).
+     */
+    valueBytes?: Uint8Array;
   };
 }
 
@@ -677,10 +688,16 @@ export async function runSnapshotWorkflow(
         __wfn.apply(null, __args).then(
           function(result) { globalThis.__workflowResult = globalThis[Symbol.for("workflow-serialize")](result); },
           function(error) {
+            // Preserve display info on the host-side failed object
+            // (matches the legacy host-visible shape) AND serialize the
+            // entire thrown value so the host can dehydrate the original
+            // type-identity, cause chain, or non-Error throws verbatim
+            // through the standard error pipeline.
             globalThis.__workflowError = {
-              message: error.message || String(error),
-              stack: error.stack || "",
-              name: error.name || "Error"
+              message: error && error.message != null ? String(error.message) : String(error),
+              stack: error && error.stack ? error.stack : "",
+              name: error && error.name ? error.name : (error instanceof Error ? "Error" : typeof error),
+              valueBytes: globalThis[Symbol.for("workflow-serialize")](error),
             };
           }
         );
@@ -792,30 +809,54 @@ async function processEvents(
         );
         if (hasResolver) {
           const errorData = eventData?.error;
-          const isErrorObject =
-            typeof errorData === 'object' && errorData !== null;
-          const msg = isErrorObject
-            ? (((errorData as Record<string, unknown>).message as string) ??
-              'Step failed')
-            : typeof errorData === 'string'
-              ? errorData
-              : 'Step failed';
-          // Extract the error stack from the event (set by the step handler)
-          const errorStack =
-            (isErrorObject
-              ? (errorData as Record<string, unknown>).stack
-              : undefined) ?? (eventData?.stack as string | undefined);
-          // Create a FatalError (matching event-replay behavior where all
-          // step_failed events produce FatalError instances, enabling
-          // FatalError.is() detection in workflow catch blocks).
-          const stackAssignment = errorStack
-            ? `e.stack=${JSON.stringify(errorStack)};`
-            : '';
-          vm.evalCode(
-            `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;${stackAssignment}` +
-              `globalThis.__resolvers["${escapedCid}"].reject(e);` +
-              `delete globalThis.__resolvers["${escapedCid}"];})()`
-          ).dispose();
+          if (errorData instanceof Uint8Array) {
+            // Modern path (post-#1851): the step handler dehydrated the
+            // thrown value through the first-class error pipeline. Decrypt
+            // (if encrypted) and pass the bytes to the VM-side deserializer
+            // so the workflow catch sees a properly typed Error subclass
+            // (TypeError, FatalError with original cause chain, etc.) with
+            // the original message and stack preserved.
+            const decrypted = (await decryptData(
+              errorData,
+              encryptionKey
+            )) as Uint8Array;
+            const bytesHandle = vm.newUint8Array(decrypted);
+            vm.setProp(vm.global, '__tmp_error', bytesHandle);
+            bytesHandle.dispose();
+            vm.evalCode(
+              `(function(){` +
+                `var e=globalThis[Symbol.for("workflow-deserialize")](globalThis.__tmp_error);` +
+                `globalThis.__resolvers["${escapedCid}"].reject(e);` +
+                `delete globalThis.__resolvers["${escapedCid}"];` +
+                `delete globalThis.__tmp_error;` +
+                `})()`
+            ).dispose();
+          } else {
+            // Legacy path: pre-pipeline events stored error as
+            // `{ message, stack, code }`. Reconstruct a FatalError so
+            // workflow catch can detect it via FatalError.is(), matching
+            // the original V1 step handler behavior.
+            const isErrorObject =
+              typeof errorData === 'object' && errorData !== null;
+            const msg = isErrorObject
+              ? (((errorData as Record<string, unknown>).message as string) ??
+                'Step failed')
+              : typeof errorData === 'string'
+                ? errorData
+                : 'Step failed';
+            const errorStack =
+              (isErrorObject
+                ? (errorData as Record<string, unknown>).stack
+                : undefined) ?? (eventData?.stack as string | undefined);
+            const stackAssignment = errorStack
+              ? `e.stack=${JSON.stringify(errorStack)};`
+              : '';
+            vm.evalCode(
+              `(function(){var e=new Error(${JSON.stringify(msg)});e.name="FatalError";e.fatal=true;${stackAssignment}` +
+                `globalThis.__resolvers["${escapedCid}"].reject(e);` +
+                `delete globalThis.__resolvers["${escapedCid}"];})()`
+            ).dispose();
+          }
           {
             resolved = true;
             let b: number;
@@ -1042,7 +1083,12 @@ function checkWorkflowState(
     using h = vm.evalCode('globalThis.__workflowError');
     if (!h.isUndefined) {
       const errorObj = vm.dump(h) as
-        | { message: string; stack?: string; name?: string }
+        | {
+            message: string;
+            stack?: string;
+            name?: string;
+            valueBytes?: Uint8Array;
+          }
         | string;
       const failed =
         typeof errorObj === 'string'
@@ -1051,6 +1097,7 @@ function checkWorkflowState(
               message: errorObj.message,
               stack: errorObj.stack || undefined,
               name: errorObj.name || undefined,
+              valueBytes: errorObj.valueBytes,
             };
       runtimeLogger.error('Snapshot runtime: workflow failed in VM', {
         errorMessage: failed.message,

@@ -142,6 +142,32 @@ describe('VM ↔ Node.js cross-compatibility', () => {
     expect(hydrated.closureVars).toEqual({ x: 42 });
   });
 
+  it('Node.js serialize TypeError → VM deserialize keeps subclass identity + cause', () => {
+    const cause = new TypeError('underlying');
+    const wrapped = new Error('outer');
+    (wrapped as any).cause = cause;
+    const nodeBytes = nodeSerialize(wrapped);
+    const result = vmDeserialize(nodeBytes) as Error;
+    expect(result).toBeInstanceOf(Error);
+    expect(result.message).toBe('outer');
+    expect((result as any).cause).toBeInstanceOf(TypeError);
+    expect(((result as any).cause as Error).message).toBe('underlying');
+  });
+
+  it('Node.js serialize built-in subclasses → VM deserialize preserves type identity', () => {
+    const cases: Array<[Error, new (...args: any[]) => Error]> = [
+      [new TypeError('t'), TypeError],
+      [new RangeError('r'), RangeError],
+      [new SyntaxError('s'), SyntaxError],
+      [new ReferenceError('rf'), ReferenceError],
+    ];
+    for (const [err, ctor] of cases) {
+      const result = vmDeserialize(nodeSerialize(err)) as Error;
+      expect(result).toBeInstanceOf(ctor);
+      expect(result.message).toBe(err.message);
+    }
+  });
+
   it('step result format: Node.js dehydrateStepReturnValue → VM deserialize', async () => {
     // This is the other critical path: step handler serializes result, VM deserializes
     const { dehydrateStepReturnValue } = await import('../serialization.js');
