@@ -167,3 +167,86 @@ describe('queue timeout re-enqueue', () => {
     expect(mockSetTimeout).not.toHaveBeenCalled();
   });
 });
+
+describe('queue delaySeconds', () => {
+  let localQueue: ReturnType<typeof createQueue>;
+
+  beforeEach(() => {
+    localQueue = createQueue({ baseUrl: 'http://localhost:3000' });
+  });
+
+  afterEach(async () => {
+    await localQueue.close();
+  });
+
+  it('honors delaySeconds before delivering the message', async () => {
+    const { setTimeout: mockSetTimeout } = await import('node:timers/promises');
+    vi.mocked(mockSetTimeout).mockClear();
+
+    let callCount = 0;
+    const handler = localQueue.createQueueHandler('__wkf_step_', async () => {
+      callCount++;
+      return undefined;
+    });
+
+    localQueue.registerHandler('__wkf_step_', handler);
+
+    await localQueue.queue('__wkf_step_test' as any, stepPayload, {
+      delaySeconds: 7,
+    });
+
+    await vi.waitFor(() => {
+      expect(callCount).toBe(1);
+    });
+
+    // setTimeout should have been called with the delay (7s = 7000ms)
+    // before the message was delivered.
+    expect(mockSetTimeout).toHaveBeenCalledWith(7000);
+  });
+
+  it('does not call setTimeout for delaySeconds: 0', async () => {
+    const { setTimeout: mockSetTimeout } = await import('node:timers/promises');
+    vi.mocked(mockSetTimeout).mockClear();
+
+    let callCount = 0;
+    const handler = localQueue.createQueueHandler('__wkf_step_', async () => {
+      callCount++;
+      return undefined;
+    });
+
+    localQueue.registerHandler('__wkf_step_', handler);
+
+    await localQueue.queue('__wkf_step_test' as any, stepPayload, {
+      delaySeconds: 0,
+    });
+
+    await vi.waitFor(() => {
+      expect(callCount).toBe(1);
+    });
+
+    // setTimeout should NOT have been called for delaySeconds: 0 (the
+    // delay-honoring branch is gated on `delaySeconds > 0`).
+    expect(mockSetTimeout).not.toHaveBeenCalled();
+  });
+
+  it('does not call setTimeout when delaySeconds is omitted', async () => {
+    const { setTimeout: mockSetTimeout } = await import('node:timers/promises');
+    vi.mocked(mockSetTimeout).mockClear();
+
+    let callCount = 0;
+    const handler = localQueue.createQueueHandler('__wkf_step_', async () => {
+      callCount++;
+      return undefined;
+    });
+
+    localQueue.registerHandler('__wkf_step_', handler);
+
+    await localQueue.queue('__wkf_step_test' as any, stepPayload);
+
+    await vi.waitFor(() => {
+      expect(callCount).toBe(1);
+    });
+
+    expect(mockSetTimeout).not.toHaveBeenCalled();
+  });
+});

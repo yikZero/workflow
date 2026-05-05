@@ -133,6 +133,17 @@ export function createQueue(config: Partial<Config>): LocalQueue {
     }
 
     (async () => {
+      // Honor the caller's requested delivery delay before acquiring a queue
+      // slot. Sleeping outside the semaphore so a delayed message doesn't
+      // hold a worker hostage for its delay window — the worker should be
+      // free to process other (immediate) messages until this one is ready.
+      // VQS-side queues honor delaySeconds at the broker, so this brings
+      // world-local in line with production behavior.
+      if (opts?.delaySeconds && opts.delaySeconds > 0) {
+        const delayMs = Math.min(opts.delaySeconds * 1000, MAX_SAFE_TIMEOUT_MS);
+        await setTimeout(delayMs);
+      }
+
       const token = semaphore.tryAcquire();
       if (!token) {
         console.warn(
