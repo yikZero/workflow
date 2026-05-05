@@ -2,6 +2,7 @@
 title: getAttribute
 description: Read a single attribute from the current workflow run.
 type: reference
+preRelease: true
 summary: Use getAttribute to look up a key on the current run's attribute snapshot.
 prerequisites:
   - /docs/foundations/workflows-and-steps
@@ -11,11 +12,6 @@ related:
   - /docs/api-reference/workflow/get-attributes
   - /docs/api-reference/workflow/set-attribute
 ---
-
-<Callout type="warn">
-  Attributes are a V1 preview feature. The API is stable but the
-  observability/filter UI is still rolling out.
-</Callout>
 
 Returns the current value of a single attribute on the workflow run, or `undefined` if the key is not set. Synchronous — `getAttribute` reads from the in-memory snapshot the runtime maintains for the run; it does not hit the network.
 

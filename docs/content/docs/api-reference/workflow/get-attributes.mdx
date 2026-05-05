@@ -2,6 +2,7 @@
 title: getAttributes
 description: Read all attributes on the current workflow run as a record.
 type: reference
+preRelease: true
 summary: Use getAttributes to retrieve the full attribute snapshot for the current run.
 prerequisites:
   - /docs/foundations/workflows-and-steps
@@ -11,11 +12,6 @@ related:
   - /docs/api-reference/workflow/get-attribute
   - /docs/api-reference/workflow/set-attributes
 ---
-
-<Callout type="warn">
-  Attributes are a V1 preview feature. The API is stable but the
-  observability/filter UI is still rolling out.
-</Callout>
 
 Returns the full set of attributes on the current workflow run as a `Record<string, string>`. The returned object is a snapshot — mutating it has no effect on the run.
 

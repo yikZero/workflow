@@ -2,6 +2,7 @@
 title: setAttribute
 description: Set a single attribute on the current workflow run from inside a workflow or step.
 type: reference
+preRelease: true
 summary: Use setAttribute to record a key-value attribute on the current run for observability and filtering.
 prerequisites:
   - /docs/foundations/workflows-and-steps
@@ -11,11 +12,6 @@ related:
   - /docs/api-reference/workflow/set-attributes
   - /docs/api-reference/workflow/get-attribute
 ---
-
-<Callout type="warn">
-  Attributes are a V1 preview feature. The API is stable but the
-  observability/filter UI is still rolling out.
-</Callout>
 
 Sets a single key-value attribute on the current workflow run. Attributes are small, plaintext metadata that you can search, filter, and display in the observability UI without exposing step inputs/outputs.
 

@@ -2,6 +2,7 @@
 title: Attributes
 description: Attach searchable, plaintext metadata to workflow runs for observability and filtering.
 type: conceptual
+preRelease: true
 summary: Use attributes to label runs with business data so you can find, filter, and group them later.
 prerequisites:
   - /docs/foundations/workflows-and-steps
@@ -12,11 +13,6 @@ related:
   - /docs/api-reference/workflow/get-attribute
   - /docs/api-reference/workflow/get-attributes
 ---
-
-<Callout type="warn">
-  Attributes are a V1 preview feature. The API is stable; the observability
-  UI is still rolling out, and value types are limited to strings.
-</Callout>
 
 Attributes are small, plaintext key-value pairs you can attach to a workflow run. They're meant for the data you want to see, search, and filter on in observability — things like `tenantId`, `orderId`, `phase`, `region`, `customerEmail`. They are **not** meant for arbitrary structured data; for that, use step inputs/outputs.
 

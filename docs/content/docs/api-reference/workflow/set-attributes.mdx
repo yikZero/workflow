@@ -2,6 +2,7 @@
 title: setAttributes
 description: Set multiple attributes on the current workflow run in a single batched event.
 type: reference
+preRelease: true
 summary: Use setAttributes to record several key-value attributes at once with merge semantics.
 prerequisites:
   - /docs/foundations/workflows-and-steps
@@ -11,11 +12,6 @@ related:
   - /docs/api-reference/workflow/set-attribute
   - /docs/api-reference/workflow/get-attributes
 ---
-
-<Callout type="warn">
-  Attributes are a V1 preview feature. The API is stable but the
-  observability/filter UI is still rolling out.
-</Callout>
 
 Sets multiple attributes on the current workflow run in a single batched event. Use this whenever you have several attributes to write at the same point in time — it produces one event with multiple changes, instead of one event per attribute.
 
