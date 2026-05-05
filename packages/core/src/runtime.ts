@@ -886,6 +886,49 @@ export function workflowEntrypoint(
                           | (typeof pendingSteps)[number]
                           | undefined = ownedPendingSteps[0];
 
+                        // Eagerly schedule the wait timer's continuation
+                        // BEFORE we inline-execute the step. Inline `await
+                        // executeStep(...)` blocks the handler for the full
+                        // step duration; if the wait timer were only encoded
+                        // as the function's return value (`{ timeoutSeconds
+                        // }`), it would not fire until the inline step
+                        // finished. That defeats `Promise.race(step, sleep)`
+                        // semantics whenever the sleep is shorter than the
+                        // step. Queueing a delayed self-message now lets the
+                        // wait timer fire in a separate function invocation
+                        // while the step is still running, so the parallel
+                        // replay can observe `wait_completed` and resolve
+                        // the race correctly.
+                        //
+                        // Only the inline executor needs to do this — if
+                        // we're not inlining (no owned step), the
+                        // `{ timeoutSeconds }` return below already conveys
+                        // the wait timer to the queue without blocking.
+                        //
+                        // Note: this scheduled continuation is in addition
+                        // to the `{ timeoutSeconds }` return value below.
+                        // Duplicate continuations are harmless — each replay
+                        // observes the current event log and either advances
+                        // the workflow, exits on a terminal event, or no-ops.
+                        if (
+                          inlineStep &&
+                          suspensionResult.timeoutSeconds !== undefined
+                        ) {
+                          const traceCarrier = await serializeTraceCarrier();
+                          await queueMessage(
+                            world,
+                            getWorkflowQueueName(workflowName),
+                            {
+                              runId,
+                              traceCarrier,
+                              requestedAt: new Date(),
+                            },
+                            {
+                              delaySeconds: suspensionResult.timeoutSeconds,
+                            }
+                          );
+                        }
+
                         // Queue every pending step except the one we're
                         // executing inline. This mirrors V1's unconditional
                         // enqueue-with-idempotency pattern and is what makes

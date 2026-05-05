@@ -230,7 +230,11 @@ When an inline step fails with retries remaining:
 
 ### Mixed Suspensions
 
-A suspension may contain steps, hooks, and waits simultaneously. The handler creates events for all, executes any pending step inline, and returns with the wait timeout if applicable. The workflow will re-suspend on next replay for the still-pending hooks/waits.
+A suspension may contain steps, hooks, and waits simultaneously. The handler creates events for all, then executes any pending step inline and returns with the wait timeout if applicable. The workflow will re-suspend on next replay for the still-pending hooks/waits.
+
+When a suspension contains **both pending steps and at least one wait**, the handler additionally enqueues a delayed self-message **before** starting inline step execution. The delay is the wait's `timeoutSeconds`. The reason: inline `await executeStep(...)` blocks the handler for the full step duration, but `wait_completed` events are only created on the *next* loop iteration's "complete elapsed waits" pass — so a longer-running step would prevent the wait from firing on time, breaking `Promise.race(step, sleep)` semantics. Pre-scheduling the wait continuation lets the wait timer fire in a separate function invocation while the inline step is still running. That parallel invocation observes the elapsed wait, writes `wait_completed`, replays, resolves the race with `'sleep'`, and completes the run. The original (still-running inline) invocation eventually finishes its step, sees `run_completed` on the next loop iteration, and exits cleanly.
+
+This pre-schedule is in addition to the `{ timeoutSeconds }` return value the handler emits for the same suspension. Duplicate continuations are harmless: every replay observes the current event log and either advances the workflow, exits on a terminal event, or no-ops.
 
 ### Hook Conflicts
 
