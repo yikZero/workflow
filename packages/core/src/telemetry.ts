@@ -62,8 +62,15 @@ export async function withTraceContext<T>(
 }
 
 const OtelApi = once(async () => {
+  // The specifier is built at runtime so Rollup/Vite/Turbopack can't
+  // statically resolve it: `@opentelemetry/api` is an optional peer
+  // dependency, and bundlers that statically follow `import('…')` strings
+  // fail the build (e.g. SvelteKit's Rollup pipeline) when the consumer
+  // hasn't installed it. The dynamic specifier preserves the optional
+  // semantics — present at runtime → loads, absent → caught and disabled.
+  const specifier = ['@opentelemetry', 'api'].join('/');
   try {
-    return await import('@opentelemetry/api');
+    return (await import(specifier)) as typeof api;
   } catch {
     runtimeLogger.info('OpenTelemetry not available, tracing will be disabled');
     return null;
