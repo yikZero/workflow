@@ -566,30 +566,14 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
           {/* Panel header */}
           <div className="flex-shrink-0 px-4 pt-4 pb-3">
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <span className="text-[15px] font-semibold text-gray-1000 truncate block">
+              <div className="min-w-0 flex-1 flex flex-col gap-1">
+                <span className="text-label-14 font-medium text-gray-1000 truncate block">
                   {selectedSpanName}
                 </span>
                 {selectedResourceId && (
-                  <div className="mt-1 flex items-center gap-2">
-                    {selectedResource && (
-                      <span
-                        className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none shrink-0 ${
-                          selectedResource === 'step'
-                            ? 'bg-green-200 text-green-900'
-                            : selectedResource === 'run'
-                              ? 'bg-blue-200 text-blue-900'
-                              : selectedResource === 'hook'
-                                ? 'bg-yellow-200 text-yellow-900'
-                                : 'bg-gray-200 text-gray-900'
-                        }`}
-                      >
-                        {selectedResource.charAt(0).toUpperCase() +
-                          selectedResource.slice(1)}
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2">
                     <div
-                      className="flex items-center gap-1 text-[13px] font-mono text-gray-700 min-w-0"
+                      className="flex items-center gap-1 text-label-13 font-mono text-gray-900 min-w-0"
                       title={selectedResourceId}
                     >
                       <span className="truncate">{selectedResourceId}</span>
@@ -604,7 +588,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
               </div>
               <button
                 type="button"
-                className="p-1 rounded-md text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors shrink-0"
+                className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors shrink-0"
                 onClick={clearActiveSpan}
               >
                 <X className="w-4 h-4" />

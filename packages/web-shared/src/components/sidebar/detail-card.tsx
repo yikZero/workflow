@@ -1,5 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { cn } from '../../lib/utils';
 
 export function DetailCard({
   summary,
@@ -23,7 +24,7 @@ export function DetailCard({
   if (disabled) {
     return (
       <div
-        className={`rounded-md border px-2.5 py-1.5 text-xs ${summaryClassName ?? ''}`}
+        className={`border px-2.5 py-1.5 text-xs ${summaryClassName ?? ''}`}
         style={{
           borderColor: 'var(--ds-gray-300)',
           backgroundColor: 'var(--ds-gray-100)',
@@ -43,13 +44,10 @@ export function DetailCard({
       onToggle={(e) => onToggle?.((e.target as HTMLDetailsElement).open)}
     >
       <summary
-        className={`cursor-pointer rounded-md border px-2.5 py-1.5 text-xs hover:brightness-95 [&::-webkit-details-marker]:hidden ${summaryClassName ?? ''}`}
-        style={{
-          borderColor: 'var(--ds-gray-300)',
-          backgroundColor: 'var(--ds-gray-100)',
-          color: 'var(--ds-gray-900)',
-          listStyle: 'none',
-        }}
+        className={cn(
+          'list-none cursor-pointer px-3 py-4 hover:brightness-95 [&::-webkit-details-marker]:hidden bg-background-200',
+          summaryClassName
+        )}
       >
         <span className="flex items-center gap-1.5">
           <ChevronRight
@@ -59,7 +57,7 @@ export function DetailCard({
           {summary}
         </span>
       </summary>
-      <div className={`mt-2 ${contentClassName ?? ''}`}>{children}</div>
+      <div className={`${contentClassName ?? ''}`}>{children}</div>
     </details>
   );
 }

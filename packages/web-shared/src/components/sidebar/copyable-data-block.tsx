@@ -23,10 +23,7 @@ const serializeForClipboard = (value: unknown): string => {
 export function CopyableDataBlock({ data }: { data: unknown }) {
   const toast = useToast();
   return (
-    <div
-      className="relative overflow-x-auto rounded-md border p-3"
-      style={{ borderColor: 'var(--ds-gray-300)' }}
-    >
+    <div className="relative overflow-x-auto p-3">
       <button
         type="button"
         aria-label="Copy data"
