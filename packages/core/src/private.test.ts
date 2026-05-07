@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFERRED_CHECK_DELAY_MS } from './events-consumer.js';
 import {
   scheduleWhenIdle,
@@ -7,8 +7,8 @@ import {
 
 /**
  * Builds a minimal WorkflowOrchestratorContext containing only the fields
- * that scheduleWhenIdle reads. Other fields are intentionally unused; the
- * cast keeps the harness narrow without dragging in EventsConsumer/VM setup.
+ * scheduleWhenIdle reads. Other fields are intentionally absent; the cast keeps
+ * the harness narrow without dragging in EventsConsumer/VM setup.
  */
 function makeCtx(): WorkflowOrchestratorContext {
   return {
@@ -18,99 +18,104 @@ function makeCtx(): WorkflowOrchestratorContext {
 }
 
 /**
- * Yields long enough for a finite chain of microtasks + setTimeout(0) hops to
- * settle. scheduleWhenIdle's "no deliveries observed" fast path completes in
- * a small constant number of these hops, so 30ms is plenty of headroom while
- * still being well under DEFERRED_CHECK_DELAY_MS (100ms) — that gap is what
- * makes "fast vs deferred" distinguishable here.
+ * Replaces `ctx.pendingDeliveries` with a getter that returns each value in
+ * `sequence` on successive reads, then sticks at the final value. This lets us
+ * simulate "delivery saw 1, then drained to 0" without driving multiple
+ * polling iterations under fake timers — every 0ms re-poll while
+ * `pendingDeliveries > 0` schedules a fresh 0ms timer, which would trip
+ * vitest's loopLimit safeguard if we tried to advance through it.
  */
-function settle(ms = 30): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function stubPendingDeliveries(
+  ctx: WorkflowOrchestratorContext,
+  sequence: number[]
+): void {
+  let i = 0;
+  Object.defineProperty(ctx, 'pendingDeliveries', {
+    configurable: true,
+    get: () => {
+      const value =
+        i < sequence.length ? sequence[i] : sequence[sequence.length - 1];
+      i++;
+      return value;
+    },
+  });
 }
 
+// Pick a quiet step that drives the 0ms-timer/microtask chain to completion
+// without crossing the propagation delay. ~half of DEFERRED_CHECK_DELAY_MS is
+// well past any internal 0ms hops but well below the deferred fire time.
+const DRAIN_MS = Math.floor(DEFERRED_CHECK_DELAY_MS / 2);
+
 describe('scheduleWhenIdle', () => {
-  it('fires immediately on the fast path when no deliveries are ever observed', async () => {
-    const ctx = makeCtx();
-    const fn = vi.fn();
-
-    const start = Date.now();
-    scheduleWhenIdle(ctx, fn);
-
-    await settle();
-    const elapsed = Date.now() - start;
-
-    expect(fn).toHaveBeenCalledTimes(1);
-    expect(elapsed).toBeLessThan(DEFERRED_CHECK_DELAY_MS);
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it('defers firing by DEFERRED_CHECK_DELAY_MS when an idle cycle observed deliveries', async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fires immediately on the fast path when no deliveries are observed', async () => {
     const ctx = makeCtx();
-    ctx.pendingDeliveries = 1;
     const fn = vi.fn();
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    scheduleWhenIdle(ctx, fn);
+    expect(fn).not.toHaveBeenCalled();
+
+    // Drive the entire 0ms chain. fn must fire well before
+    // DEFERRED_CHECK_DELAY_MS, and the propagation timer must never have been
+    // armed (since no deliveries were ever observed).
+    await vi.advanceTimersByTimeAsync(DRAIN_MS);
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    const deferredCalls = timerSpy.mock.calls.filter(
+      ([, delay]) => delay === DEFERRED_CHECK_DELAY_MS
+    );
+    expect(deferredCalls).toHaveLength(0);
+  });
+
+  it('defers firing by DEFERRED_CHECK_DELAY_MS once an idle cycle observed deliveries', async () => {
+    const ctx = makeCtx();
+    // First poll sees 1 (arms sawPendingDeliveries); subsequent reads see 0
+    // so the polling loop terminates and fireWhenReady is reached.
+    stubPendingDeliveries(ctx, [1, 0]);
+    const fn = vi.fn();
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
 
     scheduleWhenIdle(ctx, fn);
 
-    // Let the polling loop observe pendingDeliveries > 0 and arm
-    // sawPendingDeliveries before we drain the counter.
-    await settle();
+    // Drive the chain past every 0ms hop but stay inside the propagation
+    // window. fn must still be pending while the deferred timer ticks.
+    await vi.advanceTimersByTimeAsync(DRAIN_MS);
     expect(fn).not.toHaveBeenCalled();
+    const deferredCalls = timerSpy.mock.calls.filter(
+      ([, delay]) => delay === DEFERRED_CHECK_DELAY_MS
+    );
+    expect(deferredCalls.length).toBeGreaterThan(0);
 
-    ctx.pendingDeliveries = 0;
-
-    // After the drain completes the scheduler reaches fireWhenReady, which
-    // (because deliveries were observed) waits REPLAY_PROPAGATION_DELAY_MS.
-    // Verify it is still pending for a window strictly shorter than the delay.
-    await settle(DEFERRED_CHECK_DELAY_MS / 2);
-    expect(fn).not.toHaveBeenCalled();
-
-    // Cross past the delay; suspension fires.
-    await settle(DEFERRED_CHECK_DELAY_MS);
+    // Cross the propagation delay; fn fires.
+    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it('re-loops when pendingDeliveries reappears during the deferred wait', async () => {
     const ctx = makeCtx();
-    ctx.pendingDeliveries = 1;
+    // First poll sees 1 (arms saw), drains to 0 (enters deferred wait), then
+    // a new delivery (1) reappears when the deferred timer fires, and
+    // finally drains to 0 again.
+    stubPendingDeliveries(ctx, [1, 0, 0, 1, 0]);
     const fn = vi.fn();
 
     scheduleWhenIdle(ctx, fn);
 
-    // Initial wave: arm sawPendingDeliveries, then drain to 0 so
-    // fireWhenReady schedules the deferred timer.
-    await settle();
-    ctx.pendingDeliveries = 0;
-    await settle();
+    // First deferred window: timer fires, sees a fresh delivery, re-enters
+    // the polling loop instead of suspending.
+    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS + DRAIN_MS);
     expect(fn).not.toHaveBeenCalled();
 
-    // While the deferred timer is armed, a new replay delivery starts. When
-    // the timer fires it must observe pendingDeliveries > 0 and loop instead
-    // of suspending.
-    ctx.pendingDeliveries = 2;
-    await settle(DEFERRED_CHECK_DELAY_MS + 20);
-    expect(fn).not.toHaveBeenCalled();
-
-    // Drain again; eventually the scheduler reaches fireWhenReady once more
-    // and fires after another deferred window.
-    ctx.pendingDeliveries = 0;
-    await settle(DEFERRED_CHECK_DELAY_MS * 2 + 30);
-    expect(fn).toHaveBeenCalledTimes(1);
-  });
-
-  it('continues to wait while pendingDeliveries stays > 0 across the initial poll', async () => {
-    const ctx = makeCtx();
-    ctx.pendingDeliveries = 1;
-    const fn = vi.fn();
-
-    scheduleWhenIdle(ctx, fn);
-
-    // pendingDeliveries never reaches 0 within this window, so the loop
-    // must keep polling and never call fn.
-    await settle(DEFERRED_CHECK_DELAY_MS * 2);
-    expect(fn).not.toHaveBeenCalled();
-
-    // Drain; fn fires after the deferred propagation window.
-    ctx.pendingDeliveries = 0;
-    await settle(DEFERRED_CHECK_DELAY_MS * 2);
+    // Second deferred window: deliveries are drained, fn fires.
+    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS * 2);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });

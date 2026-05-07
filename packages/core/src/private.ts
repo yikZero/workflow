@@ -16,6 +16,12 @@ import type { Serializable } from './schemas.js';
  * `DEFERRED_CHECK_DELAY_MS` so the two propagation guards share a single
  * source of truth today, but they are conceptually separate budgets and could
  * be tuned independently if the failure modes ever diverge.
+ *
+ * TODO: Replace this wall-clock heuristic with a deterministic counter that
+ * tracks VM-resumption work in flight (e.g. promises waiting to cross the VM
+ * boundary into the workflow context, plus any follow-up `subscribe()` calls
+ * not yet registered). Once such a counter exists, `scheduleWhenIdle` can wait
+ * on it directly instead of guessing how long propagation needs.
  */
 const REPLAY_PROPAGATION_DELAY_MS = DEFERRED_CHECK_DELAY_MS;
 
