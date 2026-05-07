@@ -131,7 +131,7 @@ async function verifyWithRetries(item: number, resultIndex: number) {
   }
 }
 
-export async function scheduleWhenIdleReproWorkflow() {
+export async function concurrentMultiWaveWorkflow() {
   'use workflow';
 
   await lifecycleMarkerStep('started');

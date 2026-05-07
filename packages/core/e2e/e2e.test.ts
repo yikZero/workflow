@@ -3364,7 +3364,7 @@ describe('e2e', () => {
         await getWorkflowMetadata(
           deploymentUrl,
           'workflows/96_many_steps.ts',
-          'scheduleWhenIdleReproWorkflow'
+          'concurrentMultiWaveWorkflow'
         ),
         []
       );
