@@ -3340,6 +3340,42 @@ describe('e2e', () => {
     }
   );
 
+  /**
+   * Regression test for the scheduleWhenIdle premature-suspension bug.
+   *
+   * 50 concurrent items each do search → addResult (two sequential steps).
+   * The search steps complete at varying times, creating a state where some
+   * items have advanced to addResult while others are still searching. On the
+   * next replay the scheduleWhenIdle check can observe pendingDeliveries === 0
+   * in the gap between "last search hydration completes" and "VM code calls
+   * useStep(addResult)", firing WorkflowSuspension before the addResult
+   * callback is registered and leaving addResult's step_created unclaimed.
+   *
+   * Expected (after fix): status === 'completed', completed === 50.
+   * Before fix: run can fail with WorkflowRuntimeError "Unconsumed event in
+   * event log" for one of the addResult steps.
+   */
+  test(
+    'scheduleWhenIdle - 50 concurrent sequential steps complete without unconsumed event error',
+    { timeout: 120_000 },
+    async () => {
+      const run = await start(
+        await getWorkflowMetadata(
+          deploymentUrl,
+          'workflows/96_many_steps.ts',
+          'scheduleWhenIdleReproWorkflow'
+        ),
+        []
+      );
+
+      const returnValue = await run.returnValue;
+      expect(returnValue).toEqual({ totalItems: 50, completed: 50 });
+
+      const { json } = await cliInspectJson(`runs ${run.runId}`);
+      expect(json.status).toBe('completed');
+    }
+  );
+
   test(
     'distributedAbortController - reconnect to existing controller',
     { timeout: 60_000 },
