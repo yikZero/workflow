@@ -160,14 +160,33 @@ export interface WorkflowOrchestratorContext {
  * Schedule a callback to fire only after all pending data deliveries
  * (step results, hook payloads) and async deserialization have completed.
  * Uses a polling loop: setTimeout(0) → check pendingDeliveries →
- * if > 0, wait for promiseQueue → repeat. This handles the multi-round
- * delivery pattern where each hook payload delivery cycle appends new
- * async work to the promiseQueue.
+ * if > 0, wait for promiseQueue → repeat.
+ *
+ * When pendingDeliveries reaches 0, do not fire immediately. Promise
+ * resolutions can resume workflow code across the VM boundary and register
+ * follow-up work after the host-side delivery has already decremented the
+ * counter. Yield once, then re-drain promiseQueue before deciding the workflow
+ * is truly idle.
  */
 export function scheduleWhenIdle(
   ctx: WorkflowOrchestratorContext,
   fn: () => void
 ): void {
+  const runWhenStillIdle = () => {
+    ctx.promiseQueue
+      .then(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+      .then(() => ctx.promiseQueue)
+      .then(() => {
+        if (ctx.pendingDeliveries > 0) {
+          ctx.promiseQueue.then(() => {
+            setTimeout(check, 0);
+          });
+        } else {
+          fn();
+        }
+      });
+  };
+
   const check = () => {
     if (ctx.pendingDeliveries > 0) {
       // Still delivering data — wait for queue to drain, then re-check
@@ -175,7 +194,7 @@ export function scheduleWhenIdle(
         setTimeout(check, 0);
       });
     } else {
-      fn();
+      runWhenStillIdle();
     }
   };
   setTimeout(check, 0);

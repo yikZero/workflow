@@ -1,4 +1,5 @@
 ---
+'@workflow/core': patch
 ---
 
-Add e2e regression test for the `scheduleWhenIdle` premature-suspension race that fires `WorkflowRuntimeError: Unconsumed event in event log` under high-concurrency parallel-then-sequential step patterns.
+Fix premature workflow suspension while replay is still propagating hydrated step results across the VM boundary.

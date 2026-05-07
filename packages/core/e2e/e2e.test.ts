@@ -3343,20 +3343,19 @@ describe('e2e', () => {
   /**
    * Regression test for the scheduleWhenIdle premature-suspension bug.
    *
-   * Mirrors the user's production workflow shape:
-   * initial setup steps, then Promise.all([populateName, ...items.map(...)])
-   * where each item runs search repetitions, add-result, project-results,
-   * source attempts, date lookup, and status update steps. A few search
-   * repetitions lag 10-15s behind the rest of the batch.
+   * Stresses replay with setup steps followed by a large outer Promise.all
+   * where each item advances through multiple sequential waves. A few
+   * phase-one steps lag 10-15s behind the rest of the batch, while fast items
+   * continue through later waves.
    *
    * Expected (after fix): status === 'completed', completed === 45.
    * Before fix: run can fail with WorkflowRuntimeError "Unconsumed event in
-   * event log" for one of the addResult-equivalent steps because
+   * event log" for one of the next-wave steps because
    * scheduleWhenIdle fires WorkflowSuspension in the gap between fast
    * hydrations completing and the next useStep callback registering.
    */
   test(
-    'scheduleWhenIdle - production-shaped concurrent multi-wave workflow completes without unconsumed event error',
+    'scheduleWhenIdle - concurrent multi-wave workflow completes without unconsumed event error',
     { timeout: 600_000 },
     async () => {
       const run = await start(

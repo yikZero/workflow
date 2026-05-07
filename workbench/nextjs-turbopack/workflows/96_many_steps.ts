@@ -25,110 +25,107 @@ export async function twoHundredStepsWorkflow() {
 // Reproduction workflow for the scheduleWhenIdle premature-suspension bug.
 // ---------------------------------------------------------------------------
 //
-// Mirrors the user's production workflow shape:
-//   update status -> check substitution -> create project -> Promise.all([
-//     populateName,
+// Generic stress workflow for high-concurrency replay:
+//   setup -> validate -> create resource -> Promise.all([
+//     metadata task,
 //     ...items.map(async () => {
-//       search repetitions -> add-result -> get project results ->
-//       source attempts -> date -> status fetch/update
+//       parallel phase-one work -> phase-two aggregate -> list items ->
+//       per-item verification attempts -> shared marker -> final fan-out
 //     })
-//   ]) -> update status
+//   ]) -> finalize
 //
 // The important shape is a large outer Promise.all where each item advances
 // through several sequential waves while a few search repetitions are slow
 // stragglers. Those stragglers schedule WorkflowSuspension while fast items are
 // still hydrating results and registering next-wave callbacks.
 
-async function updateWorkflowRunStatusStep(status: string) {
+async function lifecycleMarkerStep(status: string) {
   'use step';
   await new Promise((r) => setTimeout(r, 5));
   return { status };
 }
 
-async function checkSubstitutionStep() {
+async function validateInputsStep() {
   'use step';
-  return { variableNames: ['region', 'segment'] };
+  return { dimensions: ['alpha', 'beta'] };
 }
 
-async function createProjectStep() {
+async function createResourceStep() {
   'use step';
   await new Promise((r) => setTimeout(r, 10));
-  return { projectId: 'project_schedule_when_idle_repro' };
+  return { resourceId: 'resource_schedule_when_idle_stress' };
 }
 
-async function populateNameStep(projectId: string) {
+async function metadataStep(resourceId: string) {
   'use step';
   await new Promise((r) => setTimeout(r, 30));
-  return { projectId, name: 'Schedule When Idle Repro' };
+  return { resourceId, name: 'Schedule When Idle Stress' };
 }
 
-async function runAgentStep(
-  agentSlug: 'search' | 'add-result' | 'source',
+async function phaseWorkStep(
+  phase: 'phase-one' | 'phase-two' | 'verify',
   item: number,
-  repOrResult = 0
+  variant = 0
 ) {
   'use step';
 
-  if (agentSlug === 'search') {
-    const isStraggler = item % 17 === 3 && repOrResult === 0;
+  if (phase === 'phase-one') {
+    const isStraggler = item % 17 === 3 && variant === 0;
     const delay = isStraggler
       ? 10000 + ((item * 31) % 5000)
-      : 30 + ((item * 11 + repOrResult * 7) % 80);
+      : 30 + ((item * 11 + variant * 7) % 80);
     await new Promise((r) => setTimeout(r, delay));
     return {
-      agentSlug,
+      phase,
       item,
-      messages: [`search_${item}_${repOrResult}`],
+      values: [`phase_one_${item}_${variant}`],
     };
   }
 
   const delay =
-    agentSlug === 'add-result'
+    phase === 'phase-two'
       ? 30 + ((item * 7) % 50)
-      : 15 + ((item * 5 + repOrResult * 3) % 30);
+      : 15 + ((item * 5 + variant * 3) % 30);
   await new Promise((r) => setTimeout(r, delay));
-  return { agentSlug, item, messages: [`${agentSlug}_${item}_${repOrResult}`] };
+  return { phase, item, values: [`${phase}_${item}_${variant}`] };
 }
 
-async function getProjectResultsStep(item: number) {
+async function listRelatedItemsStep(item: number) {
   'use step';
   await new Promise((r) => setTimeout(r, 20 + ((item * 13) % 40)));
   return { item, results: [`r_${item}_a`, `r_${item}_b`] };
 }
 
-async function hasExaSourceLinkStep(item: number, resultIndex: number) {
+async function verifyRelatedItemStep(item: number, resultIndex: number) {
   'use step';
   await new Promise((r) => setTimeout(r, 5 + ((item + resultIndex) % 10)));
   return true;
 }
 
-async function getTodayStep() {
+async function sharedMarkerStep() {
   'use step';
   await new Promise((r) => setTimeout(r, 5));
   return '2026-05-07';
 }
 
-async function updateResultDataStep(item: number, resultId: string) {
+async function finalUpdateStep(item: number, resultId: string) {
   'use step';
   await new Promise((r) => setTimeout(r, 5 + ((item * 2) % 15)));
   return { item, resultId, updated: true };
 }
 
-async function fetchStatusStep(item: number, resultId: string) {
+async function finalReadStep(item: number, resultId: string) {
   'use step';
   await new Promise((r) => setTimeout(r, 10 + ((item * 3) % 20)));
   return { item, resultId, status: 'active' };
 }
 
-async function runExaSourceForResultInCurrentRun(
-  item: number,
-  resultIndex: number
-) {
+async function verifyWithRetries(item: number, resultIndex: number) {
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await runAgentStep('source', item, resultIndex);
-    const hasSourceLink = await hasExaSourceLinkStep(item, resultIndex);
-    if (hasSourceLink) {
+    await phaseWorkStep('verify', item, resultIndex);
+    const verified = await verifyRelatedItemStep(item, resultIndex);
+    if (verified) {
       return;
     }
   }
@@ -137,50 +134,50 @@ async function runExaSourceForResultInCurrentRun(
 export async function scheduleWhenIdleReproWorkflow() {
   'use workflow';
 
-  await updateWorkflowRunStatusStep('started');
-  await checkSubstitutionStep();
-  const { projectId } = await createProjectStep();
+  await lifecycleMarkerStep('started');
+  await validateInputsStep();
+  const { resourceId } = await createResourceStep();
 
-  const populateName = populateNameStep(projectId);
+  const metadata = metadataStep(resourceId);
 
   const N_ITEMS = 45;
   const REPS_PER_ITEM = 3;
 
   await Promise.all([
-    populateName,
+    metadata,
     ...Array.from({ length: N_ITEMS }, async (_, i) => {
       const repetitionOutcomes = await Promise.allSettled(
         Array.from({ length: REPS_PER_ITEM }, (_, rep) =>
-          runAgentStep('search', i, rep)
+          phaseWorkStep('phase-one', i, rep)
         )
       );
-      const messages = repetitionOutcomes.flatMap((outcome) =>
-        outcome.status === 'fulfilled' ? outcome.value.messages : []
+      const values = repetitionOutcomes.flatMap((outcome) =>
+        outcome.status === 'fulfilled' ? outcome.value.values : []
       );
 
-      await runAgentStep('add-result', i, messages.length);
+      await phaseWorkStep('phase-two', i, values.length);
 
-      const projectResults = await getProjectResultsStep(i);
+      const relatedItems = await listRelatedItemsStep(i);
 
       await Promise.allSettled(
-        projectResults.results.map((_, resultIndex) =>
-          runExaSourceForResultInCurrentRun(i, resultIndex)
+        relatedItems.results.map((_, resultIndex) =>
+          verifyWithRetries(i, resultIndex)
         )
       );
 
-      const today = await getTodayStep();
+      const marker = await sharedMarkerStep();
       await Promise.allSettled(
-        projectResults.results.map(async (resultId) => {
-          await fetchStatusStep(i, resultId);
-          await updateResultDataStep(i, resultId);
+        relatedItems.results.map(async (resultId) => {
+          await finalReadStep(i, resultId);
+          await finalUpdateStep(i, resultId);
         })
       );
 
-      return { item: i, today, ok: true };
+      return { item: i, marker, ok: true };
     }),
   ]);
 
-  await updateWorkflowRunStatusStep('completed');
+  await lifecycleMarkerStep('completed');
 
   return { totalItems: N_ITEMS, completed: N_ITEMS };
 }
