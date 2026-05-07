@@ -105,14 +105,12 @@ function EventItem({
     hour: 'numeric',
     minute: 'numeric',
     second: 'numeric',
-    fractionalSecondDigits: 3,
   });
 
   const displayPayload = isLoading ? loadedData : mergedDisplay;
 
   return (
     <DetailCard
-      summaryClassName="text-base"
       summary={
         <div className="flex w-full items-center justify-between gap-3">
           <span className="font-medium capitalize text-gray-1000 text-label-14 font-medium">
@@ -175,7 +173,7 @@ function EventItem({
 
       {/* Event data */}
       {displayPayload != null && (
-        <div className="mt-2">
+        <div>
           <EventDataBlock eventType={event.eventType} data={displayPayload} />
         </div>
       )}
