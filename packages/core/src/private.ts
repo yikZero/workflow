@@ -3,7 +3,10 @@
  */
 
 import type { CryptoKey } from './encryption.js';
-import type { EventsConsumer } from './events-consumer.js';
+import {
+  DEFERRED_CHECK_DELAY_MS,
+  type EventsConsumer,
+} from './events-consumer.js';
 import type { QueueItem } from './global.js';
 import type { Serializable } from './schemas.js';
 
@@ -167,28 +170,56 @@ export interface WorkflowOrchestratorContext {
  * follow-up work after the host-side delivery has already decremented the
  * counter. Yield once, then re-drain promiseQueue before deciding the workflow
  * is truly idle.
+ *
+ * If this schedule cycle actually observed in-flight deliveries, add the same
+ * small non-zero delay used by EventsConsumer before suspending. That preserves
+ * the fast path for ordinary "new work needs to be scheduled" suspensions while
+ * giving replay propagation enough time to register follow-up callbacks after
+ * hydrated results cross the VM boundary.
  */
 export function scheduleWhenIdle(
   ctx: WorkflowOrchestratorContext,
   fn: () => void
 ): void {
+  let sawPendingDeliveries = false;
+
+  const fireWhenReady = () => {
+    if (!sawPendingDeliveries) {
+      fn();
+      return;
+    }
+
+    setTimeout(() => {
+      if (ctx.pendingDeliveries > 0) {
+        sawPendingDeliveries = true;
+        ctx.promiseQueue.then(() => {
+          setTimeout(check, 0);
+        });
+      } else {
+        fn();
+      }
+    }, DEFERRED_CHECK_DELAY_MS);
+  };
+
   const runWhenStillIdle = () => {
     ctx.promiseQueue
       .then(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
       .then(() => ctx.promiseQueue)
       .then(() => {
         if (ctx.pendingDeliveries > 0) {
+          sawPendingDeliveries = true;
           ctx.promiseQueue.then(() => {
             setTimeout(check, 0);
           });
         } else {
-          fn();
+          fireWhenReady();
         }
       });
   };
 
   const check = () => {
     if (ctx.pendingDeliveries > 0) {
+      sawPendingDeliveries = true;
       // Still delivering data — wait for queue to drain, then re-check
       ctx.promiseQueue.then(() => {
         setTimeout(check, 0);
