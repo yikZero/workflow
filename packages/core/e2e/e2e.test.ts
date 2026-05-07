@@ -3343,21 +3343,19 @@ describe('e2e', () => {
   /**
    * Regression test for the scheduleWhenIdle premature-suspension bug.
    *
-   * 50 concurrent items each do search → addResult (two sequential steps).
-   * The search steps complete at varying times, creating a state where some
-   * items have advanced to addResult while others are still searching. On the
-   * next replay the scheduleWhenIdle check can observe pendingDeliveries === 0
-   * in the gap between "last search hydration completes" and "VM code calls
-   * useStep(addResult)", firing WorkflowSuspension before the addResult
-   * callback is registered and leaving addResult's step_created unclaimed.
+   * Mirrors the failing production run wrun_01KQ05J17ZJHGZFRYZ20QM1DBS:
+   * 80 concurrent items running 5 waves of nested sequential steps, with a
+   * few stragglers per wave 1 that lag 10-15s behind the rest of the batch.
    *
-   * Expected (after fix): status === 'completed', completed === 50.
+   * Expected (after fix): status === 'completed', completed === 80.
    * Before fix: run can fail with WorkflowRuntimeError "Unconsumed event in
-   * event log" for one of the addResult steps.
+   * event log" for one of the addResult-equivalent steps because
+   * scheduleWhenIdle fires WorkflowSuspension in the gap between fast
+   * hydrations completing and the next useStep callback registering.
    */
   test(
-    'scheduleWhenIdle - 50 concurrent sequential steps complete without unconsumed event error',
-    { timeout: 120_000 },
+    'scheduleWhenIdle - 80 concurrent multi-wave items with stragglers complete without unconsumed event error',
+    { timeout: 600_000 },
     async () => {
       const run = await start(
         await getWorkflowMetadata(
@@ -3369,7 +3367,7 @@ describe('e2e', () => {
       );
 
       const returnValue = await run.returnValue;
-      expect(returnValue).toEqual({ totalItems: 50, completed: 50 });
+      expect(returnValue).toEqual({ totalItems: 80, completed: 80 });
 
       const { json } = await cliInspectJson(`runs ${run.runId}`);
       expect(json.status).toBe('completed');
