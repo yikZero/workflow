@@ -25,38 +25,69 @@ export async function twoHundredStepsWorkflow() {
 // Reproduction workflow for the scheduleWhenIdle premature-suspension bug.
 // ---------------------------------------------------------------------------
 //
-// Mirrors the failing production run wrun_01KQ05J17ZJHGZFRYZ20QM1DBS:
-//   - 80 concurrent items in Promise.all (production had 45 with heavier
-//     payloads, 80 with light payloads gives equivalent suspension density)
-//   - Each item runs 5 nested waves of steps:
-//       1. parallel search repetitions per item
-//       2. sequential addResult (the "TA0-equivalent" step that was unclaimed)
-//       3. sequential getProjectResults
-//       4. parallel exa-source loop
-//       5. sequential getToday + parallel fetchStatus
-//   - A few items per wave 1 are stragglers — their searchStep takes 10–15s
-//     while everything else completes in <100ms. This is the timing skew
-//     pattern that triggers scheduleWhenIdle to fire WorkflowSuspension
-//     between the fast hydration wave completing and the next useStep
-//     callback registering, leaving addResult's step_created unclaimed.
+// Mirrors the user's production workflow shape:
+//   update status -> check substitution -> create project -> Promise.all([
+//     populateName,
+//     ...items.map(async () => {
+//       search repetitions -> add-result -> get project results ->
+//       source attempts -> date -> status fetch/update
+//     })
+//   ]) -> update status
+//
+// The important shape is a large outer Promise.all where each item advances
+// through several sequential waves while a few search repetitions are slow
+// stragglers. Those stragglers schedule WorkflowSuspension while fast items are
+// still hydrating results and registering next-wave callbacks.
 
-async function searchStep(item: number, rep: number) {
+async function updateWorkflowRunStatusStep(status: string) {
   'use step';
-  // Stragglers (1 in 17 items) take 10–15s — matches the T97/T9T/T9V
-  // pattern from the production event log where 3 of ~250 steps lagged
-  // far behind the others.
-  const isStraggler = item % 17 === 3;
-  const delay = isStraggler
-    ? 10000 + ((item * 31) % 5000)
-    : 30 + ((item * 11 + rep * 7) % 80);
-  await new Promise((r) => setTimeout(r, delay));
-  return { item, rep, result: `search_${item}_${rep}` };
+  await new Promise((r) => setTimeout(r, 5));
+  return { status };
 }
 
-async function addResultStep(item: number, searchResults: string[]) {
+async function checkSubstitutionStep() {
   'use step';
-  await new Promise((r) => setTimeout(r, 30 + ((item * 7) % 50)));
-  return { item, added: true, count: searchResults.length };
+  return { variableNames: ['region', 'segment'] };
+}
+
+async function createProjectStep() {
+  'use step';
+  await new Promise((r) => setTimeout(r, 10));
+  return { projectId: 'project_schedule_when_idle_repro' };
+}
+
+async function populateNameStep(projectId: string) {
+  'use step';
+  await new Promise((r) => setTimeout(r, 30));
+  return { projectId, name: 'Schedule When Idle Repro' };
+}
+
+async function runAgentStep(
+  agentSlug: 'search' | 'add-result' | 'source',
+  item: number,
+  repOrResult = 0
+) {
+  'use step';
+
+  if (agentSlug === 'search') {
+    const isStraggler = item % 17 === 3 && repOrResult === 0;
+    const delay = isStraggler
+      ? 10000 + ((item * 31) % 5000)
+      : 30 + ((item * 11 + repOrResult * 7) % 80);
+    await new Promise((r) => setTimeout(r, delay));
+    return {
+      agentSlug,
+      item,
+      messages: [`search_${item}_${repOrResult}`],
+    };
+  }
+
+  const delay =
+    agentSlug === 'add-result'
+      ? 30 + ((item * 7) % 50)
+      : 15 + ((item * 5 + repOrResult * 3) % 30);
+  await new Promise((r) => setTimeout(r, delay));
+  return { agentSlug, item, messages: [`${agentSlug}_${item}_${repOrResult}`] };
 }
 
 async function getProjectResultsStep(item: number) {
@@ -65,10 +96,10 @@ async function getProjectResultsStep(item: number) {
   return { item, results: [`r_${item}_a`, `r_${item}_b`] };
 }
 
-async function exaSourceStep(item: number, resultId: string) {
+async function hasExaSourceLinkStep(item: number, resultIndex: number) {
   'use step';
-  await new Promise((r) => setTimeout(r, 15 + ((item * 5) % 30)));
-  return { item, resultId, ok: true };
+  await new Promise((r) => setTimeout(r, 5 + ((item + resultIndex) % 10)));
+  return true;
 }
 
 async function getTodayStep() {
@@ -77,54 +108,79 @@ async function getTodayStep() {
   return '2026-05-07';
 }
 
+async function updateResultDataStep(item: number, resultId: string) {
+  'use step';
+  await new Promise((r) => setTimeout(r, 5 + ((item * 2) % 15)));
+  return { item, resultId, updated: true };
+}
+
 async function fetchStatusStep(item: number, resultId: string) {
   'use step';
   await new Promise((r) => setTimeout(r, 10 + ((item * 3) % 20)));
   return { item, resultId, status: 'active' };
 }
 
+async function runExaSourceForResultInCurrentRun(
+  item: number,
+  resultIndex: number
+) {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await runAgentStep('source', item, resultIndex);
+    const hasSourceLink = await hasExaSourceLinkStep(item, resultIndex);
+    if (hasSourceLink) {
+      return;
+    }
+  }
+}
+
 export async function scheduleWhenIdleReproWorkflow() {
   'use workflow';
 
-  const N_ITEMS = 80;
+  await updateWorkflowRunStatusStep('started');
+  await checkSubstitutionStep();
+  const { projectId } = await createProjectStep();
+
+  const populateName = populateNameStep(projectId);
+
+  const N_ITEMS = 45;
   const REPS_PER_ITEM = 3;
 
-  const results = await Promise.all(
-    Array.from({ length: N_ITEMS }, async (_, i) => {
-      // Wave 1: parallel search repetitions per item — some items have
-      // a very slow straggler that lags behind the rest of the batch.
+  await Promise.all([
+    populateName,
+    ...Array.from({ length: N_ITEMS }, async (_, i) => {
       const repetitionOutcomes = await Promise.allSettled(
-        Array.from({ length: REPS_PER_ITEM }, (_, rep) => searchStep(i, rep))
+        Array.from({ length: REPS_PER_ITEM }, (_, rep) =>
+          runAgentStep('search', i, rep)
+        )
       );
-      const fulfilled = repetitionOutcomes
-        .filter((o) => o.status === 'fulfilled')
-        .map(
-          (o) => (o as PromiseFulfilledResult<{ result: string }>).value.result
-        );
+      const messages = repetitionOutcomes.flatMap((outcome) =>
+        outcome.status === 'fulfilled' ? outcome.value.messages : []
+      );
 
-      // Wave 2: sequential addResult — this is the step whose callback
-      // scheduleWhenIdle preempts in the buggy runtime, leaving its
-      // step_created unclaimed in the event log.
-      await addResultStep(i, fulfilled);
+      await runAgentStep('add-result', i, messages.length);
 
-      // Wave 3: sequential getProjectResults
       const projectResults = await getProjectResultsStep(i);
 
-      // Wave 4: parallel exa-source loop
       await Promise.allSettled(
-        projectResults.results.map((rid) => exaSourceStep(i, rid))
+        projectResults.results.map((_, resultIndex) =>
+          runExaSourceForResultInCurrentRun(i, resultIndex)
+        )
       );
 
-      // Wave 5: sequential getToday + parallel fetchStatus
       const today = await getTodayStep();
       await Promise.allSettled(
-        projectResults.results.map((rid) => fetchStatusStep(i, rid))
+        projectResults.results.map(async (resultId) => {
+          await fetchStatusStep(i, resultId);
+          await updateResultDataStep(i, resultId);
+        })
       );
 
       return { item: i, today, ok: true };
-    })
-  );
+    }),
+  ]);
 
-  const completed = results.filter((r) => r.ok).length;
-  return { totalItems: N_ITEMS, completed };
+  await updateWorkflowRunStatusStep('completed');
+
+  return { totalItems: N_ITEMS, completed: N_ITEMS };
 }

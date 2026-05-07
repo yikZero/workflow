@@ -3343,18 +3343,20 @@ describe('e2e', () => {
   /**
    * Regression test for the scheduleWhenIdle premature-suspension bug.
    *
-   * Mirrors the failing production run wrun_01KQ05J17ZJHGZFRYZ20QM1DBS:
-   * 80 concurrent items running 5 waves of nested sequential steps, with a
-   * few stragglers per wave 1 that lag 10-15s behind the rest of the batch.
+   * Mirrors the user's production workflow shape:
+   * initial setup steps, then Promise.all([populateName, ...items.map(...)])
+   * where each item runs search repetitions, add-result, project-results,
+   * source attempts, date lookup, and status update steps. A few search
+   * repetitions lag 10-15s behind the rest of the batch.
    *
-   * Expected (after fix): status === 'completed', completed === 80.
+   * Expected (after fix): status === 'completed', completed === 45.
    * Before fix: run can fail with WorkflowRuntimeError "Unconsumed event in
    * event log" for one of the addResult-equivalent steps because
    * scheduleWhenIdle fires WorkflowSuspension in the gap between fast
    * hydrations completing and the next useStep callback registering.
    */
   test(
-    'scheduleWhenIdle - 80 concurrent multi-wave items with stragglers complete without unconsumed event error',
+    'scheduleWhenIdle - production-shaped concurrent multi-wave workflow completes without unconsumed event error',
     { timeout: 600_000 },
     async () => {
       const run = await start(
@@ -3367,7 +3369,7 @@ describe('e2e', () => {
       );
 
       const returnValue = await run.returnValue;
-      expect(returnValue).toEqual({ totalItems: 80, completed: 80 });
+      expect(returnValue).toEqual({ totalItems: 45, completed: 45 });
 
       const { json } = await cliInspectJson(`runs ${run.runId}`);
       expect(json.status).toBe('completed');
