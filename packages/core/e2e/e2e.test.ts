@@ -3356,7 +3356,7 @@ describe('e2e', () => {
    *
    * PR with full context: https://github.com/vercel/workflow/pull/1961/changes#top
    */
-  test(
+  test.skipIf(process.env.APP_NAME !== 'nextjs-turbopack')(
     'scheduleWhenIdle - concurrent multi-wave workflow completes without unconsumed event error',
     { timeout: 600_000 },
     async () => {
