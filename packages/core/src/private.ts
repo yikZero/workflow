@@ -10,6 +10,15 @@ import {
 import type { QueueItem } from './global.js';
 import type { Serializable } from './schemas.js';
 
+/**
+ * Delay applied before firing WorkflowSuspension when this idle cycle has
+ * observed in-flight replay deliveries. Aliased to
+ * `DEFERRED_CHECK_DELAY_MS` so the two propagation guards share a single
+ * source of truth today, but they are conceptually separate budgets and could
+ * be tuned independently if the failure modes ever diverge.
+ */
+const REPLAY_PROPAGATION_DELAY_MS = DEFERRED_CHECK_DELAY_MS;
+
 export type StepFunction<
   Args extends Serializable[] = any[],
   Result extends Serializable | unknown = unknown,
@@ -176,6 +185,14 @@ export interface WorkflowOrchestratorContext {
  * the fast path for ordinary "new work needs to be scheduled" suspensions while
  * giving replay propagation enough time to register follow-up callbacks after
  * hydrated results cross the VM boundary.
+ *
+ * Unlike `EventsConsumer`'s deferred unconsumed-event check, this
+ * propagation timer is not cancelled when a follow-up `useStep`/hook/sleep
+ * registers during the wait. If a callback arrives mid-wait and consumes
+ * the pending `*_created` event, the suspension still fires after the delay,
+ * but it is harmless: the matching invocation already has
+ * `hasCreatedEvent=true`, so the suspension handler will not re-create the
+ * step, and the run simply continues replay from the persisted event log.
  */
 export function scheduleWhenIdle(
   ctx: WorkflowOrchestratorContext,
@@ -198,7 +215,7 @@ export function scheduleWhenIdle(
       } else {
         fn();
       }
-    }, DEFERRED_CHECK_DELAY_MS);
+    }, REPLAY_PROPAGATION_DELAY_MS);
   };
 
   const runWhenStillIdle = () => {
