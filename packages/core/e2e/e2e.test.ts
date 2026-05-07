@@ -3353,6 +3353,8 @@ describe('e2e', () => {
    * event log" for one of the next-wave steps because
    * scheduleWhenIdle fires WorkflowSuspension in the gap between fast
    * hydrations completing and the next useStep callback registering.
+   *
+   * PR with full context: https://github.com/vercel/workflow/pull/1961/changes#top
    */
   test(
     'scheduleWhenIdle - concurrent multi-wave workflow completes without unconsumed event error',
