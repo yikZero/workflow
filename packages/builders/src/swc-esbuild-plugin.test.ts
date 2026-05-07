@@ -85,13 +85,20 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     expect(output).not.toContain(`/dep${inputExt}`);
   });
 
-  it('rewrites path-aliased imports to relative paths', async () => {
+  it('bundles path-aliased project-local imports inline', async () => {
+    // Aliased project-local files must be bundled inline (not externalized
+    // as relative paths) because their source on disk may contain further
+    // alias imports that Node's ESM loader cannot resolve at runtime.
+    // See packages/builders/src/swc-esbuild-plugin.ts for full reasoning.
     const outdir = join(testRoot, 'out');
     const srcDir = join(testRoot, 'src');
     const libDir = join(srcDir, 'lib');
     const stepFile = join(srcDir, 'step.ts');
 
-    writeFile(join(libDir, 'config.ts'), 'export const config = {};');
+    writeFile(
+      join(libDir, 'config.ts'),
+      'export const config = { value: "hello-from-config" };'
+    );
     writeFile(
       stepFile,
       `import { config } from '@/lib/config';\nconsole.log(config);`
@@ -118,8 +125,75 @@ describe('createSwcPlugin externalizeNonSteps', () => {
 
     expect(result.errors).toHaveLength(0);
     const output = result.outputFiles[0].text;
-    expect(output).toContain('/lib/config.js');
+    // The aliased helper should be bundled inline (its content is in the
+    // output), not externalized as a relative path or left as a bare alias.
+    expect(output).toContain('hello-from-config');
     expect(output).not.toContain('@/lib/config');
+    expect(output).not.toMatch(/from\s+["'][^"']*\/lib\/config\.(js|ts)["']/);
+  });
+
+  it('bundles transitive aliased imports inside aliased helpers (Mux self-referencing package regression)', async () => {
+    // Regression test for https://github.com/muxinc/ai/pull/193.
+    //
+    // A package self-references its own subpath via tsconfig `paths` (e.g.
+    // `@my-pkg/lib/foo` → `src/lib/foo.ts`). A step file imports a helper
+    // via the alias, and that helper imports another helper via the alias.
+    //
+    // Previously the helpers were externalized as relative paths, but their
+    // source on disk still contained `import "@my-pkg/lib/..."`. At runtime,
+    // Node's ESM loader didn't know about tsconfig paths, fell through to
+    // the package's `exports` map, and threw `Package subpath ... is not
+    // defined by "exports"`.
+    //
+    // With the fix, aliased project-local files are bundled inline, so
+    // their alias imports are resolved at build time.
+    const outdir = join(testRoot, 'out');
+    const srcDir = join(testRoot, 'src');
+    const libDir = join(srcDir, 'lib');
+    const stepFile = join(srcDir, 'step.ts');
+
+    writeFile(
+      join(libDir, 'providers.ts'),
+      'export const providerName = "anthropic";'
+    );
+    writeFile(
+      join(libDir, 'client-factory.ts'),
+      // Helper uses the same alias to reach a sibling — this is the case
+      // that broke the Mux build with workflow >= 4.2.0-beta.78.
+      `import { providerName } from '@my-pkg/lib/providers';
+export const client = { provider: providerName };`
+    );
+    writeFile(
+      stepFile,
+      `import { client } from '@my-pkg/lib/client-factory';\nconsole.log(client);`
+    );
+
+    const result = await esbuild.build({
+      entryPoints: [stepFile],
+      absWorkingDir: testRoot,
+      outdir,
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      write: false,
+      alias: { '@my-pkg': srcDir },
+      plugins: [
+        createSwcPlugin({
+          mode: 'step',
+          entriesToBundle: [stepFile],
+          outdir,
+          rewriteTsExtensions: true,
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputFiles[0].text;
+    // Both helpers should be bundled inline — no aliased specifiers should
+    // leak into the output, where Node's ESM loader would choke on them.
+    expect(output).toContain('anthropic');
+    expect(output).not.toContain('@my-pkg/lib/providers');
+    expect(output).not.toContain('@my-pkg/lib/client-factory');
   });
 
   it('does not relativize Node.js builtin imports', async () => {
@@ -190,6 +264,55 @@ describe('createSwcPlugin externalizeNonSteps', () => {
     // Should be bundled (inlined), not externalized as a relative node_modules path
     expect(output).toContain('hello');
     expect(output).not.toMatch(/from\s+["'].*node_modules/);
+  });
+
+  it('externalizes nested bare package imports that only resolve from a bundled package', async () => {
+    const outdir = join(testRoot, 'out');
+    const srcDir = join(testRoot, 'src');
+    const stepFile = join(srcDir, 'step.ts');
+    const parentPkgDir = join(testRoot, 'node_modules', 'parent-pkg');
+    const parentPkgIndex = join(parentPkgDir, 'index.js');
+    const nativePkgDir = join(parentPkgDir, 'node_modules', 'optional-native');
+
+    writeFile(
+      join(parentPkgDir, 'package.json'),
+      JSON.stringify({ name: 'parent-pkg', main: 'index.js' })
+    );
+    writeFile(
+      parentPkgIndex,
+      `const native = require('optional-native');\nexports.value = native.value;`
+    );
+    writeFile(
+      join(nativePkgDir, 'package.json'),
+      JSON.stringify({ name: 'optional-native', main: 'binding.node' })
+    );
+    writeFile(join(nativePkgDir, 'binding.node'), '');
+    writeFile(
+      stepFile,
+      `import { value } from 'parent-pkg';\nconsole.log(value);`
+    );
+
+    const result = await esbuild.build({
+      entryPoints: [stepFile],
+      absWorkingDir: testRoot,
+      outdir,
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      write: false,
+      plugins: [
+        createSwcPlugin({
+          mode: 'step',
+          entriesToBundle: [stepFile, parentPkgIndex],
+          outdir,
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputFiles[0].text;
+    expect(output).toContain('optional-native');
+    expect(output).not.toContain('binding.node');
   });
 
   it.each([

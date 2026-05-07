@@ -83,17 +83,19 @@ describe('stripEventDataRefs', () => {
     expect(result.eventData).not.toHaveProperty('error');
   });
 
-  it('should strip error from step_failed, keep stack', () => {
+  it('should strip error from step_failed, leaving no eventData when it was the only field', () => {
+    // step_failed eventData only holds the (opaque, large) `error` payload.
+    // When resolveData is 'none' the error is stripped; since nothing else
+    // remains, eventData is dropped from the event entirely.
     const event = {
       ...baseEvent,
       eventType: 'step_failed' as const,
       correlationId: 'step_1',
-      eventData: { error: 'failed', stack: 'Error: failed\n  at ...' },
+      eventData: { error: new Uint8Array([1, 2, 3]) },
     } as Event;
 
     const result = stripEventDataRefs(event, 'none') as any;
-    expect(result.eventData).toEqual({ stack: 'Error: failed\n  at ...' });
-    expect(result.eventData).not.toHaveProperty('error');
+    expect(result).not.toHaveProperty('eventData');
   });
 
   it('should not strip anything when resolveData is "all"', () => {
@@ -268,13 +270,26 @@ describe('Storage', () => {
           input: new Uint8Array(),
         });
 
+        // The `error` field is now opaque SerializedData (Uint8Array) produced
+        // by dehydrateRunError. The storage layer persists it verbatim; the
+        // original thrown value is reconstructed by hydrateRunError at read
+        // time on the consumer side.
+        const serializedError = new Uint8Array([1, 2, 3]);
         const updated = await updateRun(storage, created.runId, 'run_failed', {
-          error: 'Something went wrong',
+          error: serializedError,
         });
 
         expect(updated.status).toBe('failed');
-        expect(updated.error?.message).toBe('Something went wrong');
+        expect(updated.error).toEqual(serializedError);
         expect(updated.completedAt).toBeInstanceOf(Date);
+      });
+
+      it('should reject run_failed on non-existent run', async () => {
+        await expect(
+          updateRun(storage, 'wrun_nonexistent', 'run_failed', {
+            error: 'Something went wrong',
+          })
+        ).rejects.toMatchObject({ name: 'WorkflowRunNotFoundError' });
       });
     });
 
@@ -480,16 +495,19 @@ describe('Storage', () => {
           input: new Uint8Array([1]),
         });
 
+        // The `error` field is now opaque SerializedData (Uint8Array) produced
+        // by dehydrateStepError. The storage layer persists it verbatim.
+        const serializedError = new Uint8Array([1, 2, 3]);
         const updated = await updateStep(
           storage,
           testRunId,
           'step_123',
           'step_failed',
-          { error: 'Step failed' }
+          { error: serializedError }
         );
 
         expect(updated.status).toBe('failed');
-        expect(updated.error?.message).toBe('Step failed');
+        expect(updated.error).toEqual(serializedError);
         expect(updated.completedAt).toBeInstanceOf(Date);
       });
     });
@@ -1987,6 +2005,112 @@ describe('Storage', () => {
     });
   });
 
+  describe('concurrent entity-creation races', () => {
+    let testRunId: string;
+    beforeEach(async () => {
+      const run = await createRun(storage, {
+        deploymentId: 'deployment-123',
+        workflowName: 'test-workflow',
+        input: new Uint8Array(),
+      });
+      testRunId = run.runId;
+      await updateRun(storage, testRunId, 'run_started');
+    });
+
+    it('should reject concurrent step_created with the same correlationId', async () => {
+      // Two concurrent step_created calls with identical correlationIds
+      // (as produced by the snapshot runtime's deterministic ULIDs across
+      // concurrent VM invocations of the same resumption) must produce
+      // exactly one step_created event in the log — not two. Without an
+      // atomic guard the second writer overwrites the entity and persists
+      // a duplicate event, causing downstream issues like double-queued
+      // step messages.
+      const results = await Promise.allSettled([
+        createStep(storage, testRunId, {
+          stepId: 'step_dup_1',
+          stepName: 'test-step',
+          input: new Uint8Array([1]),
+        }),
+        createStep(storage, testRunId, {
+          stepId: 'step_dup_1',
+          stepName: 'test-step',
+          input: new Uint8Array([2]),
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        name: 'EntityConflictError',
+      });
+
+      // Verify only one step_created event exists in the log.
+      const events = await storage.events.list({
+        runId: testRunId,
+        pagination: {},
+      });
+      const stepCreatedEvents = events.data.filter(
+        (e) =>
+          e.eventType === 'step_created' && e.correlationId === 'step_dup_1'
+      );
+      expect(stepCreatedEvents).toHaveLength(1);
+    });
+
+    it('should reject concurrent wait_created with the same correlationId', async () => {
+      // wait_created previously used a TOCTOU read-then-check pattern that
+      // could let both concurrent writers through. The atomic claim now
+      // guarantees exactly one winner.
+      const results = await Promise.allSettled([
+        createWait(storage, testRunId, {
+          waitId: 'wait_dup_1',
+          resumeAt: new Date('2099-01-01'),
+        }),
+        createWait(storage, testRunId, {
+          waitId: 'wait_dup_1',
+          resumeAt: new Date('2099-01-02'),
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        name: 'EntityConflictError',
+      });
+
+      // Verify only one wait_created event exists in the log.
+      const events = await storage.events.list({
+        runId: testRunId,
+        pagination: {},
+      });
+      const waitCreatedEvents = events.data.filter(
+        (e) =>
+          e.eventType === 'wait_created' && e.correlationId === 'wait_dup_1'
+      );
+      expect(waitCreatedEvents).toHaveLength(1);
+    });
+
+    it('should reject sequential duplicate step_created calls', async () => {
+      // Sequential (non-racing) duplicates must also be rejected — the
+      // constraint file persists across calls.
+      await createStep(storage, testRunId, {
+        stepId: 'step_seq_dup',
+        stepName: 'test-step',
+        input: new Uint8Array(),
+      });
+      await expect(
+        createStep(storage, testRunId, {
+          stepId: 'step_seq_dup',
+          stepName: 'test-step',
+          input: new Uint8Array(),
+        })
+      ).rejects.toMatchObject({ name: 'EntityConflictError' });
+    });
+  });
+
   describe('run terminal state validation', () => {
     describe('completed run', () => {
       it('should reject run_started on completed run', async () => {
@@ -2390,17 +2514,20 @@ describe('Storage', () => {
       });
       await updateStep(storage, testRunId, 'step_retry_1', 'step_started');
 
+      // The `error` field is opaque SerializedData (Uint8Array) produced by
+      // dehydrateStepError. The storage layer persists it verbatim.
+      const serializedError = new Uint8Array([9, 9, 9]);
       const result = await storage.events.create(testRunId, {
         eventType: 'step_retrying',
         correlationId: 'step_retry_1',
         eventData: {
-          error: 'Temporary failure',
+          error: serializedError,
           retryAfter: new Date(Date.now() + 5000),
         },
       });
 
       expect(result.step?.status).toBe('pending');
-      expect(result.step?.error?.message).toBe('Temporary failure');
+      expect(result.step?.error).toEqual(serializedError);
       expect(result.step?.retryAfter).toBeInstanceOf(Date);
     });
 
