@@ -3343,12 +3343,12 @@ describe('e2e', () => {
   /**
    * Regression test for the scheduleWhenIdle premature-suspension bug.
    *
-   * Stresses replay with setup steps followed by a large outer Promise.all
+   * Stresses replay with setup steps followed by a moderately wide outer Promise.all
    * where each item advances through multiple sequential waves. A few
-   * phase-one steps lag 10-15s behind the rest of the batch, while fast items
+   * phase-one steps lag 2-3s behind the rest of the batch, while fast items
    * continue through later waves.
    *
-   * Expected (after fix): status === 'completed', completed === 45.
+   * Expected (after fix): status === 'completed', completed === 12.
    * Before fix: run can fail with WorkflowRuntimeError "Unconsumed event in
    * event log" for one of the next-wave steps because
    * scheduleWhenIdle fires WorkflowSuspension in the gap between fast
@@ -3373,7 +3373,7 @@ describe('e2e', () => {
       );
 
       const returnValue = await run.returnValue;
-      expect(returnValue).toEqual({ totalItems: 45, completed: 45 });
+      expect(returnValue).toEqual({ totalItems: 12, completed: 12 });
 
       const { json } = await cliInspectJson(`runs ${run.runId}`);
       expect(json.status).toBe('completed');

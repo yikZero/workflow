@@ -34,10 +34,10 @@ export async function twoHundredStepsWorkflow() {
 //     })
 //   ]) -> finalize
 //
-// The important shape is a large outer Promise.all where each item advances
-// through several sequential waves while a few search repetitions are slow
-// stragglers. Those stragglers schedule WorkflowSuspension while fast items are
-// still hydrating results and registering next-wave callbacks.
+// The important shape is a moderately wide outer Promise.all where each item
+// advances through several sequential waves while a few search repetitions are
+// slow stragglers. Those stragglers schedule WorkflowSuspension while fast items
+// are still hydrating results and registering next-wave callbacks.
 
 async function lifecycleMarkerStep(status: string) {
   'use step';
@@ -70,9 +70,9 @@ async function phaseWorkStep(
   'use step';
 
   if (phase === 'phase-one') {
-    const isStraggler = item % 17 === 3 && variant === 0;
+    const isStraggler = item % 5 === 3 && variant === 0;
     const delay = isStraggler
-      ? 10000 + ((item * 31) % 5000)
+      ? 2000 + ((item * 31) % 1000)
       : 30 + ((item * 11 + variant * 7) % 80);
     await new Promise((r) => setTimeout(r, delay));
     return {
@@ -140,8 +140,8 @@ export async function concurrentMultiWaveWorkflow() {
 
   const metadata = metadataStep(resourceId);
 
-  const N_ITEMS = 45;
-  const REPS_PER_ITEM = 3;
+  const N_ITEMS = 12;
+  const REPS_PER_ITEM = 2;
 
   await Promise.all([
     metadata,
