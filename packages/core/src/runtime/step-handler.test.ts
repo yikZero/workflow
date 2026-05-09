@@ -124,6 +124,7 @@ vi.mock('../serialization.js', () => ({
   dehydrateStepReturnValue: vi
     .fn()
     .mockResolvedValue(new Uint8Array([1, 2, 3])),
+  cancelAbortReaders: vi.fn(),
   dehydrateStepError: vi.fn().mockResolvedValue(new Uint8Array([4, 5, 6])),
 }));
 

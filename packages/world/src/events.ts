@@ -159,6 +159,8 @@ const HookCreatedEventSchema = BaseEventSchema.extend({
   eventData: z.object({
     token: z.string(),
     metadata: SerializedDataSchema.optional(),
+    isWebhook: z.boolean().optional(),
+    isSystem: z.boolean().optional(),
   }),
 });
 

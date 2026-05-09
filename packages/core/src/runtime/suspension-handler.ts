@@ -21,6 +21,7 @@ import type {
 } from '../global.js';
 import { runtimeLogger } from '../logger.js';
 import { dehydrateStepArguments } from '../serialization.js';
+import { getAbortStreamIdFromToken } from '../util.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 
 export interface SuspensionHandlerParams {
@@ -111,6 +112,7 @@ export async function handleSuspension({
           token: queueItem.token,
           metadata: hookMetadata,
           isWebhook: queueItem.isWebhook ?? false,
+          ...(queueItem.isSystem && { isSystem: true }),
         },
       };
     })
@@ -191,6 +193,76 @@ export async function handleSuspension({
               correlationId: queueItem.correlationId,
               message: err.message,
             });
+          } else {
+            throw err;
+          }
+        }
+      })
+    );
+  }
+
+  // Process abort requests — resume the hook with abort payload and write stream packet
+  const hooksNeedingAbort = allHookItems.filter(
+    (item) => item.abortRequested && !item.disposed
+  );
+
+  if (hooksNeedingAbort.length > 0) {
+    await Promise.all(
+      hooksNeedingAbort.map(async (queueItem) => {
+        try {
+          // Dehydrate the abort payload for storage
+          const abortPayload = await dehydrateStepArguments(
+            { aborted: true, reason: queueItem.abortReason },
+            runId,
+            encryptionKey,
+            suspension.globalThis
+          );
+
+          // Create hook_received event with abort payload
+          await world.events.create(runId, {
+            eventType: 'hook_received' as const,
+            specVersion: SPEC_VERSION_CURRENT,
+            correlationId: queueItem.correlationId,
+            eventData: {
+              payload: abortPayload,
+            },
+          });
+
+          // Write stream cancellation packet for real-time step propagation.
+          // Reuse the same dehydrated payload as the hook event so the reason
+          // round-trips through `dehydrateStepArguments` / `hydrateStepArguments`
+          // (handles DOMException, custom errors, encryption, etc.) instead of
+          // bare JSON.stringify which loses type information and drops undefined.
+          // streamName is set on the queue item at controller construction time
+          // (see workflow/abort-controller.ts).
+          try {
+            const streamName = getAbortStreamIdFromToken(queueItem.token);
+            await world.streams.write(
+              runId,
+              streamName,
+              abortPayload as Uint8Array
+            );
+            await world.streams.close(runId, streamName);
+          } catch {
+            // Best-effort stream write — hook event provides the durable fallback
+            runtimeLogger.debug(
+              'Failed to write abort stream packet, hook event will provide fallback',
+              {
+                workflowRunId: runId,
+                correlationId: queueItem.correlationId,
+              }
+            );
+          }
+        } catch (err) {
+          if (EntityConflictError.is(err) || RunExpiredError.is(err)) {
+            runtimeLogger.info(
+              'Workflow run already completed, skipping abort',
+              {
+                workflowRunId: runId,
+                correlationId: queueItem.correlationId,
+                message: err.message,
+              }
+            );
           } else {
             throw err;
           }
