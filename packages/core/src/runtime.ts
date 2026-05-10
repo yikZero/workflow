@@ -802,7 +802,24 @@ export function workflowEntrypoint(
                               { requestId }
                             );
                             if (result.event) {
-                              events.push(result.event);
+                              // The server returns a "lazy" response for
+                              // hook_received — the payload field on
+                              // result.event.eventData may be a RefDescriptor
+                              // (when the payload exceeded the inline size
+                              // and was offloaded to blob storage) rather
+                              // than the raw bytes. Replay would then fail
+                              // when it tries to deserialize the descriptor
+                              // as a Uint8Array. Substitute the eventData we
+                              // already have locally so the in-memory event
+                              // matches what `getWorkflowRunEvents` would
+                              // return after client-side ref hydration.
+                              events.push({
+                                ...result.event,
+                                eventData: {
+                                  payload: hookInput.payload as any,
+                                  resumeId: hookInput.resumeId,
+                                },
+                              } as Event);
                             }
                             runtimeLogger.warn(
                               'Materialized hook_received event from queue payload (resilient resume)',
