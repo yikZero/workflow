@@ -1,19 +1,21 @@
 import { ThrottleError, WorkflowWorldError } from '@workflow/errors';
 import {
-  SPEC_VERSION_CURRENT,
   SPEC_VERSION_LEGACY,
   SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
 } from '@workflow/world';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getWorldLazy } from './get-world-lazy.js';
 import { resumeHook } from './resume-hook.js';
-import { getWorld } from './world.js';
 
 // Mock @vercel/functions
 vi.mock('@vercel/functions', () => ({
   waitUntil: vi.fn(),
 }));
 
-// Mock the world module
+// Mock the world module — resume-hook.ts uses getWorldLazy under the hood.
+vi.mock('./get-world-lazy.js', () => ({
+  getWorldLazy: vi.fn(),
+}));
 vi.mock('./world.js', () => ({
   getWorld: vi.fn(),
   getWorldHandlers: vi.fn(() => ({
@@ -112,7 +114,7 @@ describe('resumeHook', () => {
   describe('happy path', () => {
     it('writes hook_received with resumeId; queue payload has NO hookInput (event write succeeded)', async () => {
       const { world, queue, eventsCreate } = makeMockWorld();
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       const result = await resumeHook('tok_test', { hello: 'world' });
 
@@ -145,7 +147,7 @@ describe('resumeHook', () => {
         .fn()
         .mockRejectedValue(new ThrottleError('rate limited'));
       const { world } = makeMockWorld({ eventsCreate });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       const result = await resumeHook('tok_test', { data: 1 });
 
@@ -160,7 +162,7 @@ describe('resumeHook', () => {
         })
       );
       const { world, queue } = makeMockWorld({ eventsCreate });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       const result = await resumeHook('tok_test', { data: 1 });
 
@@ -179,7 +181,7 @@ describe('resumeHook', () => {
         })
       );
       const { world } = makeMockWorld({ eventsCreate });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       await expect(resumeHook('tok_test', { data: 1 })).rejects.toThrow(
         'Bad Request'
@@ -189,7 +191,7 @@ describe('resumeHook', () => {
     it('throws when queue fails even if events.create succeeds', async () => {
       const queue = vi.fn().mockRejectedValue(new Error('Queue unavailable'));
       const { world } = makeMockWorld({ queue });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       await expect(resumeHook('tok_test', { data: 1 })).rejects.toThrow(
         'Queue unavailable'
@@ -202,7 +204,7 @@ describe('resumeHook', () => {
         .mockRejectedValue(new ThrottleError('rate limited'));
       const queue = vi.fn().mockRejectedValue(new Error('Queue unavailable'));
       const { world } = makeMockWorld({ eventsCreate, queue });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       await expect(resumeHook('tok_test', { data: 1 })).rejects.toThrow(
         'Queue unavailable'
@@ -217,7 +219,7 @@ describe('resumeHook', () => {
         eventsCreate,
         runSpecVersion: SPEC_VERSION_LEGACY,
       });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       // On legacy spec versions the runtime cannot materialize hook_received
       // from queue payload, so we must fail-fast instead of pretending
@@ -249,7 +251,7 @@ describe('resumeHook', () => {
       const queue = vi.fn().mockResolvedValue({ messageId: null });
 
       const { world } = makeMockWorld({ eventsCreate, queue });
-      vi.mocked(getWorld).mockReturnValue(world as any);
+      vi.mocked(getWorldLazy).mockResolvedValue(world as any);
 
       const resumePromise = resumeHook('tok_test', { data: 1 });
 
@@ -265,15 +267,5 @@ describe('resumeHook', () => {
       await resumePromise;
       expect(queue).toHaveBeenCalledTimes(1);
     });
-  });
-});
-
-describe('isRetryableEventError', () => {
-  // Indirectly tested via resumeHook above. The helper is also unit-covered
-  // via start.test.ts's resilient start suite; no duplicate tests needed.
-  it('is exercised via resumeHook resilient resume tests', () => {
-    expect(SPEC_VERSION_CURRENT).toBeGreaterThanOrEqual(
-      SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT
-    );
   });
 });

@@ -17,7 +17,7 @@ import { waitedUntil } from '../util.js';
 import { version as workflowCoreVersion } from '../version.js';
 import { getWorkflowQueueName, isRetryableEventError } from './helpers.js';
 import { Run } from './run.js';
-import { getWorld } from './world.js';
+import { getWorldLazy } from './get-world-lazy.js';
 
 /** ULID generator for client-side runId generation */
 const ulid = monotonicFactory();
@@ -144,7 +144,7 @@ export async function start<TArgs extends unknown[], TResult>(
         ...Attribute.WorkflowArgumentsCount(args.length),
       });
 
-      const world = opts?.world ?? (await getWorld());
+      const world = opts?.world ?? (await getWorldLazy());
       let deploymentId = opts.deploymentId ?? (await world.getDeploymentId());
 
       // When 'latest' is requested, resolve the actual latest deployment ID

@@ -26,8 +26,8 @@ import { WEBHOOK_RESPONSE_WRITABLE } from '../symbols.js';
 import * as Attribute from '../telemetry/semantic-conventions.js';
 import { getSpanContextForTraceCarrier, trace } from '../telemetry.js';
 import { waitedUntil } from '../util.js';
+import { getWorldLazy } from './get-world-lazy.js';
 import { getWorkflowQueueName, isRetryableEventError } from './helpers.js';
-import { getWorld } from './world.js';
 
 /** ULID generator for client-side resumeId generation */
 const ulid = monotonicFactory();
@@ -41,7 +41,7 @@ async function getHookByTokenWithKey(token: string): Promise<{
   run: WorkflowRun;
   encryptionKey: CryptoKey | undefined;
 }> {
-  const world = await getWorld();
+  const world = await getWorldLazy();
   const hook = await world.hooks.getByToken(token);
   const run = await world.runs.get(hook.runId);
   const rawKey = await world.getEncryptionKeyForRun?.(run);
@@ -97,16 +97,20 @@ export type ResumedHook = Hook & {
  *
  * ## Resilient resume
  *
- * `resumeHook()` fires the `hook_received` event creation and the workflow
- * queue dispatch in parallel. If the event creation fails with a retryable
- * error (429/5xx) but the queue dispatch succeeds, the workflow runtime will
- * materialize the missing `hook_received` event from the payload carried on
- * the queue message — the returned hook has `resilientResume: true` to
- * signal this fallback path was taken. This mirrors the resilient-start
- * behavior of {@link start}.
+ * `resumeHook()` writes the `hook_received` event first, then dispatches to
+ * the workflow queue. If the event write fails with a retryable error
+ * (429/5xx), it is skipped and the queue dispatch carries `hookInput` with
+ * the dehydrated payload + a client-minted `resumeId`. The workflow runtime
+ * then materializes the missing `hook_received` event from `hookInput`
+ * during replay — the returned hook has `resilientResume: true` to signal
+ * this fallback path was taken. This mirrors the resilient-start behavior
+ * of {@link start}.
  *
- * Both write paths carry the same client-minted `resumeId` as an idempotency
- * key; the runtime uses it to avoid double-delivering the payload.
+ * The write order (event first, then queue) is deliberately sequential to
+ * avoid a race where the queue handler processes the message and
+ * materializes a duplicate `hook_received` before the direct write commits.
+ * The `resumeId` doubles as an idempotency key the runtime uses to dedup
+ * any `hook_received` event that already carries it.
  *
  * @param tokenOrHook - The unique token identifying the hook, or the hook object itself
  * @param payload - The data payload to send to the hook
@@ -140,7 +144,7 @@ export async function resumeHook<T = any>(
 ): Promise<ResumedHook> {
   return await waitedUntil(() => {
     return trace('hook.resume', async (span) => {
-      const world = await getWorld();
+      const world = await getWorldLazy();
 
       try {
         let hook: Hook;
@@ -293,8 +297,7 @@ export async function resumeHook<T = any>(
 
         if (eventWriteFailed) {
           runtimeLogger.warn(
-            'Hook event creation failed, but the workflow was re-triggered via the queue. ' +
-              'The hook_received event will be materialized by the runtime via the resilient resume path.',
+            'hook_received event could not immediately be created, re-trying via queue.',
             {
               workflowRunId: hook.runId,
               hookId: hook.hookId,
