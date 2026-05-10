@@ -3358,7 +3358,7 @@ describe('runWorkflow', () => {
       ).toEqual('sleep with date completed');
     });
 
-    it('should reject with WorkflowRuntimeError when event log has duplicate wait_completed', async () => {
+    it('should reject with WorkflowRuntimeError for duplicate wait_completed in event log', async () => {
       const ops: Promise<any>[] = [];
       const workflowRunId = 'test-run-123';
       const workflowRun: WorkflowRun = {
@@ -3396,7 +3396,11 @@ describe('runWorkflow', () => {
           createdAt: new Date('2024-01-01T00:00:05.000Z'),
         },
         {
-          // Duplicate wait_completed - should trigger WorkflowRuntimeError
+          // Duplicate wait_completed — all worlds enforce one wait_completed
+          // per correlationId, so this shape indicates a corrupted event log.
+          // Its position between the sleep's completion and the subsequent
+          // step events means it blocks event consumption until onUnconsumedEvent
+          // fires.
           eventId: 'event-2',
           runId: workflowRunId,
           eventType: 'wait_completed',
@@ -3425,16 +3429,16 @@ describe('runWorkflow', () => {
       await expect(
         runWorkflow(
           `const doWork = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("doWork");
-          const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
-          async function workflow() {
-            await sleep('5s');
-            const result = await doWork();
-            return result;
-          }${getWorkflowTransformCode('workflow')}`,
+            const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+            async function workflow() {
+              await sleep('5s');
+              const result = await doWork();
+              return result;
+            }${getWorkflowTransformCode('workflow')}`,
           workflowRun,
           events
         )
-      ).rejects.toThrow(WorkflowRuntimeError);
+      ).rejects.toThrow('Unconsumed event in event log');
     });
 
     it('should reject with WorkflowRuntimeError for duplicate step_completed blocking subsequent events', async () => {
@@ -3744,8 +3748,17 @@ describe('runWorkflow', () => {
     });
   });
 
-  describe('pending queue warnings', () => {
-    it('should warn when workflow completes with an unawaited step', async () => {
+  describe('pending queue drain at completion', () => {
+    // Behavior change (was "pending queue warnings"): the runtime no longer
+    // warns about unawaited steps/hooks/sleeps at end-of-run. Instead it drains
+    // the queue through the suspension handler, committing each pending
+    // operation (step queueing, hook creation/disposal, abort propagation) so
+    // it actually fires — matching normal JS semantics where async work spawned
+    // by a function continues after the function returns. The most important
+    // case is `controller.abort()` called as the last statement of a workflow:
+    // the abort hook now commits to the event log even with no suspension
+    // between abort() and return.
+    it('drains an unawaited step on completion (no "uncommitted" warning)', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const ops: Promise<any>[] = [];
@@ -3764,11 +3777,8 @@ describe('runWorkflow', () => {
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
           deploymentId: 'test-deployment',
         };
-
-        // No step events — the unawaited step stays pending in the queue
         const events: Event[] = [];
 
-        // Workflow calls step but doesn't await it, returns immediately
         await runWorkflow(
           `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
           async function workflow() {
@@ -3784,21 +3794,15 @@ describe('runWorkflow', () => {
         expect(
           warnCalls.some(
             (msg: string) =>
-              msg.includes('uncommitted operation') &&
-              msg.includes('step "add"')
+              typeof msg === 'string' && msg.includes('uncommitted operation')
           )
-        ).toBe(true);
-        expect(
-          warnCalls.some((msg: string) =>
-            msg.includes('Did you forget to `await`')
-          )
-        ).toBe(true);
+        ).toBe(false);
       } finally {
         warnSpy.mockRestore();
       }
     });
 
-    it('should warn when workflow fails with pending operations', async () => {
+    it('drains pending operations even when the workflow throws', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const ops: Promise<any>[] = [];
@@ -3817,11 +3821,8 @@ describe('runWorkflow', () => {
           startedAt: new Date('2024-01-01T00:00:00.000Z'),
           deploymentId: 'test-deployment',
         };
-
-        // No step events — the unawaited step stays pending in the queue
         const events: Event[] = [];
 
-        // Workflow calls step (not awaited) then throws
         await expect(
           runWorkflow(
             `const add = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("add");
@@ -3835,13 +3836,16 @@ describe('runWorkflow', () => {
           )
         ).rejects.toThrow('workflow error');
 
+        // The thrown error is preserved (workflow's outcome is the source of
+        // truth); the unawaited step is drained on the way out, no warning
+        // about uncommitted ops.
         const warnCalls = warnSpy.mock.calls.map((c) => c[0]);
         expect(
           warnCalls.some(
             (msg: string) =>
-              msg.includes('failed') && msg.includes('step "add"')
+              typeof msg === 'string' && msg.includes('uncommitted operation')
           )
-        ).toBe(true);
+        ).toBe(false);
       } finally {
         warnSpy.mockRestore();
       }

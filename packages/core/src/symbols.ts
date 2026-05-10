@@ -16,3 +16,10 @@ export const WEBHOOK_RESPONSE_WRITABLE = Symbol.for(
  * This allows the deserializer to find classes by classId in the VM context.
  */
 export const WORKFLOW_CLASS_REGISTRY = Symbol.for('workflow-class-registry');
+
+export const ABORT_STREAM_NAME = Symbol.for('WORKFLOW_ABORT_STREAM_NAME');
+export const ABORT_HOOK_TOKEN = Symbol.for('WORKFLOW_ABORT_HOOK_TOKEN');
+export const ABORT_LISTENER_ATTACHED = Symbol.for(
+  'WORKFLOW_ABORT_LISTENER_ATTACHED'
+);
+export const ABORT_READER_CANCEL = Symbol.for('WORKFLOW_ABORT_READER_CANCEL');

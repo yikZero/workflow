@@ -85,6 +85,7 @@ export interface SerializableSpecial {
     body: Request['body'];
     duplex: Request['duplex'];
     responseWritable?: WritableStream<Response>;
+    signal?: AbortSignal;
   };
   Response: {
     type: Response['type'];
@@ -107,6 +108,24 @@ export interface SerializableSpecial {
   StepFunction: {
     stepId: string;
     closureVars?: Record<string, any>;
+    /**
+     * Captured lexical `this` for step proxies that were created via
+     * `useStep(...).bind(thisArg)` (the SWC plugin emits this for nested
+     * arrow steps that close over their enclosing function's `this`).
+     * The reviver re-binds the freshly-created proxy to this value so the
+     * binding survives serialization round-trips.
+     */
+    boundThis?: unknown;
+    /**
+     * Prefilled arguments captured when the user (rather than the SWC
+     * plugin) called `useStep(...).bind(thisArg, x, y)`. The reviver
+     * re-applies these alongside `boundThis` so partial application
+     * survives serialization. The SWC plugin only ever emits
+     * `.bind(this)` with no extra args today; this slot exists so a
+     * hand-written `.bind(thisArg, x)` doesn't silently lose `x` after
+     * round-tripping through the reducer/reviver.
+     */
+    boundArgs?: unknown[];
   };
   TypeError: { message: string; stack?: string; cause?: unknown };
   URIError: { message: string; stack?: string; cause?: unknown };
@@ -126,6 +145,18 @@ export interface SerializableSpecial {
     errors: unknown[];
   };
   WritableStream: { name: string };
+  AbortController: {
+    streamName: string;
+    hookToken: string;
+    aborted: boolean;
+    reason?: unknown;
+  };
+  AbortSignal: {
+    streamName: string;
+    hookToken: string;
+    aborted: boolean;
+    reason?: unknown;
+  };
 }
 
 export type Reducers = {
