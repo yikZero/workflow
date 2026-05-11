@@ -118,4 +118,26 @@ describe('scheduleWhenIdle', () => {
     await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS * 2);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps polling while pendingDeliveries persists across multiple check rounds', async () => {
+    const ctx = makeCtx();
+    // Deliveries stay non-zero for several `check` iterations before draining.
+    // Each non-zero read takes the "still delivering" branch (queue drain ->
+    // setTimeout(0) -> check again), exercising the multi-iteration poll path
+    // that the other tests collapse into a single round.
+    stubPendingDeliveries(ctx, [2, 1, 1, 0, 0]);
+    const fn = vi.fn();
+
+    scheduleWhenIdle(ctx, fn);
+
+    // Drive the chain past several 0ms hops but stay well inside the
+    // propagation window. fn must still be pending while the poll loops.
+    await vi.advanceTimersByTimeAsync(DRAIN_MS);
+    expect(fn).not.toHaveBeenCalled();
+
+    // After the poll finally observes 0 and the propagation delay elapses,
+    // fn fires exactly once.
+    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });

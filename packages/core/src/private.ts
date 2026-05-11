@@ -214,7 +214,8 @@ export function scheduleWhenIdle(
 
     setTimeout(() => {
       if (ctx.pendingDeliveries > 0) {
-        sawPendingDeliveries = true;
+        // sawPendingDeliveries is already true on this branch (fireWhenReady's
+        // early return covers the false case), so no need to re-assign here.
         ctx.promiseQueue.then(() => {
           setTimeout(check, 0);
         });

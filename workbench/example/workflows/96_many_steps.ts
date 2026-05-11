@@ -25,6 +25,11 @@ export async function twoHundredStepsWorkflow() {
 // Reproduction workflow for the scheduleWhenIdle premature-suspension bug.
 // ---------------------------------------------------------------------------
 //
+// Symlinked into multiple workbenches (nextjs-turbopack, nextjs-webpack,
+// nitro-v3, sveltekit) even though the e2e currently runs only on
+// nextjs-turbopack + Vercel, so widening the test gate later does not require
+// re-creating the symlink set.
+//
 // Generic stress workflow for high-concurrency replay:
 //   setup -> validate -> create resource -> Promise.all([
 //     metadata task,
