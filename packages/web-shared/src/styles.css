@@ -742,12 +742,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: content-box;
   width: 1.5ch;
   height: 1em;
-  margin-right: 0.25ch;
+  /* Expand hit area beyond the visual icon (Fitts's Law) without
+     shifting surrounding layout. */
+  padding: 6px 4px;
+  margin-top: -6px;
+  margin-bottom: -6px;
+  margin-left: calc(-1.5ch - 4px);
+  margin-right: calc(0.25ch - 4px);
   color: var(--ds-gray-500);
   user-select: none;
-  margin-left: -1.5ch;
   outline: none;
   vertical-align: middle;
 }
