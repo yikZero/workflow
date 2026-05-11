@@ -493,6 +493,7 @@ export abstract class BaseBuilder {
    * Steps have full Node.js runtime access and handle side effects, API calls, etc.
    *
    * @param externalizeNonSteps - If true, only bundles step entry points and externalizes other code
+   * @param bundleTransitiveLocalStepDependencies - If true, also bundles project-local files imported by step entries for direct runtime loading
    * @returns Build context (for watch mode) and the collected workflow manifest
    */
   protected async createStepsBundle({
@@ -500,6 +501,7 @@ export abstract class BaseBuilder {
     format = 'cjs',
     outfile,
     externalizeNonSteps,
+    bundleTransitiveLocalStepDependencies,
     rewriteTsExtensions,
     tsconfigPath,
     discoveredEntries,
@@ -509,6 +511,7 @@ export abstract class BaseBuilder {
     outfile: string;
     format?: 'cjs' | 'esm';
     externalizeNonSteps?: boolean;
+    bundleTransitiveLocalStepDependencies?: boolean;
     rewriteTsExtensions?: boolean;
     discoveredEntries?: DiscoveredEntries;
   }): Promise<{
@@ -678,6 +681,7 @@ export abstract class BaseBuilder {
           outdir: outfile ? dirname(outfile) : undefined,
           projectRoot: this.transformProjectRoot,
           workflowManifest,
+          bundleTransitiveLocalStepDependencies,
           rewriteTsExtensions,
           sideEffectEntries: normalizedSideEffectEntries,
         }),
