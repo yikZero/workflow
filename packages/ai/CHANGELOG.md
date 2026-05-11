@@ -1,5 +1,21 @@
 # @workflow/ai
 
+## 5.0.0-beta.4
+
+### Patch Changes
+
+- Updated dependencies [[`aee5699`](https://github.com/vercel/workflow/commit/aee56993c777e6fc8d40af8d90ec3d4fbd86cdfe), [`8ea1532`](https://github.com/vercel/workflow/commit/8ea1532e48ed86ef9a66231e474851bed85c737a), [`72911f7`](https://github.com/vercel/workflow/commit/72911f7356238b0ef803455641f8ef5c9dd1545c)]:
+  - workflow@5.0.0-beta.5
+
+## 5.0.0-beta.3
+
+### Patch Changes
+
+- [#1544](https://github.com/vercel/workflow/pull/1544) [`3f6d98f`](https://github.com/vercel/workflow/commit/3f6d98f3f0b1e18af47a7665fa210d87f99ff979) Thanks [@iNishant](https://github.com/iNishant)! - Forward `strict`, `inputExamples`, and `providerOptions` tool properties to language model providers, and handle `type: 'dynamic'` tools
+
+- Updated dependencies [[`e295bae`](https://github.com/vercel/workflow/commit/e295bae417bd072f8e18e8d07c76d90d40ae7cec)]:
+  - workflow@5.0.0-beta.3
+
 ## 5.0.0-beta.2
 
 ### Patch Changes
