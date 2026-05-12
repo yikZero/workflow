@@ -595,7 +595,7 @@ const attributeToDisplayFn: Record<
   },
   output: (value: unknown) => {
     if (isEncryptedMarker(value)) {
-      return <DetailCard summary="Output" trailing={<DecryptTrailing />} />;
+      return null;
     }
     if (!hasDisplayContent(value)) return null;
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;

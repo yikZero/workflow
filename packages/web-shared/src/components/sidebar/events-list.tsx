@@ -284,7 +284,7 @@ export function EventsList({
   }
 
   return (
-    <DetailCard summary="Events" defaultOpen>
+    <DetailCard summary="Events" contentClassName="mb-0" defaultOpen>
       {isLoading ? (
         <div className="flex flex-col -mx-3">
           {[0, 1, 2].map((i) => (

@@ -135,7 +135,7 @@ export function DetailCard({
           </div>
           <span className="min-w-0 flex-1">{summary}</span>
         </summary>
-        <div className={contentClassName}>{children}</div>
+        <div className={cn('mb-3', contentClassName)}>{children}</div>
       </details>
     </section>
   );
