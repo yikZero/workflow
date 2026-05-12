@@ -151,7 +151,7 @@ function ConversationWithTabs({
   );
 
   return (
-    <DetailCard summary={`Input (${conversation.length} messages)`}>
+    <DetailCard summary="Input" defaultOpen>
       <TabbedContainer
         tabs={conversationTabs}
         activeTab={activeTab}
@@ -224,6 +224,45 @@ function EncryptedFieldBlock() {
       <Lock className="h-3 w-3" />
       <span className="font-medium">Encrypted</span>
     </div>
+  );
+}
+
+/**
+ * Compact Decrypt action rendered in a section header's trailing slot
+ * (replacing the chevron) when the field's value is an encrypted marker.
+ */
+function DecryptTrailing() {
+  const ctx = useContext(DecryptClickContext);
+  if (!ctx) {
+    return (
+      <span
+        className="flex items-center gap-1 text-[11px] font-medium"
+        style={{ color: 'var(--ds-gray-700)' }}
+      >
+        <Lock className="h-3 w-3" />
+        Encrypted
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={ctx.onDecrypt}
+      disabled={ctx.isDecrypting}
+      className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] cursor-pointer transition-colors"
+      style={{
+        borderColor: 'var(--ds-gray-400)',
+        backgroundColor: 'var(--ds-gray-100)',
+        color: 'var(--ds-gray-700)',
+        opacity: ctx.isDecrypting ? 0.6 : 1,
+      }}
+      title="Click to decrypt"
+    >
+      {ctx.isDecrypting ? <Spinner size={10} /> : <Lock className="h-3 w-3" />}
+      <span className="font-medium">
+        {ctx.isDecrypting ? 'Decrypting…' : 'Decrypt'}
+      </span>
+    </button>
   );
 }
 
@@ -473,7 +512,9 @@ const attributeToDisplayFn: Record<
     return JsonBlock(value);
   },
   input: (value: unknown, context?: DisplayContext) => {
-    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
+    if (isEncryptedMarker(value)) {
+      return <DetailCard summary="Input" trailing={<DecryptTrailing />} />;
+    }
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
     // Check if input has args + closure vars structure
     if (value && typeof value === 'object' && 'args' in value) {
@@ -482,8 +523,6 @@ const attributeToDisplayFn: Record<
         closureVars?: Record<string, unknown>;
         thisVal?: unknown;
       };
-      const argCount = Array.isArray(args) ? args.length : 0;
-      const argLabel = argCount === 1 ? 'argument' : 'arguments';
       const hasClosureVars = hasDisplayContent(closureVars);
       const hasThisVal = hasDisplayContent(thisVal);
       const hasArgs = hasDisplayContent(args);
@@ -512,22 +551,12 @@ const attributeToDisplayFn: Record<
 
       // Don't render an empty "Input (0 arguments)" card when no input exists.
       if (!hasArgs && !hasClosureVars && !hasThisVal) {
-        return (
-          <DetailCard
-            summary="Input (no data)"
-            disabled
-            summaryClassName="text-label-14 font-medium py-2"
-          />
-        );
+        return <DetailCard summary="Input (no data)" disabled />;
       }
 
       return (
         <>
-          <DetailCard
-            summary={`Input (${argCount} ${argLabel})`}
-            summaryClassName="text-label-14 font-medium py-2"
-            contentClassName="mt-0"
-          >
+          <DetailCard summary="Input" defaultOpen>
             {Array.isArray(args)
               ? args.map((v, i) => (
                   <div className="mt-2 first:mt-0" key={i}>
@@ -549,23 +578,11 @@ const attributeToDisplayFn: Record<
     }
 
     // Fallback: treat as plain array or object
-    const argCount = Array.isArray(value) ? value.length : 0;
-    const argLabel = argCount === 1 ? 'argument' : 'arguments';
     if (!hasDisplayContent(value)) {
-      return (
-        <DetailCard
-          summary="Input (no data)"
-          disabled
-          summaryClassName="text-label-14 font-medium py-2"
-        />
-      );
+      return <DetailCard summary="Input (no data)" disabled />;
     }
     return (
-      <DetailCard
-        summary={`Input (${argCount} ${argLabel})`}
-        summaryClassName="text-label-14 font-medium py-2"
-        contentClassName="mt-0"
-      >
+      <DetailCard summary="Input" defaultOpen>
         {Array.isArray(value)
           ? value.map((v, i) => (
               <div className="mt-2 first:mt-0" key={i}>
@@ -577,21 +594,21 @@ const attributeToDisplayFn: Record<
     );
   },
   output: (value: unknown) => {
+    if (isEncryptedMarker(value)) {
+      return <DetailCard summary="Output" trailing={<DecryptTrailing />} />;
+    }
     if (!hasDisplayContent(value)) return null;
-    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
     return (
-      <DetailCard
-        summary="Output"
-        summaryClassName="text-label-14 font-medium py-2"
-        contentClassName="mt-0"
-      >
+      <DetailCard summary="Output" defaultOpen>
         {JsonBlock(value)}
       </DetailCard>
     );
   },
   error: (value: unknown) => {
-    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
+    if (isEncryptedMarker(value)) {
+      return <DetailCard summary="Error" trailing={<DecryptTrailing />} />;
+    }
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
     if (!hasDisplayContent(value)) return null;
 
@@ -599,31 +616,29 @@ const attributeToDisplayFn: Record<
     // pre-formatted text. Otherwise fall back to the raw JSON viewer.
     if (isStructuredErrorWithStack(value)) {
       return (
-        <DetailCard
-          summary="Error"
-          summaryClassName="text-label-14 font-medium py-2"
-          contentClassName="mt-0"
-        >
+        <DetailCard summary="Error" defaultOpen>
           <ErrorStackBlock value={value} />
         </DetailCard>
       );
     }
 
     return (
-      <DetailCard
-        summary="Error"
-        summaryClassName="text-label-14 font-medium py-2"
-        contentClassName="mt-0"
-      >
+      <DetailCard summary="Error" defaultOpen>
         {JsonBlock(value)}
       </DetailCard>
     );
   },
   eventData: (value: unknown) => {
-    if (isEncryptedMarker(value)) return <EncryptedFieldBlock />;
+    if (isEncryptedMarker(value)) {
+      return <DetailCard summary="Event Data" trailing={<DecryptTrailing />} />;
+    }
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
     if (!hasDisplayContent(value)) return null;
-    return <DetailCard summary="Event Data">{JsonBlock(value)}</DetailCard>;
+    return (
+      <DetailCard summary="Event Data" defaultOpen>
+        {JsonBlock(value)}
+      </DetailCard>
+    );
   },
   errorCode: (value: unknown) => {
     if (typeof value !== 'string' || value.length === 0) return null;
@@ -638,6 +653,15 @@ const resolvableAttributes = [
   'metadata',
   'eventData',
 ];
+
+// Attributes whose displayFn renders its own section header via DetailCard,
+// so the outer AttributeBlock should not duplicate the label.
+const selfHeaderedAttributes = new Set([
+  'input',
+  'output',
+  'error',
+  'eventData',
+]);
 
 const ExpiredDataMessage = () => (
   <div
@@ -668,16 +692,8 @@ export const AttributeBlock = ({
   const isExpandableLoadingTarget =
     attribute === 'input' || attribute === 'eventData';
   if (isLoading && isExpandableLoadingTarget && !hasDisplayContent(value)) {
-    return (
-      <div
-        className={`my-2 flex flex-col ${attribute === 'input' ? 'gap-2 my-3.5' : 'gap-0'}`}
-      >
-        <span className="text-label-14 text-gray-1000 font-medium first-letter:uppercase">
-          {attribute}
-        </span>
-        <Skeleton className="h-9 w-full rounded-md" />
-      </div>
-    );
+    const label = attribute === 'eventData' ? 'Event Data' : 'Input';
+    return <DetailCard summary={label} />;
   }
 
   const displayFn =
@@ -706,6 +722,10 @@ export const AttributeBlock = ({
     );
   }
 
+  if (selfHeaderedAttributes.has(attribute)) {
+    return <>{displayValue}</>;
+  }
+
   return (
     <div className="relative">
       {typeof isLoading === 'boolean' && isLoading && (
@@ -716,10 +736,7 @@ export const AttributeBlock = ({
           />
         </div>
       )}
-      <div
-        key={attribute}
-        className={`my-2 flex flex-col ${attribute === 'input' || attribute === 'output' || attribute === 'error' ? 'gap-2 my-3.5' : 'gap-0'}`}
-      >
+      <div key={attribute} className="my-2 flex flex-col gap-0">
         <span className="text-label-14 text-gray-1000 font-medium first-letter:uppercase">
           {attribute}
         </span>
@@ -959,8 +976,11 @@ export const AttributePanel = ({
               />
             ) : hasExpired ? (
               <ExpiredDataMessage />
-            ) : (
-              <>
+            ) : resolvedAttributes.length > 0 ? (
+              <div
+                className="-mx-3 border-t px-3"
+                style={{ borderColor: 'var(--ds-gray-300)' }}
+              >
                 {resolvedAttributes.map((attribute) => (
                   <AttributeBlock
                     isLoading={isLoading}
@@ -970,8 +990,8 @@ export const AttributePanel = ({
                     context={displayContext}
                   />
                 ))}
-              </>
-            )}
+              </div>
+            ) : null}
           </div>
         </DecryptClickContext.Provider>
       </StreamClickContext.Provider>

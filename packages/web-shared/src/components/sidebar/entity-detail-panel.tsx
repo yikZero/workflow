@@ -412,30 +412,26 @@ export function EntityDetailPanel({
             </div>
           )}
 
-          <div className="space-y-4">
-            <section>
-              <AttributePanel
-                data={displayData}
-                moduleSpecifier={moduleSpecifier}
-                expiredAt={run.expiredAt}
-                isLoading={loading}
-                error={error ?? undefined}
-                onStreamClick={onStreamClick}
-                onRunClick={onRunClick}
-                onDecrypt={onDecrypt}
-                isDecrypting={isDecrypting}
-                resource={resource}
-              />
-            </section>
+          <div>
+            <AttributePanel
+              data={displayData}
+              moduleSpecifier={moduleSpecifier}
+              expiredAt={run.expiredAt}
+              isLoading={loading}
+              error={error ?? undefined}
+              onStreamClick={onStreamClick}
+              onRunClick={onRunClick}
+              onDecrypt={onDecrypt}
+              isDecrypting={isDecrypting}
+              resource={resource}
+            />
 
             {resource !== 'run' && rawEvents && (
-              <section>
-                <EventsList
-                  events={rawEvents}
-                  onLoadEventData={onLoadEventData}
-                  encryptionKey={encryptionKey}
-                />
-              </section>
+              <EventsList
+                events={rawEvents}
+                onLoadEventData={onLoadEventData}
+                encryptionKey={encryptionKey}
+              />
             )}
           </div>
         </div>

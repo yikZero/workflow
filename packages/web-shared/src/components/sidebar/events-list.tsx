@@ -111,10 +111,12 @@ function EventItem({
 
   return (
     <DetailCard
+      variant="card"
+      summaryClassName="px-3 py-2"
       summary={
         <div className="flex w-full items-center justify-between gap-3">
-          <span className="font-medium capitalize text-gray-1000 text-label-14 font-medium">
-            {event.eventType.replaceAll('_', ' ')}
+          <span className="text-gray-1000 text-label-12 font-mono">
+            {event.eventType}
           </span>
           <span className="shrink-0 text-label-13 text-gray-900">
             {createdAtTime}
@@ -130,23 +132,17 @@ function EventItem({
       }
     >
       {/* Event attributes */}
-      <div className="flex flex-col divide-y divide-gray-alpha-400 border-y border-gray-alpha-400">
-        <div className="flex items-center justify-between gap-4 p-3">
+      <div className="flex flex-col bg-background-200 [&:has(+_*)]:border-b [&:has(+_*)]:border-gray-alpha-400">
+        <div className="flex items-center justify-between gap-2 py-2 px-3">
           <span className="text-label-12">Event ID</span>
-          <span
-            className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono"
-            title={event.eventId}
-          >
+          <span className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono">
             {event.eventId}
           </span>
         </div>
         {event.correlationId && (
-          <div className="flex items-center justify-between gap-4 p-3">
-            <span className="text-label-12">Correlation ID</span>
-            <span
-              className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono"
-              title={event.correlationId}
-            >
+          <div className="flex items-center justify-between gap-2 py-2 px-3">
+            <span className="text-label-12 text-gray-1000">Correlation ID</span>
+            <span className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono">
               {event.correlationId}
             </span>
           </div>
@@ -155,10 +151,10 @@ function EventItem({
 
       {/* Loading state */}
       {isLoading && (
-        <div className="mt-2 p-3">
-          <Skeleton className="h-4 w-[35%] rounded-none" />
-          <Skeleton className="mt-2 h-4 w-[90%] rounded-none" />
-          <Skeleton className="mt-2 h-4 w-[75%] rounded-none" />
+        <div className="mt-2 rounded-md border border-gray-alpha-400 p-3">
+          <Skeleton className="h-4 w-[35%]" />
+          <Skeleton className="mt-2 h-4 w-[90%]" />
+          <Skeleton className="mt-2 h-4 w-[75%]" />
         </div>
       )}
 
@@ -173,7 +169,7 @@ function EventItem({
 
       {/* Event data */}
       {displayPayload != null && (
-        <div>
+        <div className="[&>div]:border-none [&>div]:rounded-none">
           <EventDataBlock eventType={event.eventType} data={displayPayload} />
         </div>
       )}
@@ -281,26 +277,28 @@ export function EventsList({
     [events]
   );
 
+  const hasEvents = sortedEvents.length > 0 && !error;
+
+  if (!hasEvents && !isLoading) {
+    return <DetailCard summary="Events" disabled />;
+  }
+
   return (
-    <div className="mt-2" style={{ color: 'var(--ds-gray-1000)' }}>
-      <h3
-        className="text-label-14 font-medium mt-4 mb-2"
-        style={{ color: 'var(--ds-gray-1000)' }}
-      >
-        Events
-      </h3>
+    <DetailCard summary="Events" defaultOpen>
       {isLoading ? (
-        <div className="flex flex-col gap-4">
-          <Skeleton className="h-9 w-full rounded-none" />
-          <Skeleton className="h-9 w-full rounded-none" />
-          <Skeleton className="h-9 w-full rounded-none" />
+        <div className="flex flex-col -mx-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between gap-3 bg-background-200 px-3 py-2"
+            >
+              <Skeleton className="h-4 w-32 rounded" />
+              <Skeleton className="h-3 w-16 rounded" />
+            </div>
+          ))}
         </div>
-      ) : null}
-      {!isLoading && !error && sortedEvents.length === 0 && (
-        <div className="text-sm">No events found</div>
-      )}
-      {sortedEvents.length > 0 && !error ? (
-        <div className="flex flex-col -mx-3 divide-y divide-gray-alpha-400 border-y border-gray-alpha-400">
+      ) : (
+        <div className="flex flex-col -mx-3">
           {sortedEvents.map((event) => (
             <EventItem
               key={event.eventId}
@@ -310,7 +308,7 @@ export function EventsList({
             />
           ))}
         </div>
-      ) : null}
-    </div>
+      )}
+    </DetailCard>
   );
 }
