@@ -459,7 +459,6 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
     );
   }, [selectedSpan?.data, selectedSpan?.resource]);
 
-  const selectedResource = selectedSpan?.resource as string | undefined;
   const selectedResourceId = useMemo(() => {
     if (!selectedSpan?.data) return undefined;
     const data = selectedSpan.data as Record<string, unknown>;
