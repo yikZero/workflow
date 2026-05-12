@@ -151,7 +151,7 @@ function ConversationWithTabs({
   );
 
   return (
-    <DetailCard summary="Input" defaultOpen>
+    <DetailCard summary="Input">
       <TabbedContainer
         tabs={conversationTabs}
         activeTab={activeTab}
@@ -556,7 +556,7 @@ const attributeToDisplayFn: Record<
 
       return (
         <>
-          <DetailCard summary="Input" defaultOpen>
+          <DetailCard summary="Input">
             {Array.isArray(args)
               ? args.map((v, i) => (
                   <div className="mt-2 first:mt-0" key={i}>
@@ -582,7 +582,7 @@ const attributeToDisplayFn: Record<
       return <DetailCard summary="Input (no data)" disabled />;
     }
     return (
-      <DetailCard summary="Input" defaultOpen>
+      <DetailCard summary="Input">
         {Array.isArray(value)
           ? value.map((v, i) => (
               <div className="mt-2 first:mt-0" key={i}>
@@ -599,11 +599,7 @@ const attributeToDisplayFn: Record<
     }
     if (!hasDisplayContent(value)) return null;
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
-    return (
-      <DetailCard summary="Output" defaultOpen>
-        {JsonBlock(value)}
-      </DetailCard>
-    );
+    return <DetailCard summary="Output">{JsonBlock(value)}</DetailCard>;
   },
   error: (value: unknown) => {
     if (isEncryptedMarker(value)) {
