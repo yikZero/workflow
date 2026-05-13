@@ -10,10 +10,9 @@
  * caller's region cannot be determined, and decode will surface it as
  * `region: null`.
  *
- * The list below covers the 21 compute regions in
- * `vercel/infra/dc-discovery/production/dcs.json` plus `hel1` and `zrh1`
- * (which exist as top-level dirs in `vercel/infra` and are reserved here for
- * future rollout without requiring a version bump).
+ * The list below covers the 21 currently-deployed Vercel compute regions plus
+ * `hel1` and `zrh1`, which are reserved for future rollout so they can be
+ * assigned without requiring a version bump.
  */
 export const REGION_IDS = {
   unknown: 0,
