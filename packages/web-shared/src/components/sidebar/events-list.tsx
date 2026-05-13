@@ -134,15 +134,15 @@ function EventItem({
       {/* Event attributes */}
       <div className="flex flex-col bg-background-200 [&:has(+_*)]:border-b [&:has(+_*)]:border-gray-alpha-400">
         <div className="flex items-center justify-between gap-2 py-2 px-3">
-          <span className="text-label-12">Event ID</span>
-          <span className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono">
+          <span className="text-label-12 text-gray-900">Event ID</span>
+          <span className="max-w-[70%] truncate text-right text-label-12 font-mono">
             {event.eventId}
           </span>
         </div>
         {event.correlationId && (
           <div className="flex items-center justify-between gap-2 py-2 px-3">
-            <span className="text-label-12 text-gray-1000">Correlation ID</span>
-            <span className="max-w-[70%] truncate text-right text-label-12 text-gray-900 font-mono">
+            <span className="text-label-12 text-gray-900">Correlation ID</span>
+            <span className="max-w-[70%] truncate text-right text-label-12 font-mono">
               {event.correlationId}
             </span>
           </div>
@@ -151,7 +151,7 @@ function EventItem({
 
       {/* Loading state */}
       {isLoading && (
-        <div className="mt-2 rounded-md border border-gray-alpha-400 p-3">
+        <div>
           <Skeleton className="h-4 w-[35%]" />
           <Skeleton className="mt-2 h-4 w-[90%]" />
           <Skeleton className="mt-2 h-4 w-[75%]" />
