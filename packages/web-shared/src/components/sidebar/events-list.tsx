@@ -155,7 +155,6 @@ function EventItem({
           <Skeleton className="h-4 w-[35%]" />
           <Skeleton className="mt-2 h-4 w-[90%]" />
           <Skeleton className="mt-2 h-4 w-[75%]" />
-          <Skeleton className="mt-2 h-4 w-[30%]" />
         </div>
       )}
 
