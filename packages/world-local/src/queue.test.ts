@@ -9,7 +9,11 @@ vi.mock('node:timers/promises', () => ({
   setTimeout: vi.fn().mockResolvedValue(undefined),
 }));
 
-const stepPayload: StepInvokePayload = {
+// A representative payload — these tests only exercise the queue's retry
+// semantics, not the route resolution, so the exact shape isn't important.
+// Using `StepInvokePayload` keeps a recognisable shape from the legacy
+// two-route architecture; the queue treats it as opaque JSON.
+const queuePayload: StepInvokePayload = {
   workflowName: 'test-workflow',
   workflowRunId: 'run_01ABC',
   workflowStartedAt: Date.now(),
@@ -63,7 +67,7 @@ describe('queue timeout re-enqueue', () => {
         'x-vqs-message-id': 'msg_01ABC',
         'x-vqs-message-attempt': '1',
       },
-      body: JSON.stringify(stepPayload),
+      body: JSON.stringify(queuePayload),
     });
 
     const response = await handler(req);
@@ -87,7 +91,7 @@ describe('queue timeout re-enqueue', () => {
         'x-vqs-message-id': 'msg_01ABC',
         'x-vqs-message-attempt': '1',
       },
-      body: JSON.stringify(stepPayload),
+      body: JSON.stringify(queuePayload),
     });
 
     const response = await handler(req);
@@ -110,7 +114,7 @@ describe('queue timeout re-enqueue', () => {
         'x-vqs-message-id': 'msg_01ABC',
         'x-vqs-message-attempt': '1',
       },
-      body: JSON.stringify(stepPayload),
+      body: JSON.stringify(queuePayload),
     });
 
     const response = await handler(req);
@@ -122,18 +126,21 @@ describe('queue timeout re-enqueue', () => {
 
   it('queue retries when handler returns timeoutSeconds > 0', async () => {
     let callCount = 0;
-    const handler = localQueue.createQueueHandler('__wkf_step_', async () => {
-      callCount++;
-      if (callCount < 3) {
-        return { timeoutSeconds: 5 };
+    const handler = localQueue.createQueueHandler(
+      '__wkf_workflow_',
+      async () => {
+        callCount++;
+        if (callCount < 3) {
+          return { timeoutSeconds: 5 };
+        }
+        // Third call succeeds normally
+        return undefined;
       }
-      // Third call succeeds normally
-      return undefined;
-    });
+    );
 
-    localQueue.registerHandler('__wkf_step_', handler);
+    localQueue.registerHandler('__wkf_workflow_', handler);
 
-    await localQueue.queue('__wkf_step_test' as any, stepPayload);
+    await localQueue.queue('__wkf_workflow_test' as any, queuePayload);
 
     // Wait for the async queue processing to complete
     // The queue fires off processing asynchronously, so we need to wait
@@ -147,17 +154,20 @@ describe('queue timeout re-enqueue', () => {
     vi.mocked(mockSetTimeout).mockClear();
 
     let callCount = 0;
-    const handler = localQueue.createQueueHandler('__wkf_step_', async () => {
-      callCount++;
-      if (callCount < 3) {
-        return { timeoutSeconds: 0 };
+    const handler = localQueue.createQueueHandler(
+      '__wkf_workflow_',
+      async () => {
+        callCount++;
+        if (callCount < 3) {
+          return { timeoutSeconds: 0 };
+        }
+        return undefined;
       }
-      return undefined;
-    });
+    );
 
-    localQueue.registerHandler('__wkf_step_', handler);
+    localQueue.registerHandler('__wkf_workflow_', handler);
 
-    await localQueue.queue('__wkf_step_test' as any, stepPayload);
+    await localQueue.queue('__wkf_workflow_test' as any, queuePayload);
 
     await vi.waitFor(() => {
       expect(callCount).toBe(3);
