@@ -40,21 +40,16 @@ export interface StartOptionsBase {
   specVersion?: number;
 
   /**
-   * Optional, world-specific hints forwarded verbatim to
-   * {@link World.createRunId | `world.createRunId`} when minting the
-   * run ID. The accepted keys depend on the active World implementation;
-   * unrecognised keys are ignored.
+   * Optional region identifier for the new run. Currently consumed only
+   * by `@workflow/world-vercel`, which embeds the region into the tagged
+   * run ID and routes the initial workflow message to the matching
+   * regional queue. When omitted, the world falls back to its own
+   * default (for `world-vercel`: the `VERCEL_REGION` environment
+   * variable, then the `unknown` sentinel).
    *
-   * For example, `@workflow/world-vercel` recognises a `region` key
-   * (a Vercel compute region code such as `'iad1'`) and embeds the
-   * corresponding region ID into the tagged run ID. When omitted there,
-   * the world falls back to the `VERCEL_REGION` environment variable.
-   *
-   * If `runIdInput.region` is set, `start()` additionally forwards it on
-   * the queue options so the initial workflow message is dispatched to
-   * the same region the run claims to belong to.
+   * Worlds without a regional dimension ignore this field.
    */
-  runIdInput?: Record<string, unknown>;
+  region?: string;
 }
 
 export interface StartOptionsWithDeploymentId extends StartOptionsBase {
@@ -187,11 +182,13 @@ export async function start<TArgs extends unknown[], TResult>(
       // (required for future E2E encryption where runId is part of the
       // encryption context). When the World provides a `createRunId()`
       // implementation, use it so worlds can embed implementation-specific
-      // metadata (e.g., region) into the ID, forwarding any caller-supplied
-      // hints from `opts.runIdInput`; otherwise fall back to a standard
-      // monotonic ULID.
+      // metadata (e.g., region) into the ID, forwarding the full options
+      // bag so worlds can read whichever fields they recognise; otherwise
+      // fall back to a standard monotonic ULID.
       const runId = `wrun_${
-        world.createRunId ? world.createRunId(opts.runIdInput) : ulid()
+        world.createRunId
+          ? world.createRunId(opts as Readonly<Record<string, unknown>>)
+          : ulid()
       }`;
 
       // Serialize current trace context to propagate across queue boundary
@@ -279,9 +276,7 @@ export async function start<TArgs extends unknown[], TResult>(
             // per-region queue routing (e.g. world-vercel) can target the
             // matching queue. Worlds without a regional dimension ignore
             // this field.
-            ...(typeof opts.runIdInput?.region === 'string'
-              ? { region: opts.runIdInput.region }
-              : {}),
+            ...(opts.region !== undefined ? { region: opts.region } : {}),
           }
         ),
       ]);

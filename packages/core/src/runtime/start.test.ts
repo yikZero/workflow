@@ -570,8 +570,9 @@ describe('start', () => {
       await start(validWorkflow, []);
 
       expect(createRunId).toHaveBeenCalledTimes(1);
-      // No `runIdInput` was passed, so the world receives `undefined`.
-      expect(createRunId).toHaveBeenCalledWith(undefined);
+      // No options were passed, so the world receives an empty object
+      // (the default value used internally).
+      expect(createRunId).toHaveBeenCalledWith({});
       expect(mockEventsCreate).toHaveBeenCalledWith(
         `wrun_${customId}`,
         expect.objectContaining({ eventType: 'run_created' }),
@@ -579,7 +580,7 @@ describe('start', () => {
       );
     });
 
-    it('forwards runIdInput to world.createRunId() and threads region onto queue opts', async () => {
+    it('passes the full options bag through to world.createRunId()', async () => {
       const validWorkflow = Object.assign(() => Promise.resolve('result'), {
         workflowId: 'test-workflow',
       });
@@ -595,13 +596,31 @@ describe('start', () => {
       } as any);
 
       await start(validWorkflow, [], {
-        runIdInput: { region: 'fra1', extra: 'ignored' },
+        region: 'fra1',
+        specVersion: 3,
       });
 
-      expect(createRunId).toHaveBeenCalledWith({
-        region: 'fra1',
-        extra: 'ignored',
+      expect(createRunId).toHaveBeenCalledWith(
+        expect.objectContaining({ region: 'fra1', specVersion: 3 })
+      );
+    });
+
+    it('threads opts.region onto queue opts', async () => {
+      const validWorkflow = Object.assign(() => Promise.resolve('result'), {
+        workflowId: 'test-workflow',
       });
+
+      const customId = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+
+      setWorld({
+        getDeploymentId: vi.fn().mockResolvedValue('deploy_123'),
+        events: { create: mockEventsCreate },
+        queue: mockQueue,
+        createRunId: vi.fn().mockReturnValue(customId),
+      } as any);
+
+      await start(validWorkflow, [], { region: 'fra1' });
+
       expect(mockQueue).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ runId: `wrun_${customId}` }),
@@ -609,7 +628,7 @@ describe('start', () => {
       );
     });
 
-    it('omits region from queue opts when runIdInput.region is not a string', async () => {
+    it('omits region from queue opts when opts.region is undefined', async () => {
       const validWorkflow = Object.assign(() => Promise.resolve('result'), {
         workflowId: 'test-workflow',
       });
@@ -621,7 +640,7 @@ describe('start', () => {
         createRunId: vi.fn().mockReturnValue('01ARZ3NDEKTSV4RRFFQ69G5FAV'),
       } as any);
 
-      await start(validWorkflow, [], { runIdInput: { region: 123 as any } });
+      await start(validWorkflow, []);
 
       const queueOpts = mockQueue.mock.calls[0][2];
       expect(queueOpts).not.toHaveProperty('region');

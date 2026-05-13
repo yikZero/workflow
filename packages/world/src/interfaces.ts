@@ -317,12 +317,13 @@ export interface World extends Queue, Streamer, Storage {
    * valid ULID. When omitted, `start()` falls back to generating a standard
    * monotonic ULID.
    *
-   * @param input - Optional world-specific hints forwarded from
-   *   `start()`'s `runIdInput` option. The shape is intentionally opaque
-   *   at the interface level so that each World can document its own
-   *   recognised fields (e.g. `world-vercel` recognises `region`).
-   *   Unrecognised keys must be ignored. When the caller did not provide
-   *   any hints, this is `undefined`.
+   * @param options - The full options bag passed to `start()` (typed as
+   *   `Record<string, unknown>` here to avoid a circular dependency with
+   *   `@workflow/core`). Worlds should read only the fields they
+   *   recognise — for example, `@workflow/world-vercel` reads
+   *   `options.region` to embed a region identifier. Unrecognised keys
+   *   must be ignored. When `start()` was called with no options, this is
+   *   `undefined`.
    */
-  createRunId?(input?: Record<string, unknown>): string;
+  createRunId?(options?: Readonly<Record<string, unknown>>): string;
 }

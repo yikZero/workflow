@@ -62,37 +62,25 @@ function coerceRegion(value: unknown): RegionCode | null {
 
 /**
  * Resolve the effective region for a run, preferring an explicit value
- * supplied via the `input` hint over the `VERCEL_REGION` environment
- * variable. Returns `null` when neither source yields a recognised region,
- * in which case the run ID falls back to the `unknown` (0) region tag.
+ * supplied via the `start()` options bag over the `VERCEL_REGION`
+ * environment variable. Returns `null` when neither source yields a
+ * recognised region, in which case the run ID falls back to the `unknown`
+ * (0) region tag.
  */
 function resolveRegion(
-  input: Record<string, unknown> | undefined
+  options: Readonly<Record<string, unknown>> | undefined
 ): RegionCode | null {
-  return coerceRegion(input?.region) ?? coerceRegion(process.env.VERCEL_REGION);
-}
-
-/**
- * Options recognised by world-vercel's {@link createRunId}.
- *
- * Forwarded by `start()` via its `runIdInput` option; any keys not listed
- * here are ignored.
- */
-export interface CreateRunIdInput {
-  /**
-   * Override the Vercel region to embed in the run ID. When omitted, falls
-   * back to the `VERCEL_REGION` environment variable, and then to the
-   * `unknown` (0) region sentinel.
-   */
-  region?: RegionCode;
+  return (
+    coerceRegion(options?.region) ?? coerceRegion(process.env.VERCEL_REGION)
+  );
 }
 
 /**
  * `World.createRunId` implementation that mints region-tagged ULIDs.
  *
  * Region resolution order (first non-empty wins):
- *   1. `input.region` — explicit caller-supplied region from
- *      `start({ runIdInput: { region } })`.
+ *   1. `options.region` — explicit caller-supplied region forwarded by
+ *      `start({ region })`.
  *   2. `process.env.VERCEL_REGION` — the region the current Vercel function
  *      is executing in.
  *   3. Region ID 0 (`unknown`) — the resulting ULID is still tagged but
@@ -105,8 +93,10 @@ export interface CreateRunIdInput {
  * the last emitted ID and bumping the candidate lexicographically until
  * it is strictly greater.
  */
-export function createRunId(input?: Record<string, unknown>): string {
-  const region = resolveRegion(input);
+export function createRunId(
+  options?: Readonly<Record<string, unknown>>
+): string {
+  const region = resolveRegion(options);
   const regionId = region == null ? REGION_IDS.unknown : REGION_IDS[region];
   let candidate = encode(ulid(), regionId);
   // Same-ms calls share a timestamp and the underlying monotonic factory's

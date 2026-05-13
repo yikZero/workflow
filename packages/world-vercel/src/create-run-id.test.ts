@@ -90,7 +90,7 @@ describe('createRunId', () => {
     });
   });
 
-  describe('with an explicit `input.region`', () => {
+  describe('with an explicit `options.region`', () => {
     it('prefers an explicit region over VERCEL_REGION', () => {
       process.env.VERCEL_REGION = 'iad1';
       const decoded = decode(createRunId({ region: 'fra1' }));
@@ -98,19 +98,19 @@ describe('createRunId', () => {
       expect(decoded.regionId).toBe(REGION_IDS.fra1);
     });
 
-    it('still falls back to VERCEL_REGION when input.region is missing', () => {
+    it('still falls back to VERCEL_REGION when options.region is missing', () => {
       process.env.VERCEL_REGION = 'sfo1';
       const decoded = decode(createRunId({}));
       expect(decoded.region).toBe('sfo1');
     });
 
-    it('falls back to VERCEL_REGION when input.region is an unrecognised string', () => {
+    it('falls back to VERCEL_REGION when options.region is an unrecognised string', () => {
       process.env.VERCEL_REGION = 'sfo1';
       const decoded = decode(createRunId({ region: 'xyz9' }));
       expect(decoded.region).toBe('sfo1');
     });
 
-    it('falls back to VERCEL_REGION when input.region is the empty string', () => {
+    it('falls back to VERCEL_REGION when options.region is the empty string', () => {
       process.env.VERCEL_REGION = 'sfo1';
       const decoded = decode(createRunId({ region: '' }));
       expect(decoded.region).toBe('sfo1');
@@ -124,13 +124,22 @@ describe('createRunId', () => {
       expect(decoded.region).toBe('sfo1');
     });
 
-    it('ignores unrelated keys in the input bag', () => {
+    it('ignores unrelated keys in the options bag', () => {
+      // start()'s opts object contains keys like `deploymentId`,
+      // `specVersion`, `world`, etc. — `createRunId` reads only the
+      // fields it recognises and ignores the rest.
       process.env.VERCEL_REGION = 'iad1';
-      const decoded = decode(createRunId({ unrelated: 'value' }));
+      const decoded = decode(
+        createRunId({
+          deploymentId: 'dpl_test',
+          specVersion: 3,
+          unrelated: 'value',
+        })
+      );
       expect(decoded.region).toBe('iad1');
     });
 
-    it('accepts an undefined input (matching the World.createRunId signature)', () => {
+    it('accepts an undefined options bag (matching the World.createRunId signature)', () => {
       process.env.VERCEL_REGION = 'iad1';
       const decoded = decode(createRunId(undefined));
       expect(decoded.region).toBe('iad1');
