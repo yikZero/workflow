@@ -38,6 +38,11 @@ describe('codec / ulidToBytes & bytesToUlid', () => {
     const ulid = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
     const bytes = ulidToBytes(ulid);
     expect(bytes).toHaveLength(ULID_BYTE_LENGTH);
+    // Sanity-check the byte-level decoding of this ULID-spec example string.
+    expect(Array.from(bytes)).toEqual([
+      0x01, 0x56, 0x3e, 0x3a, 0xb5, 0xd3, 0xd6, 0x76, 0x4c, 0x61, 0xef, 0xb9,
+      0x93, 0x02, 0xbd, 0x5b,
+    ]);
     expect(bytesToUlid(bytes)).toBe(ulid);
   });
 
@@ -108,9 +113,19 @@ describe('codec / isTaggedString', () => {
     const bytes = new Uint8Array(ULID_BYTE_LENGTH);
     bytes[0] = TAG_BIT_MASK;
     const tagged = bytesToUlid(bytes);
+    expect(tagged).toBe('40000000000000000000000000');
     expect(isTaggedString(tagged)).toBe(true);
     // First char of a value with byte[0] = 0x80 should be '4' (0b100).
     expect(tagged[0]).toBe('4');
+  });
+
+  it('returns true for any ULID whose first char is in [4..7]', () => {
+    expect(isTaggedString(`4${'0'.repeat(25)}`)).toBe(true);
+    expect(isTaggedString(`5${'0'.repeat(25)}`)).toBe(true);
+    expect(isTaggedString(`6${'0'.repeat(25)}`)).toBe(true);
+    expect(isTaggedString(`7${'Z'.repeat(25)}`)).toBe(true);
+    expect(isTaggedString(`0${'0'.repeat(25)}`)).toBe(false);
+    expect(isTaggedString(`3${'Z'.repeat(25)}`)).toBe(false);
   });
 
   it('returns false for non-strings, wrong lengths, and invalid chars', () => {

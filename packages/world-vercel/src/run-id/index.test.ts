@@ -16,25 +16,32 @@ const SAMPLE_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 describe('encode / decode round-trip', () => {
   it('encodes with default version=1 and the iad1 region code', () => {
     const tagged = encode(SAMPLE_ULID, 'iad1');
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E21');
     expect(tagged).toHaveLength(26);
     expect(isTagged(tagged)).toBe(true);
 
     const decoded = decode(tagged);
-    expect(decoded.tagged).toBe(true);
-    expect(decoded.region).toBe('iad1');
-    expect(decoded.regionId).toBe(REGION_IDS.iad1);
-    expect(decoded.version).toBe(CURRENT_VERSION);
+    expect(decoded).toEqual({
+      tagged: true,
+      ulid: '01ARZ3NDEKTSV4RRFFQ69G5E21',
+      region: 'iad1',
+      regionId: REGION_IDS.iad1,
+      version: CURRENT_VERSION,
+    });
   });
 
   it('accepts numeric region IDs', () => {
     const tagged = encode(SAMPLE_ULID, 7);
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E27');
     const decoded = decode(tagged);
     expect(decoded.regionId).toBe(7);
     expect(decoded.region).toBe('dub1');
+    expect(decoded.ulid).toBe('01ARZ3NDEKTSV4RRFFQ69G5E27');
   });
 
   it('returns region: null for unknown but in-range region IDs', () => {
     const tagged = encode(SAMPLE_ULID, 63);
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E3Z');
     const decoded = decode(tagged);
     expect(decoded.regionId).toBe(63);
     expect(decoded.region).toBeNull();
@@ -42,6 +49,7 @@ describe('encode / decode round-trip', () => {
 
   it('encodes regionId=0 as the "unknown" sentinel', () => {
     const tagged = encode(SAMPLE_ULID, 0);
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E20');
     const decoded = decode(tagged);
     expect(decoded.regionId).toBe(0);
     expect(decoded.region).toBeNull();
@@ -49,9 +57,11 @@ describe('encode / decode round-trip', () => {
 
   it('accepts an explicit version override', () => {
     const tagged = encode(SAMPLE_ULID, 'iad1', { version: 0 });
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E01');
     expect(decode(tagged).version).toBe(0);
 
     const tagged2 = encode(SAMPLE_ULID, 'iad1', { version: MAX_VERSION });
+    expect(tagged2).toBe('41ARZ3NDEKTSV4RRFFQ69G5FY1');
     expect(decode(tagged2).version).toBe(MAX_VERSION);
   });
 
@@ -72,7 +82,9 @@ describe('encode / decode round-trip', () => {
 
   it('clears only the tag bit in the decoded ULID', () => {
     const tagged = encode(SAMPLE_ULID, 'fra1', { version: 5 });
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5EAA');
     const decoded = decode(tagged);
+    expect(decoded.ulid).toBe('01ARZ3NDEKTSV4RRFFQ69G5EAA');
 
     // The decoded ulid must NOT have the tag bit set.
     expect(isTagged(decoded.ulid)).toBe(false);
@@ -88,23 +100,51 @@ describe('encode / decode round-trip', () => {
   });
 
   it('overwrites the tag bit and metadata bits even if the input has them set', () => {
-    // Synthesize a ULID with byte[0] tag bit pre-set and garbage in metadata.
+    // Synthesize a ULID with byte[0] = 0x40 (some non-tag bits set) and
+    // garbage in the metadata bytes.
     const bytes = new Uint8Array(ULID_BYTE_LENGTH);
-    bytes[0] = 0x40; // some timestamp bits, tag bit NOT set yet
+    bytes[0] = 0x40;
     bytes[14] = 0xff;
     bytes[15] = 0xff;
     const dirty = bytesToUlid(bytes);
+    expect(dirty).toBe('20000000000000000000001ZZZ');
 
     const tagged = encode(dirty, 'sfo1', { version: 3 });
+    expect(tagged).toBe('60000000000000000000001Y62');
     const decoded = decode(tagged);
     expect(decoded.region).toBe('sfo1');
     expect(decoded.regionId).toBe(REGION_IDS.sfo1);
     expect(decoded.version).toBe(3);
+    expect(decoded.ulid).toBe('20000000000000000000001Y62');
   });
 
-  it('encode emits an uppercase result', () => {
+  it('encode emits an uppercase result for lowercase Crockford input', () => {
     const tagged = encode(SAMPLE_ULID.toLowerCase(), 'iad1');
+    expect(tagged).toBe('41ARZ3NDEKTSV4RRFFQ69G5E21');
     expect(tagged).toBe(tagged.toUpperCase());
+  });
+
+  it('encodes well-known boundary inputs to exact strings', () => {
+    // Zero ULID with zero metadata: only the tag bit is set, so byte[0] = 0x80.
+    // 0x80 → first 5-bit chunk (0b00100) → '4'; rest are all zero.
+    expect(encode('0'.repeat(26), 0, { version: 0 })).toBe(
+      '40000000000000000000000000'
+    );
+    // Zero ULID with region=1, version=1: byte[15] = 0b01_000001 = 0x41,
+    // which encodes the last two chars as '21'.
+    expect(encode('0'.repeat(26), 1, { version: 1 })).toBe(
+      '40000000000000000000000021'
+    );
+    // Zero ULID with max region (63) and max version (31): the last 11 bits
+    // are all-ones, spilling into bits 0..2 of byte[14] as well.
+    expect(encode('0'.repeat(26), 63, { version: 31 })).toBe(
+      '400000000000000000000001ZZ'
+    );
+    // Max ULID with zero metadata: the metadata bits are forced to 0 even
+    // though the source had them set, demonstrating overwrite semantics.
+    expect(encode('7ZZZZZZZZZZZZZZZZZZZZZZZZZ', 0, { version: 0 })).toBe(
+      '7ZZZZZZZZZZZZZZZZZZZZZZY00'
+    );
   });
 });
 
@@ -216,9 +256,9 @@ describe('region table coverage', () => {
 describe('lexicographic order', () => {
   it('all tagged ULIDs sort above all untagged ULIDs', () => {
     // Tag bit on byte[0] sets the first char to ≥ '4'. Plain ULIDs that
-    // haven't blown past year 2248 start with '0' or '1'. Pick a max-plain
-    // ULID and a min-tagged ULID and confirm ordering.
+    // haven't blown past year 2248 start with '0' or '1'.
     const minTagged = encode('0'.repeat(26), 0, { version: 0 });
+    expect(minTagged).toBe('40000000000000000000000000');
     expect(minTagged > '3'.repeat(26)).toBe(true);
   });
 
@@ -231,6 +271,8 @@ describe('lexicographic order', () => {
     expect(a < b).toBe(true);
     const ta = encode(a, 'iad1');
     const tb = encode(b, 'iad1');
+    expect(ta).toBe('41ARZ3NDEKTSV4RRFFQ69G5E21');
+    expect(tb).toBe('41ARZ3NDEMTSV4RRFFQ69G5E21');
     expect(ta < tb).toBe(true);
   });
 });
