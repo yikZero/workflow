@@ -1,7 +1,7 @@
 'use client';
 
 import { EVENT_DATA_REF_FIELDS, type Event } from '@workflow/world';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isExpiredMarker } from '../../lib/hydration';
 import { ErrorCard } from '../ui/error-card';
 import {
@@ -93,7 +93,7 @@ function EventItem({
 
   // When the encryption key changes and this event was previously expanded,
   // re-load the data so it gets decrypted
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!encryptionKey || !wasExpandedRef.current) return;
     loadedDataRef.current = null;
     setLoadedData(null);
@@ -151,10 +151,11 @@ function EventItem({
 
       {/* Loading state */}
       {isLoading && (
-        <div>
+        <div className="p-3">
           <Skeleton className="h-4 w-[35%]" />
           <Skeleton className="mt-2 h-4 w-[90%]" />
           <Skeleton className="mt-2 h-4 w-[75%]" />
+          <Skeleton className="mt-2 h-4 w-[30%]" />
         </div>
       )}
 
