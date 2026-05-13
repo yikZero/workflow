@@ -1,7 +1,6 @@
 'use client';
 
-import { Copy } from 'lucide-react';
-import { useToast } from '../../lib/toast';
+import { CopyButton } from '../new-trace-viewer/components/copy-button';
 import { DataInspector } from '../ui/data-inspector';
 
 const serializeForClipboard = (value: unknown): string => {
@@ -21,28 +20,13 @@ const serializeForClipboard = (value: unknown): string => {
 };
 
 export function CopyableDataBlock({ data }: { data: unknown }) {
-  const toast = useToast();
   return (
     <div className="relative overflow-x-auto rounded-md border border-gray-alpha-400 p-3">
-      <button
-        type="button"
-        aria-label="Copy data"
-        title="Copy"
-        className="!absolute !right-2 !top-2 !flex !h-6 !w-6 !items-center !justify-center !rounded-md !border !bg-[var(--ds-background-100)] !text-[var(--ds-gray-800)] transition-transform transition-colors duration-100 hover:!bg-[var(--ds-gray-alpha-200)] active:!scale-95 active:!bg-[var(--ds-gray-alpha-300)]"
-        style={{ borderColor: 'var(--ds-gray-300)' }}
-        onClick={() => {
-          navigator.clipboard
-            .writeText(serializeForClipboard(data))
-            .then(() => {
-              toast.success('Copied to clipboard');
-            })
-            .catch(() => {
-              toast.error('Failed to copy');
-            });
-        }}
-      >
-        <Copy size={12} />
-      </button>
+      <CopyButton
+        copyText={serializeForClipboard(data)}
+        ariaLabel="Copy data"
+        className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-gray-alpha-400 !bg-background-100 p-0 text-gray-900 transition-transform transition-colors duration-100 hover:bg-gray-200 active:scale-95 active:bg-gray-300"
+      />
       <DataInspector data={data} />
     </div>
   );
