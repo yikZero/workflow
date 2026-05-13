@@ -304,4 +304,25 @@ export interface World extends Queue, Streamer, Storage {
     runId: string,
     context?: Record<string, unknown>
   ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Mint a new workflow run ID.
+   *
+   * Called by `start()` to generate the unique ID for a newly-created run.
+   * The returned value is the "bare" ID (without any `wrun_` prefix); the
+   * core attaches the prefix.
+   *
+   * Implementations are free to embed world-specific metadata in the ID
+   * (e.g., a region identifier) as long as the returned string remains a
+   * valid ULID. When omitted, `start()` falls back to generating a standard
+   * monotonic ULID.
+   *
+   * @param input - Optional world-specific hints forwarded from
+   *   `start()`'s `runIdInput` option. The shape is intentionally opaque
+   *   at the interface level so that each World can document its own
+   *   recognised fields (e.g. `world-vercel` recognises `region`).
+   *   Unrecognised keys must be ignored. When the caller did not provide
+   *   any hints, this is `undefined`.
+   */
+  createRunId?(input?: Record<string, unknown>): string;
 }

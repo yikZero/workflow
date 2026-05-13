@@ -20,9 +20,9 @@ import * as Attribute from '../telemetry/semantic-conventions.js';
 import { serializeTraceCarrier, trace } from '../telemetry.js';
 import { waitedUntil } from '../util.js';
 import { version as workflowCoreVersion } from '../version.js';
+import { getWorldLazy } from './get-world-lazy.js';
 import { getWorkflowQueueName } from './helpers.js';
 import { Run } from './run.js';
-import { getWorldLazy } from './get-world-lazy.js';
 
 /** ULID generator for client-side runId generation */
 const ulid = monotonicFactory();
@@ -38,6 +38,23 @@ export interface StartOptionsBase {
    * The spec version to use for the workflow run. Defaults to the latest version.
    */
   specVersion?: number;
+
+  /**
+   * Optional, world-specific hints forwarded verbatim to
+   * {@link World.createRunId | `world.createRunId`} when minting the
+   * run ID. The accepted keys depend on the active World implementation;
+   * unrecognised keys are ignored.
+   *
+   * For example, `@workflow/world-vercel` recognises a `region` key
+   * (a Vercel compute region code such as `'iad1'`) and embeds the
+   * corresponding region ID into the tagged run ID. When omitted there,
+   * the world falls back to the `VERCEL_REGION` environment variable.
+   *
+   * If `runIdInput.region` is set, `start()` additionally forwards it on
+   * the queue options so the initial workflow message is dispatched to
+   * the same region the run claims to belong to.
+   */
+  runIdInput?: Record<string, unknown>;
 }
 
 export interface StartOptionsWithDeploymentId extends StartOptionsBase {
@@ -167,8 +184,15 @@ export async function start<TArgs extends unknown[], TResult>(
       const ops: Promise<void>[] = [];
 
       // Generate runId client-side so we have it before serialization
-      // (required for future E2E encryption where runId is part of the encryption context)
-      const runId = `wrun_${ulid()}`;
+      // (required for future E2E encryption where runId is part of the
+      // encryption context). When the World provides a `createRunId()`
+      // implementation, use it so worlds can embed implementation-specific
+      // metadata (e.g., region) into the ID, forwarding any caller-supplied
+      // hints from `opts.runIdInput`; otherwise fall back to a standard
+      // monotonic ULID.
+      const runId = `wrun_${
+        world.createRunId ? world.createRunId(opts.runIdInput) : ulid()
+      }`;
 
       // Serialize current trace context to propagate across queue boundary
       const traceCarrier = await serializeTraceCarrier();
@@ -251,6 +275,13 @@ export async function start<TArgs extends unknown[], TResult>(
           {
             deploymentId,
             specVersion,
+            // Forward any caller-supplied region hint so worlds with
+            // per-region queue routing (e.g. world-vercel) can target the
+            // matching queue. Worlds without a regional dimension ignore
+            // this field.
+            ...(typeof opts.runIdInput?.region === 'string'
+              ? { region: opts.runIdInput.region }
+              : {}),
           }
         ),
       ]);
