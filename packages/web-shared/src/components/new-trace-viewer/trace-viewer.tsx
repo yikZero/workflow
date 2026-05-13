@@ -18,7 +18,6 @@ import {
 import { useSidebarDataOptional } from '../sidebar/sidebar-data-context';
 import type { Trace } from '../trace-viewer/types';
 import { formatDuration, getHighResInMs } from '../trace-viewer/util/timing';
-import { CopyButton } from './components/copy-button';
 import EventList from './components/event-list';
 import { SplitPane } from './components/split-pane';
 import {
@@ -459,22 +458,6 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
     );
   }, [selectedSpan?.data, selectedSpan?.resource]);
 
-  const selectedResource = selectedSpan?.resource as string | undefined;
-  const selectedResourceId = useMemo(() => {
-    if (!selectedSpan?.data) return undefined;
-    const data = selectedSpan.data as Record<string, unknown>;
-    if (selectedSpan.resource === 'hook') {
-      return (data.hookId as string | undefined) ?? selectedSpan.spanId;
-    }
-
-    return (
-      (data.stepId as string) ??
-      (data.runId as string) ??
-      (data.hookId as string) ??
-      selectedSpan.spanId
-    );
-  }, [selectedSpan?.data, selectedSpan?.resource, selectedSpan?.spanId]);
-
   return (
     <div
       data-pane="pane-root"
@@ -572,36 +555,17 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
       {activeSpan && sidebar ? (
         <aside className="flex flex-col h-full max-h-full bg-background-100 border-l border-gray-alpha-400 overflow-auto">
           {/* Panel header */}
-          <div className="flex-shrink-0 px-4 pt-4 pb-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1 flex flex-col gap-1">
-                <span className="text-label-14 font-medium text-gray-1000 truncate block">
-                  {selectedSpanName}
-                </span>
-                {selectedResourceId && (
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="flex items-center gap-1 text-label-13 font-mono text-gray-900 min-w-0"
-                      title={selectedResourceId}
-                    >
-                      <span className="truncate">{selectedResourceId}</span>
-                      <CopyButton
-                        copyText={selectedResourceId}
-                        ariaLabel="Copy ID"
-                        className="shrink-0"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors shrink-0"
-                onClick={clearActiveSpan}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+          <div className="flex items-center justify-between gap-2 shrink-0 px-3 pt-3 pb-3">
+            <span className="text-label-14 font-medium text-gray-1000 truncate block">
+              {selectedSpanName}
+            </span>
+            <button
+              type="button"
+              className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors shrink-0"
+              onClick={clearActiveSpan}
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
           {/* Panel body */}
           <div className="flex-1 overflow-y-auto">

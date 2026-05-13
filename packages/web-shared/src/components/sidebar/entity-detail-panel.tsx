@@ -347,7 +347,7 @@ export function EntityDetailPanel({
       <DecryptClickContext.Provider
         value={onDecrypt ? { onDecrypt, isDecrypting } : undefined}
       >
-        <div className="flex-1 overflow-y-auto px-3 pt-3 pb-8">
+        <div className="flex-1 overflow-y-auto px-3 pb-8">
           {hasPendingActions && (
             <div
               className="mb-4 rounded-lg border p-2"
@@ -412,28 +412,26 @@ export function EntityDetailPanel({
             </div>
           )}
 
-          <div>
-            <AttributePanel
-              data={displayData}
-              moduleSpecifier={moduleSpecifier}
-              expiredAt={run.expiredAt}
-              isLoading={loading}
-              error={error ?? undefined}
-              onStreamClick={onStreamClick}
-              onRunClick={onRunClick}
-              onDecrypt={onDecrypt}
-              isDecrypting={isDecrypting}
-              resource={resource}
-            />
+          <AttributePanel
+            data={displayData}
+            moduleSpecifier={moduleSpecifier}
+            expiredAt={run.expiredAt}
+            isLoading={loading}
+            error={error ?? undefined}
+            onStreamClick={onStreamClick}
+            onRunClick={onRunClick}
+            onDecrypt={onDecrypt}
+            isDecrypting={isDecrypting}
+            resource={resource}
+          />
 
-            {resource !== 'run' && rawEvents && (
-              <EventsList
-                events={rawEvents}
-                onLoadEventData={onLoadEventData}
-                encryptionKey={encryptionKey}
-              />
-            )}
-          </div>
+          {resource !== 'run' && rawEvents && (
+            <EventsList
+              events={rawEvents}
+              onLoadEventData={onLoadEventData}
+              encryptionKey={encryptionKey}
+            />
+          )}
         </div>
       </DecryptClickContext.Provider>
 

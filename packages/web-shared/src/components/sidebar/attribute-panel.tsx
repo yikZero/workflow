@@ -22,6 +22,8 @@ import {
 import { Skeleton } from '../ui/skeleton';
 import { Spinner } from '../ui/spinner';
 import { TimestampTooltip } from '../ui/timestamp-tooltip';
+import { CopyButton } from '../new-trace-viewer/components/copy-button';
+import { MiddleTruncate } from '../new-trace-viewer/components/middle-truncate/middle-truncate';
 import { ConversationView } from './conversation-view';
 import { CopyableDataBlock } from './copyable-data-block';
 import { DetailCard } from './detail-card';
@@ -308,7 +310,9 @@ type AttributeKey =
   | 'workflowCoreVersion'
   | 'receivedCount'
   | 'lastReceivedAt'
-  | 'disposedAt';
+  | 'disposedAt'
+  | 'isSystem'
+  | 'errorCode';
 
 const attributeOrder: AttributeKey[] = [
   'workflowName',
@@ -471,7 +475,7 @@ const attributeToDisplayFn: Record<
   stepName: (_value: unknown) => null,
   // IDs
   runId: (_value: unknown) => null,
-  stepId: (_value: unknown) => null,
+  stepId: (value: unknown) => String(value),
   hookId: (value: unknown) => String(value),
   eventId: (value: unknown) => String(value),
   // Run/step details
@@ -671,6 +675,12 @@ const ExpiredDataMessage = () => (
     <span>The data for this run has expired and is no longer available.</span>
   </div>
 );
+
+const copyableBasicAttributes = new Set<AttributeKey>([
+  'stepId',
+  'hookId',
+  'eventId',
+]);
 
 export const AttributeBlock = ({
   attribute,
@@ -873,122 +883,108 @@ export const AttributePanel = ({
         <DecryptClickContext.Provider
           value={onDecrypt ? { onDecrypt, isDecrypting } : undefined}
         >
-          <div>
-            {/* Basic attributes in a vertical layout with border */}
-            {visibleBasicAttributes.length > 0 && (
-              <div
-                className="mb-3 flex flex-col overflow-hidden rounded-md border"
-                style={{
-                  borderColor: 'var(--ds-gray-300)',
-                }}
-              >
-                {orderedBasicAttributes.map((attribute, index) => {
-                  const displayValue = attributeToDisplayFn[
-                    attribute as keyof typeof attributeToDisplayFn
-                  ]?.(displayData[attribute as keyof typeof displayData]);
-                  const isModuleSpecifier = attribute === 'moduleSpecifier';
-                  const moduleSpecifierValue =
-                    typeof displayValue === 'string'
-                      ? displayValue
-                      : String(
-                          displayValue ?? displayData.moduleSpecifier ?? ''
-                        );
-                  const shouldCapitalizeLabel =
-                    attribute !== 'workflowCoreVersion';
-                  const showResumeAtSkeleton =
-                    isLoading && resource === 'sleep' && !displayData.resumeAt;
-                  const showDivider =
-                    index < orderedBasicAttributes.length - 1 ||
-                    showResumeAtSkeleton;
+          {visibleBasicAttributes.length > 0 && (
+            <div className="flex flex-col overflow-hidden divide-y divide-gray-alpha-400 mb-3">
+              {orderedBasicAttributes.map((attribute) => {
+                const displayValue = attributeToDisplayFn[
+                  attribute as keyof typeof attributeToDisplayFn
+                ]?.(displayData[attribute as keyof typeof displayData]);
+                const isModuleSpecifier = attribute === 'moduleSpecifier';
+                const isCopyableBasicAttribute =
+                  copyableBasicAttributes.has(attribute as AttributeKey) &&
+                  typeof displayValue === 'string';
+                const moduleSpecifierValue =
+                  typeof displayValue === 'string'
+                    ? displayValue
+                    : String(displayValue ?? displayData.moduleSpecifier ?? '');
 
-                  return (
-                    <div key={attribute} className="py-1">
-                      <div className="flex min-h-[32px] items-center justify-between gap-4 rounded-sm px-2.5 py-1">
-                        <span
-                          className={
-                            shouldCapitalizeLabel
-                              ? 'text-[14px] first-letter:uppercase'
-                              : 'text-[14px]'
-                          }
-                          style={{ color: 'var(--ds-gray-700)' }}
-                        >
-                          {getAttributeDisplayName(attribute)}
-                        </span>
-                        {isModuleSpecifier ? (
-                          <button
-                            type="button"
-                            className="min-w-0 max-w-[70%] truncate text-right text-[13px] font-mono"
-                            style={{
-                              color: 'var(--ds-gray-1000)',
-                              background: 'transparent',
-                              border: 'none',
-                              padding: 0,
-                            }}
-                            title={moduleSpecifierValue}
-                            onClick={() =>
-                              handleCopyModuleSpecifier(moduleSpecifierValue)
-                            }
-                          >
-                            {moduleSpecifierValue}
-                          </button>
-                        ) : (
-                          <span
-                            className="min-w-0 max-w-[70%] truncate text-right text-[13px] font-mono"
-                            style={{ color: 'var(--ds-gray-1000)' }}
-                          >
-                            {displayValue}
-                          </span>
-                        )}
-                      </div>
-                      {showDivider ? (
-                        <div
-                          className="mx-2.5 border-b"
-                          style={{ borderColor: 'var(--ds-gray-300)' }}
-                        />
-                      ) : null}
-                    </div>
-                  );
-                })}
-                {isLoading && resource === 'sleep' && !displayData.resumeAt && (
-                  <div className="py-1">
-                    <div className="flex min-h-[32px] items-center justify-between gap-4 rounded-sm px-2.5 py-1">
-                      <span
-                        className="text-[14px] first-letter:uppercase"
-                        style={{ color: 'var(--ds-gray-700)' }}
-                      >
-                        resumeAt
-                      </span>
-                      <Skeleton className="h-4 w-[55%]" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {error ? (
-              <ErrorCard
-                title="Failed to load resource details"
-                details={error.message}
-                className="my-4"
-              />
-            ) : hasExpired ? (
-              <ExpiredDataMessage />
-            ) : resolvedAttributes.length > 0 ? (
-              <div
-                className="-mx-3 border-t px-3"
-                style={{ borderColor: 'var(--ds-gray-300)' }}
-              >
-                {resolvedAttributes.map((attribute) => (
-                  <AttributeBlock
-                    isLoading={isLoading}
+                return (
+                  <div
+                    className="flex items-center justify-between py-2"
                     key={attribute}
-                    attribute={attribute}
-                    value={displayData[attribute as keyof typeof displayData]}
-                    context={displayContext}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </div>
+                  >
+                    <span className="text-label-14 text-gray-900">
+                      {getAttributeDisplayName(attribute)}
+                    </span>
+                    {isModuleSpecifier ? (
+                      <button
+                        type="button"
+                        className="min-w-0 max-w-[70%] truncate text-right text-label-13 font-mono"
+                        style={{
+                          color: 'var(--ds-gray-1000)',
+                          background: 'transparent',
+                          border: 'none',
+                          padding: 0,
+                        }}
+                        title={moduleSpecifierValue}
+                        onClick={() =>
+                          handleCopyModuleSpecifier(moduleSpecifierValue)
+                        }
+                      >
+                        {moduleSpecifierValue}
+                      </button>
+                    ) : isCopyableBasicAttribute ? (
+                      <div
+                        className="flex min-w-0 max-w-[70%] items-center justify-end gap-1 text-right text-[13px] font-mono"
+                        style={{
+                          color: 'var(--ds-gray-1000)',
+                        }}
+                        title={displayValue}
+                      >
+                        <MiddleTruncate
+                          value={displayValue}
+                          className="flex-1"
+                        />
+                        <CopyButton
+                          copyText={displayValue}
+                          ariaLabel={`Copy ${getAttributeDisplayName(attribute)}`}
+                          className="shrink-0 -mr-1"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-right text-label-13 font-mono">
+                        {displayValue}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {isLoading && resource === 'sleep' && !displayData.resumeAt && (
+                <div className="py-1">
+                  <div className="flex min-h-[32px] items-center justify-between gap-4 rounded-sm px-2.5 py-1">
+                    <span
+                      className="text-[14px] first-letter:uppercase"
+                      style={{ color: 'var(--ds-gray-700)' }}
+                    >
+                      resumeAt
+                    </span>
+                    <Skeleton className="h-4 w-[55%]" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {error ? (
+            <ErrorCard
+              title="Failed to load resource details"
+              details={error.message}
+              className="my-4"
+            />
+          ) : hasExpired ? (
+            <ExpiredDataMessage />
+          ) : resolvedAttributes.length > 0 ? (
+            <div className="-mx-3 border-t px-3 border-gray-alpha-400">
+              {resolvedAttributes.map((attribute) => (
+                <AttributeBlock
+                  isLoading={isLoading}
+                  key={attribute}
+                  attribute={attribute}
+                  value={displayData[attribute as keyof typeof displayData]}
+                  context={displayContext}
+                />
+              ))}
+            </div>
+          ) : null}
         </DecryptClickContext.Provider>
       </StreamClickContext.Provider>
     </RunClickContext.Provider>
