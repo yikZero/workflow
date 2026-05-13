@@ -2,14 +2,14 @@
 
 import { EVENT_DATA_REF_FIELDS, type Event } from '@workflow/world';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { isExpiredMarker } from '../../lib/hydration';
+import { hasEncryptedFields, isExpiredMarker } from '../../lib/hydration';
 import { ErrorCard } from '../ui/error-card';
 import {
   ErrorStackBlock,
   isStructuredErrorWithStack,
 } from '../ui/error-stack-block';
 import { Skeleton } from '../ui/skeleton';
-import { CopyableDataBlock } from './copyable-data-block';
+import { CopyableDataBlock, EncryptedDataBlock } from './copyable-data-block';
 import { DetailCard } from './detail-card';
 
 /**
@@ -222,6 +222,10 @@ function EventDataBlock({
         <span className="font-medium">Data expired</span>
       </div>
     );
+  }
+
+  if (hasEncryptedFields({ eventType, eventData: data })) {
+    return <EncryptedDataBlock />;
   }
 
   // For error events (step_failed, step_retrying), the eventData has the shape

@@ -1,7 +1,53 @@
 'use client';
 
+import { Lock } from 'lucide-react';
+import { useContext } from 'react';
 import { CopyButton } from '../new-trace-viewer/components/copy-button';
-import { DataInspector } from '../ui/data-inspector';
+import { Button } from '../ui/button';
+import { DataInspector, DecryptClickContext } from '../ui/data-inspector';
+import { Spinner } from '../ui/spinner';
+
+const fakeEncryptedJson = `{
+  "input": "[encrypted]",
+  "result": "[encrypted]"
+}`;
+
+export function EncryptedDataBlock() {
+  const ctx = useContext(DecryptClickContext);
+
+  return (
+    <div className="relative min-h-20 overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
+      <pre
+        aria-hidden="true"
+        className="pointer-events-none m-0 select-none p-3 font-mono text-label-12 text-gray-900 blur-xs"
+      >
+        {fakeEncryptedJson}
+      </pre>
+      <div className="absolute inset-0 flex items-center justify-center">
+        {ctx ? (
+          <Button
+            onClick={ctx.onDecrypt}
+            disabled={ctx.isDecrypting}
+            size="xs"
+            title="Click to decrypt"
+          >
+            {ctx.isDecrypting ? (
+              <Spinner size={10} />
+            ) : (
+              <Lock className="h-3 w-3" />
+            )}
+            <span>Decrypt</span>
+          </Button>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded border border-gray-alpha-400 bg-gray-100 px-1.5 py-0.5 text-button-12 font-medium text-gray-700">
+            <Lock className="h-3 w-3" />
+            Encrypted
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const serializeForClipboard = (value: unknown): string => {
   if (typeof value === 'string') return value;

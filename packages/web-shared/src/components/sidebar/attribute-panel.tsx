@@ -9,6 +9,7 @@ import { useCallback, useContext, useMemo, useState } from 'react';
 import { isEncryptedMarker, isExpiredMarker } from '../../lib/hydration';
 import { useToast } from '../../lib/toast';
 import { extractConversation, isDoStreamStep } from '../../lib/utils';
+import { Button } from '../ui/button';
 import {
   DecryptClickContext,
   RunClickContext,
@@ -25,7 +26,7 @@ import { TimestampTooltip } from '../ui/timestamp-tooltip';
 import { CopyButton } from '../new-trace-viewer/components/copy-button';
 import { MiddleTruncate } from '../new-trace-viewer/components/middle-truncate/middle-truncate';
 import { ConversationView } from './conversation-view';
-import { CopyableDataBlock } from './copyable-data-block';
+import { CopyableDataBlock, EncryptedDataBlock } from './copyable-data-block';
 import { DetailCard } from './detail-card';
 
 /**
@@ -182,51 +183,8 @@ function ConversationWithTabs({
  * Render a value with the shared DataInspector (ObjectInspector with
  * custom theming, nodeRenderer for StreamRef/ClassInstanceRef, etc.)
  */
-/**
- * Inline display for an encrypted field — no expand, just a flat label
- * with the lucide Lock icon matching the title bar Decrypt button.
- */
 function EncryptedFieldBlock() {
-  const ctx = useContext(DecryptClickContext);
-  if (ctx) {
-    return (
-      <button
-        type="button"
-        onClick={ctx.onDecrypt}
-        disabled={ctx.isDecrypting}
-        className="flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs cursor-pointer transition-colors"
-        style={{
-          borderColor: 'var(--ds-gray-400)',
-          backgroundColor: 'var(--ds-gray-100)',
-          color: 'var(--ds-gray-700)',
-          opacity: ctx.isDecrypting ? 0.6 : 1,
-        }}
-        title="Click to decrypt"
-      >
-        {ctx.isDecrypting ? (
-          <Spinner size={12} />
-        ) : (
-          <Lock className="h-3 w-3" />
-        )}
-        <span className="font-medium">
-          {ctx.isDecrypting ? 'Decrypting…' : 'Decrypt'}
-        </span>
-      </button>
-    );
-  }
-  return (
-    <div
-      className="flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs"
-      style={{
-        borderColor: 'var(--ds-gray-300)',
-        backgroundColor: 'var(--ds-gray-100)',
-        color: 'var(--ds-gray-700)',
-      }}
-    >
-      <Lock className="h-3 w-3" />
-      <span className="font-medium">Encrypted</span>
-    </div>
-  );
+  return <EncryptedDataBlock />;
 }
 
 /**
@@ -247,24 +205,16 @@ function DecryptTrailing() {
     );
   }
   return (
-    <button
-      type="button"
+    <Button
       onClick={ctx.onDecrypt}
       disabled={ctx.isDecrypting}
-      className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] cursor-pointer transition-colors"
-      style={{
-        borderColor: 'var(--ds-gray-400)',
-        backgroundColor: 'var(--ds-gray-100)',
-        color: 'var(--ds-gray-700)',
-        opacity: ctx.isDecrypting ? 0.6 : 1,
-      }}
+      size="xs"
+      className="gap-x-1"
       title="Click to decrypt"
     >
       {ctx.isDecrypting ? <Spinner size={10} /> : <Lock className="h-3 w-3" />}
-      <span className="font-medium">
-        {ctx.isDecrypting ? 'Decrypting…' : 'Decrypt'}
-      </span>
-    </button>
+      <span>Decrypt</span>
+    </Button>
   );
 }
 
