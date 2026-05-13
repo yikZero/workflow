@@ -154,13 +154,19 @@ export function bytesToUlid(bytes: Uint8Array): string {
   return out;
 }
 
-/** Test whether a string has the tag bit set in its first character. */
-export function isTaggedString(s: string): boolean {
+/**
+ * Test whether `s` is a fully valid 26-character Crockford-Base32 ULID with
+ * the tag bit set. Returns `false` for any input that is not a string, has
+ * the wrong length, contains an invalid character, or has nonzero top 2
+ * padding bits.
+ */
+export function isTaggedString(s: unknown): boolean {
   if (typeof s !== 'string' || s.length !== ULID_LENGTH) return false;
-  const code = s.charCodeAt(0);
-  const v = code < 128 ? DECODE_TABLE[code] : -1;
-  if (v < 0) return false;
-  // The tag bit is bit 7 of byte[0], which is bit 2 of values[0] (since
-  // values[0] only holds the bottom 3 bits of byte[0]: values[0] = byte[0] & 7).
-  return (v & 0x04) !== 0;
+  let bytes: Uint8Array;
+  try {
+    bytes = ulidToBytes(s);
+  } catch {
+    return false;
+  }
+  return (bytes[0] & TAG_BIT_MASK) !== 0;
 }

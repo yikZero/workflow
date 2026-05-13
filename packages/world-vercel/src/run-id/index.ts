@@ -55,6 +55,7 @@ export {
   REGION_IDS,
   type RegionCode,
   type RegionId,
+  type RegionKey,
   regionIdFor,
 } from './regions.js';
 
@@ -96,7 +97,11 @@ export interface DecodedRunId {
 }
 
 function isRegionCode(value: unknown): value is RegionCode {
-  return typeof value === 'string' && Object.hasOwn(REGION_IDS, value);
+  return (
+    typeof value === 'string' &&
+    value !== 'unknown' &&
+    Object.hasOwn(REGION_IDS, value)
+  );
 }
 
 /**
@@ -197,12 +202,15 @@ export function decode(taggedUlid: string): DecodedRunId {
 }
 
 /**
- * Returns `true` if `s` is a 26-character Crockford-Base32 ULID with the tag
- * bit set (i.e. was produced by {@link encode}). Returns `false` for any
- * non-ULID input, including non-strings.
+ * Returns `true` if `value` is a 26-character Crockford-Base32 ULID with the
+ * tag bit set (i.e. was produced by {@link encode}). Returns `false` for any
+ * input that is not a syntactically valid ULID, including non-strings.
+ *
+ * The parameter is typed as `unknown` so this function can safely be used as
+ * a guard on untrusted input without requiring callers to cast.
  */
-export function isTagged(s: string): boolean {
-  return isTaggedString(s);
+export function isTagged(value: unknown): boolean {
+  return isTaggedString(value);
 }
 
 // Re-export internal constants that may be useful for callers wanting to

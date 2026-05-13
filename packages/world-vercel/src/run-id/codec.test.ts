@@ -131,8 +131,27 @@ describe('codec / isTaggedString', () => {
   it('returns false for non-strings, wrong lengths, and invalid chars', () => {
     expect(isTaggedString('')).toBe(false);
     expect(isTaggedString('0'.repeat(25))).toBe(false);
-    expect(isTaggedString(null as unknown as string)).toBe(false);
-    expect(isTaggedString(undefined as unknown as string)).toBe(false);
+    expect(isTaggedString(null)).toBe(false);
+    expect(isTaggedString(undefined)).toBe(false);
+    expect(isTaggedString(123)).toBe(false);
+    expect(isTaggedString({})).toBe(false);
+    // Invalid Crockford character at index 0.
     expect(isTaggedString(`U${ZERO_ULID.slice(1)}`)).toBe(false);
+  });
+
+  it('rejects ULIDs with invalid Crockford characters after index 0', () => {
+    // First char '4' would otherwise set the tag bit, but the string is not
+    // a valid ULID because of the bad char further in. A naive
+    // implementation that only looked at the first char would incorrectly
+    // return true here.
+    expect(isTaggedString(`4${'U'.repeat(25)}`)).toBe(false);
+    expect(isTaggedString(`4${'0'.repeat(24)}L`)).toBe(false);
+  });
+
+  it("rejects ULIDs whose first char is > '7' (overflows 128 bits)", () => {
+    // First char '8'..'Z' has nonzero top 2 pad bits → not a valid ULID,
+    // regardless of whether the tag bit appears set.
+    expect(isTaggedString(`8${'0'.repeat(25)}`)).toBe(false);
+    expect(isTaggedString(`Z${'0'.repeat(25)}`)).toBe(false);
   });
 });

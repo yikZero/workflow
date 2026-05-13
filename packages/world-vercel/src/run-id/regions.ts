@@ -41,25 +41,37 @@ export const REGION_IDS = {
   syd1: 23,
 } as const;
 
-export type RegionCode = keyof typeof REGION_IDS;
-export type RegionId = (typeof REGION_IDS)[RegionCode];
+/**
+ * Any key in {@link REGION_IDS}, including the `'unknown'` sentinel. Not
+ * usually what callers want — see {@link RegionCode} for the "known region"
+ * subset.
+ */
+export type RegionKey = keyof typeof REGION_IDS;
 
 /**
- * Reverse map: numeric region ID → region code. Only populated for known IDs;
- * `lookupRegion` returns `null` for unknown values in the 0..63 range.
+ * A concrete Vercel compute region code (e.g. `'iad1'`, `'fra1'`). Excludes
+ * the `'unknown'` sentinel since it does not correspond to any real region.
+ */
+export type RegionCode = Exclude<RegionKey, 'unknown'>;
+
+export type RegionId = (typeof REGION_IDS)[RegionKey];
+
+/**
+ * Reverse map: numeric region ID → region code. Only populated for known
+ * regions (i.e. excludes the `unknown`/0 sentinel); {@link lookupRegion}
+ * returns `null` for any ID not present in this map.
  */
 const REGION_CODES_BY_ID: ReadonlyMap<number, RegionCode> = new Map(
-  (Object.entries(REGION_IDS) as Array<[RegionCode, number]>).map(
-    ([code, id]) => [id, code]
-  )
+  (Object.entries(REGION_IDS) as Array<[RegionKey, number]>)
+    .filter((entry): entry is [RegionCode, number] => entry[0] !== 'unknown')
+    .map(([code, id]) => [id, code])
 );
 
 /**
  * Look up a region code by ID. Returns `null` for IDs not in {@link REGION_IDS}
- * (including `0` which represents "unknown").
+ * and for the `unknown`/0 sentinel.
  */
 export function lookupRegion(regionId: number): RegionCode | null {
-  if (regionId === REGION_IDS.unknown) return null;
   return REGION_CODES_BY_ID.get(regionId) ?? null;
 }
 

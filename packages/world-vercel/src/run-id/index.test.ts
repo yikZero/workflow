@@ -9,6 +9,7 @@ import {
   MAX_VERSION,
   REGION_IDS,
   type RegionCode,
+  type RegionKey,
 } from './index.js';
 
 const SAMPLE_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -204,7 +205,7 @@ describe('encode validation', () => {
 
 describe('region table coverage', () => {
   it('covers all 21 known Vercel compute regions plus hel1/zrh1 + unknown', () => {
-    const expected: RegionCode[] = [
+    const expected: RegionKey[] = [
       'unknown',
       'iad1',
       'sfo1',
@@ -243,13 +244,22 @@ describe('region table coverage', () => {
   });
 
   it('all known region codes round-trip through encode/decode', () => {
-    for (const code of Object.keys(REGION_IDS) as RegionCode[]) {
-      if (code === 'unknown') continue; // encode by name would resolve to 0 → region: null
+    for (const key of Object.keys(REGION_IDS) as RegionKey[]) {
+      if (key === 'unknown') continue;
+      const code: RegionCode = key;
       const tagged = encode(SAMPLE_ULID, code);
       const decoded = decode(tagged);
       expect(decoded.region).toBe(code);
       expect(decoded.regionId).toBe(REGION_IDS[code]);
     }
+  });
+
+  it('rejects the "unknown" sentinel string as a region code in encode', () => {
+    // encode(_, 'unknown') was previously silently accepted (resolving to
+    // regionId=0). It is now rejected at the type level and at runtime.
+    expect(() => encode(SAMPLE_ULID, 'unknown' as RegionCode)).toThrow(
+      /Unknown region/
+    );
   });
 });
 
