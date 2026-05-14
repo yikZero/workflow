@@ -25,12 +25,7 @@ export function EncryptedDataBlock() {
       </pre>
       <div className="absolute inset-0 flex items-center justify-center">
         {ctx ? (
-          <Button
-            onClick={ctx.onDecrypt}
-            disabled={ctx.isDecrypting}
-            size="xs"
-            title="Click to decrypt"
-          >
+          <Button onClick={ctx.onDecrypt} disabled={ctx.isDecrypting} size="xs">
             {ctx.isDecrypting ? (
               <Spinner size={10} />
             ) : (

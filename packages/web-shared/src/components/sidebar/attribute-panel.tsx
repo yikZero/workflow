@@ -210,7 +210,6 @@ function DecryptTrailing() {
       disabled={ctx.isDecrypting}
       size="xs"
       className="gap-x-1"
-      title="Click to decrypt"
     >
       {ctx.isDecrypting ? <Spinner size={10} /> : <Lock className="h-3 w-3" />}
       <span>Decrypt</span>
@@ -550,7 +549,7 @@ const attributeToDisplayFn: Record<
   },
   output: (value: unknown) => {
     if (isEncryptedMarker(value)) {
-      return null;
+      return <DetailCard summary="Output" trailing={<DecryptTrailing />} />;
     }
     if (!hasDisplayContent(value)) return null;
     if (isExpiredMarker(value)) return <ExpiredFieldBlock />;
@@ -647,9 +646,16 @@ export const AttributeBlock = ({
   context?: DisplayContext;
 }) => {
   const isExpandableLoadingTarget =
-    attribute === 'input' || attribute === 'eventData';
+    attribute === 'input' ||
+    attribute === 'output' ||
+    attribute === 'eventData';
   if (isLoading && isExpandableLoadingTarget && !hasDisplayContent(value)) {
-    const label = attribute === 'eventData' ? 'Event Data' : 'Input';
+    const label =
+      attribute === 'eventData'
+        ? 'Event Data'
+        : attribute === 'output'
+          ? 'Output'
+          : 'Input';
     return <DetailCard summary={label} />;
   }
 
@@ -763,9 +769,9 @@ export const AttributePanel = ({
 
     if (!isLoading) return present;
 
-    // During loading, ensure input appears so its skeleton renders
+    // During loading, ensure sections appear so their skeletons render
     // in the correct position (above the events section).
-    const loadingDefaults = ['input'];
+    const loadingDefaults = ['input', 'output'];
     for (const key of loadingDefaults) {
       if (!present.includes(key)) {
         present.push(key);

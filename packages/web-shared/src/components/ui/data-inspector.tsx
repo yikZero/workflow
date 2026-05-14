@@ -161,7 +161,6 @@ function EncryptedInlineLabel() {
           e.stopPropagation();
           ctx.onDecrypt();
         }}
-        title="Click to decrypt"
       >
         {ctx.isDecrypting ? (
           <Spinner size={10} />
