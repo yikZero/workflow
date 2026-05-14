@@ -773,6 +773,8 @@ export const AttributePanel = ({
 
     if (!isLoading) return present;
 
+    if (resource === 'sleep') return present;
+
     // During loading, ensure sections appear so their skeletons render
     // in the correct position (above the events section).
     const loadingDefaults = ['input', 'output'];
@@ -782,7 +784,7 @@ export const AttributePanel = ({
       }
     }
     return present.sort(sortByAttributeOrder);
-  }, [displayData, isLoading]);
+  }, [displayData, isLoading, resource]);
 
   // Filter out attributes that return null
   const visibleBasicAttributes = basicAttributes.filter((attribute) => {
@@ -941,7 +943,7 @@ export const AttributePanel = ({
           ) : hasExpired ? (
             <ExpiredDataMessage />
           ) : resolvedAttributes.length > 0 ? (
-            <div className="-mx-3 border-t px-3 border-gray-alpha-400">
+            <>
               {resolvedAttributes.map((attribute) => (
                 <AttributeBlock
                   isLoading={isLoading}
@@ -951,7 +953,7 @@ export const AttributePanel = ({
                   context={displayContext}
                 />
               ))}
-            </div>
+            </>
           ) : null}
         </DecryptClickContext.Provider>
       </StreamClickContext.Provider>

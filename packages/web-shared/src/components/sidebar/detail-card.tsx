@@ -79,10 +79,10 @@ export function DetailCard({
 
   if (trailing) {
     return (
-      <section className="-mx-3 border-b px-3 border-gray-300">
+      <section className="-mx-3 border-t px-3 border-gray-alpha-400">
         <div className={cn(rowClasses, summaryClassName)}>
           <div
-            className="isolate relative shrink-0 text-gray-700"
+            className="isolate relative shrink-0 text-gray-900"
             style={{ width: 14, height: 14 }}
           >
             <ChevronRight
@@ -99,7 +99,7 @@ export function DetailCard({
 
   if (disabled) {
     return (
-      <section className="-mx-3 border-b px-3 border-gray-300">
+      <section className="-mx-3 border-t px-3 border-gray-alpha-400">
         <div
           className={cn(rowClasses, summaryClassName)}
           style={{ color: 'var(--ds-gray-700)', cursor: 'not-allowed' }}
@@ -111,7 +111,7 @@ export function DetailCard({
   }
 
   return (
-    <section className="-mx-3 border-b px-3 border-gray-300">
+    <section className="-mx-3 border-t px-3 border-gray-alpha-400">
       <details className="group" open={open} onToggle={handleToggle}>
         <summary
           className={cn(
