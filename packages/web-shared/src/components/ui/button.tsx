@@ -13,7 +13,7 @@ const buttonVariants = cva(
     'hover:bg-[var(--themed-hover-bg,_hsl(0,_0%,_22%))] dark-theme:hover:bg-[var(--themed-hover-bg,_hsl(0,_0%,_80%))]',
     // disabled styles
     'disabled:cursor-not-allowed aria-disabled:cursor-not-allowed',
-    'disabled:bg-gray-100 disabled:text-gray-700 disabled:hover:bg-gray-100',
+    'disabled:bg-gray-100 disabled:!text-gray-700 disabled:hover:bg-gray-100',
     'aria-disabled:bg-gray-100 aria-disabled:text-gray-700 aria-disabled:hover:bg-gray-100',
   ],
   {
