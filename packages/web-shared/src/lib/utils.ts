@@ -12,27 +12,84 @@ const MS_IN_MINUTE = 60 * MS_IN_SECOND;
 const MS_IN_HOUR = 60 * MS_IN_MINUTE;
 const MS_IN_DAY = 24 * MS_IN_HOUR;
 
+export interface FormatDurationOptions {
+  /**
+   * Compact multi-unit format that drops the smallest unit at the
+   * hour/minute boundary (e.g. `2h 30m` instead of `2h 30m 15s`).
+   */
+  compact?: boolean;
+  /**
+   * Preserve sub-second / sub-minute precision instead of rounding to
+   * whole seconds. Use for labels where the value is meant to be read
+   * as an exact figure — a 1500ms duration renders as `1.5s` rather
+   * than `2s`. Values are truncated (floored) rather than rounded so
+   * the label can never overstate the underlying duration or roll over
+   * into the next-larger unit at the boundary.
+   */
+  precise?: boolean;
+}
+
 /**
  * Formats a duration in milliseconds to a human-readable string.
  *
  * @param ms - Duration in milliseconds
- * @param compact - If true, returns a compact format (e.g., "380ms", "2m 30s").
- *                  If false (default), returns multi-part format (e.g., "1m 13s", "2d 5h 3m 12s").
+ * @param options - Either an options object, or a boolean shorthand
+ *                  equivalent to `{ compact: true }` for backwards
+ *                  compatibility with the original two-arg signature.
  *
- * Compact format (timeline markers):
- * - < 1s: shows milliseconds (e.g., "380ms")
- * - < 1m: shows seconds (e.g., "45s")
- * - < 1h: shows minutes and seconds (e.g., "2m 30s")
- * - >= 1h: shows hours and minutes (e.g., "2h 30m")
+ * Default format (no options):
+ * - < 1s: milliseconds (e.g. `380ms`)
+ * - < 1m: whole seconds, rounded (e.g. `45s`)
+ * - >= 1m: decomposed into days/hours/minutes/seconds (e.g. `1m 13s`,
+ *   `2d 5h 3m 12s`)
  *
- * Full format:
- * - < 1s: shows milliseconds (e.g., "380ms")
- * - < 1m: shows seconds (e.g., "45s")
- * - >= 1m: shows decomposed format with whole seconds (e.g., "1m 13s", "2m 13s")
+ * Compact format (`{ compact: true }`, used for timeline tick labels):
+ * - < 1s: milliseconds (e.g. `380ms`)
+ * - < 1m: whole seconds (e.g. `45s`)
+ * - < 1h: minutes + seconds (e.g. `2m 30s`)
+ * - >= 1h: hours + minutes (e.g. `2h 30m`)
+ *
+ * Precise format (`{ precise: true }`, used for hover labels and detail
+ * panes — never rounds up into the next-larger unit):
+ * - < 1s: truncated milliseconds (e.g. `380ms`, `999ms`)
+ * - < 1m: seconds truncated to up to two decimal places, trailing
+ *   zeros trimmed (e.g. `1.5s`, `12.34s`, `59.99s`)
+ * - < 1h: `Xm Y.Zs` with one decimal of seconds, truncated
+ *   (e.g. `1m 5.2s`, `1m 59.9s`)
+ * - >= 1h / >= 1d: same decomposition as the default format, but
+ *   seconds are floored so the label can't exceed the true value
+ *
+ * `precise` takes precedence over `compact` when both are set.
  */
-export function formatDuration(ms: number, compact = false): string {
+export function formatDuration(
+  ms: number,
+  options: boolean | FormatDurationOptions = false
+): string {
+  const { compact = false, precise = false } =
+    typeof options === 'boolean' ? { compact: options } : options;
+
   if (ms === 0) {
     return '0s';
+  }
+
+  if (precise) {
+    if (ms < MS_IN_SECOND) {
+      return `${Math.floor(ms)}ms`;
+    }
+
+    if (ms < MS_IN_MINUTE) {
+      return `${trimTrailingZeros(truncateToFixed(ms / MS_IN_SECOND, 2))}s`;
+    }
+
+    if (ms < MS_IN_HOUR) {
+      const m = Math.floor(ms / MS_IN_MINUTE);
+      const s = (ms % MS_IN_MINUTE) / MS_IN_SECOND;
+      return s === 0
+        ? `${m}m`
+        : `${m}m ${trimTrailingZeros(truncateToFixed(s, 1))}s`;
+    }
+
+    return decomposeLargeUnits(ms, { dropZeroSeconds: true });
   }
 
   if (ms < MS_IN_SECOND) {
@@ -58,68 +115,13 @@ export function formatDuration(ms: number, compact = false): string {
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
   }
 
-  // Full format: decompose into larger units + whole seconds.
-  const days = Math.floor(roundedMs / MS_IN_DAY);
-  const hours = Math.floor((roundedMs % MS_IN_DAY) / MS_IN_HOUR);
-  const minutes = Math.floor((roundedMs % MS_IN_HOUR) / MS_IN_MINUTE);
-  const seconds = Math.floor((roundedMs % MS_IN_MINUTE) / MS_IN_SECOND);
-
-  const parts: string[] = [];
-
-  if (days > 0) {
-    parts.push(`${days}d`);
-  }
-  if (hours > 0) {
-    parts.push(`${hours}h`);
-  }
-  if (minutes > 0) {
-    parts.push(`${minutes}m`);
-  }
-  parts.push(`${seconds}s`);
-
-  return parts.join(' ');
+  return decomposeLargeUnits(roundedMs, { dropZeroSeconds: false });
 }
 
-/**
- * Formats a duration in milliseconds with as much precision as can fit in
- * a compact label, without rounding up to the next-larger unit.
- *
- * Unlike `formatDuration`, this preserves sub-second / sub-minute detail so
- * the displayed value never overstates the underlying duration (e.g. 1500ms
- * renders as `1.5s` rather than `2s`). Use for hover labels, detail panes,
- * and other places where the value is meant to be read as an exact figure.
- *
- * Format:
- * - < 1s: integer milliseconds (e.g. `380ms`)
- * - < 1m: seconds with up to 2 decimal places, trailing zeros trimmed
- *   (e.g. `1.5s`, `12.34s`, `59.99s`)
- * - < 1h: `Xm Y.Zs` with one decimal of seconds (e.g. `1m 5.2s`)
- * - >= 1h / >= 1d: same decomposition as `formatDuration`, but seconds are
- *   floored rather than rounded so the label can't exceed the true value.
- */
-export function formatDurationPrecise(ms: number): string {
-  if (ms === 0) {
-    return '0s';
-  }
-
-  if (ms < MS_IN_SECOND) {
-    return `${Math.floor(ms)}ms`;
-  }
-
-  if (ms < MS_IN_MINUTE) {
-    const s = ms / MS_IN_SECOND;
-    return `${trimTrailingZeros(truncateToFixed(s, 2))}s`;
-  }
-
-  if (ms < MS_IN_HOUR) {
-    const m = Math.floor(ms / MS_IN_MINUTE);
-    const s = (ms % MS_IN_MINUTE) / MS_IN_SECOND;
-    if (s === 0) {
-      return `${m}m`;
-    }
-    return `${m}m ${trimTrailingZeros(truncateToFixed(s, 1))}s`;
-  }
-
+function decomposeLargeUnits(
+  ms: number,
+  { dropZeroSeconds }: { dropZeroSeconds: boolean }
+): string {
   const days = Math.floor(ms / MS_IN_DAY);
   const hours = Math.floor((ms % MS_IN_DAY) / MS_IN_HOUR);
   const minutes = Math.floor((ms % MS_IN_HOUR) / MS_IN_MINUTE);
@@ -129,7 +131,9 @@ export function formatDurationPrecise(ms: number): string {
   if (days > 0) parts.push(`${days}d`);
   if (hours > 0) parts.push(`${hours}h`);
   if (minutes > 0) parts.push(`${minutes}m`);
-  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+  if (!dropZeroSeconds || seconds > 0 || parts.length === 0) {
+    parts.push(`${seconds}s`);
+  }
   return parts.join(' ');
 }
 
@@ -140,7 +144,7 @@ function trimTrailingZeros(value: string): string {
 
 /** Truncate (floor) a number to a fixed number of decimal places, without rounding up. */
 function truncateToFixed(value: number, decimals: number): string {
-  const factor = Math.pow(10, decimals);
+  const factor = 10 ** decimals;
   return (Math.floor(value * factor) / factor).toFixed(decimals);
 }
 

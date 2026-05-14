@@ -1,7 +1,7 @@
 import { Circle } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import type { Span } from '../../trace-viewer/types';
-import { formatDurationPrecise } from '../../trace-viewer/util/timing';
+import { formatDuration } from '../../trace-viewer/util/timing';
 import {
   WorkflowIcon,
   WebhookIcon,
@@ -79,7 +79,7 @@ const EventRow = ({
           </div>
           <div className="ml-2 shrink-0">
             <span className="text-label-14 text-gray-900 tabular-nums">
-              {formatDurationPrecise(durationMs)}
+              {formatDuration(durationMs, { precise: true })}
             </span>
           </div>
         </div>

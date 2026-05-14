@@ -54,10 +54,10 @@ export type { DecodedStreamChunkSource } from './lib/stream-display';
 export type { ToastAdapter } from './lib/toast';
 export { ToastProvider, useToast } from './lib/toast';
 export type { StreamStep } from './lib/utils';
+export type { FormatDurationOptions } from './lib/utils';
 export {
   extractConversation,
   formatDuration,
-  formatDurationPrecise,
   identifyStreamSteps,
   isDoStreamStep,
 } from './lib/utils';

@@ -1,6 +1,6 @@
-import { formatDuration, formatDurationPrecise } from '../../../lib/utils';
+import { formatDuration } from '../../../lib/utils';
 
-export { formatDuration, formatDurationPrecise };
+export { formatDuration };
 
 export function getHighResInMs([seconds, nanoseconds]: [
   number,
