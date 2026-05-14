@@ -1,50 +1,131 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFERRED_CHECK_DELAY_MS } from './events-consumer.js';
 import {
+  isVmIdle,
+  notifyVmIdleObservers,
   scheduleWhenIdle,
+  trackVmDelivery,
   type WorkflowOrchestratorContext,
 } from './private.js';
 
 /**
- * Builds a minimal WorkflowOrchestratorContext containing only the fields
- * scheduleWhenIdle reads. Other fields are intentionally absent; the cast keeps
- * the harness narrow without dragging in EventsConsumer/VM setup.
+ * Builds a minimal `WorkflowOrchestratorContext` containing only the fields
+ * `scheduleWhenIdle` and the counter helpers touch. Other fields are
+ * intentionally absent; the cast keeps the harness narrow without dragging in
+ * EventsConsumer/VM setup.
  */
 function makeCtx(): WorkflowOrchestratorContext {
   return {
     promiseQueue: Promise.resolve(),
     pendingDeliveries: 0,
+    pendingVmWork: 0,
+    vmIdleObservers: new Set<() => void>(),
   } as unknown as WorkflowOrchestratorContext;
 }
 
 /**
- * Replaces `ctx.pendingDeliveries` with a getter that returns each value in
- * `sequence` on successive reads, then sticks at the final value. This lets us
- * simulate "delivery saw 1, then drained to 0" without driving multiple
- * polling iterations under fake timers — every 0ms re-poll while
- * `pendingDeliveries > 0` schedules a fresh 0ms timer, which would trip
- * vitest's loopLimit safeguard if we tried to advance through it.
+ * `scheduleWhenIdle` chains through `ctx.promiseQueue` (await) and one
+ * `setTimeout(0)` macrotask before checking the counters for the first time.
+ * Any test that expects a fire to happen on the fast path needs to advance
+ * past those hops. A small budget covers them with margin to spare.
  */
-function stubPendingDeliveries(
-  ctx: WorkflowOrchestratorContext,
-  sequence: number[]
-): void {
-  let i = 0;
-  Object.defineProperty(ctx, 'pendingDeliveries', {
-    configurable: true,
-    get: () => {
-      const value =
-        i < sequence.length ? sequence[i] : sequence[sequence.length - 1];
-      i++;
-      return value;
-    },
-  });
-}
+const FAST_PATH_DRAIN_MS = 10;
 
-// Pick a quiet step that drives the 0ms-timer/microtask chain to completion
-// without crossing the propagation delay. ~half of DEFERRED_CHECK_DELAY_MS is
-// well past any internal 0ms hops but well below the deferred fire time.
-const DRAIN_MS = Math.floor(DEFERRED_CHECK_DELAY_MS / 2);
+describe('isVmIdle', () => {
+  it('returns true when both counters are 0', () => {
+    const ctx = makeCtx();
+    expect(isVmIdle(ctx)).toBe(true);
+  });
+
+  it('returns false when pendingDeliveries > 0', () => {
+    const ctx = makeCtx();
+    ctx.pendingDeliveries = 1;
+    expect(isVmIdle(ctx)).toBe(false);
+  });
+
+  it('returns false when pendingVmWork > 0', () => {
+    const ctx = makeCtx();
+    ctx.pendingVmWork = 1;
+    expect(isVmIdle(ctx)).toBe(false);
+  });
+});
+
+describe('notifyVmIdleObservers', () => {
+  it('fires registered observers when the host is idle', () => {
+    const ctx = makeCtx();
+    const observer = vi.fn();
+    ctx.vmIdleObservers.add(observer);
+    notifyVmIdleObservers(ctx);
+    expect(observer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire when the host is still busy', () => {
+    const ctx = makeCtx();
+    ctx.pendingDeliveries = 1;
+    const observer = vi.fn();
+    ctx.vmIdleObservers.add(observer);
+    notifyVmIdleObservers(ctx);
+    expect(observer).not.toHaveBeenCalled();
+  });
+
+  it('clears observers before firing (single-shot semantics)', () => {
+    const ctx = makeCtx();
+    const observer = vi.fn();
+    ctx.vmIdleObservers.add(observer);
+    notifyVmIdleObservers(ctx);
+    notifyVmIdleObservers(ctx);
+    expect(observer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let one throwing observer block others', () => {
+    const ctx = makeCtx();
+    const obs1 = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const obs2 = vi.fn();
+    ctx.vmIdleObservers.add(obs1);
+    ctx.vmIdleObservers.add(obs2);
+    notifyVmIdleObservers(ctx);
+    expect(obs1).toHaveBeenCalledTimes(1);
+    expect(obs2).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('trackVmDelivery', () => {
+  it('increments both counters at entry and decrements them after body runs', async () => {
+    const ctx = makeCtx();
+    let observedDeliveries = -1;
+    let observedVmWork = -1;
+    const promise = trackVmDelivery(ctx, async () => {
+      observedDeliveries = ctx.pendingDeliveries;
+      observedVmWork = ctx.pendingVmWork;
+      return 'ok';
+    });
+    expect(ctx.pendingDeliveries).toBe(1);
+    expect(ctx.pendingVmWork).toBe(1);
+    const result = await promise;
+    expect(result).toBe('ok');
+    // pendingDeliveries drops synchronously with the resolve; pendingVmWork
+    // is deferred to setImmediate so the VM's body has had its full
+    // microtask hop chain (await → for-await → next subscribe()) to run.
+    expect(observedDeliveries).toBe(1);
+    expect(observedVmWork).toBe(1);
+    expect(ctx.pendingDeliveries).toBe(0);
+    await new Promise<void>((r) => setImmediate(r));
+    expect(ctx.pendingVmWork).toBe(0);
+  });
+
+  it('decrements counters even when body rejects', async () => {
+    const ctx = makeCtx();
+    await expect(
+      trackVmDelivery(ctx, async () => {
+        throw new Error('nope');
+      })
+    ).rejects.toThrow('nope');
+    expect(ctx.pendingDeliveries).toBe(0);
+    await new Promise<void>((r) => setImmediate(r));
+    expect(ctx.pendingVmWork).toBe(0);
+  });
+});
 
 describe('scheduleWhenIdle', () => {
   beforeEach(() => {
@@ -55,89 +136,102 @@ describe('scheduleWhenIdle', () => {
     vi.useRealTimers();
   });
 
-  it('fires immediately on the fast path when no deliveries are observed', async () => {
+  it('fires on the fast path when both counters are already 0', async () => {
     const ctx = makeCtx();
     const fn = vi.fn();
-    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
-
     scheduleWhenIdle(ctx, fn);
     expect(fn).not.toHaveBeenCalled();
-
-    // Drive the entire 0ms chain. fn must fire well before
-    // DEFERRED_CHECK_DELAY_MS, and the propagation timer must never have been
-    // armed (since no deliveries were ever observed).
-    await vi.advanceTimersByTimeAsync(DRAIN_MS);
-
-    expect(fn).toHaveBeenCalledTimes(1);
-    const deferredCalls = timerSpy.mock.calls.filter(
-      ([, delay]) => delay === DEFERRED_CHECK_DELAY_MS
-    );
-    expect(deferredCalls).toHaveLength(0);
-  });
-
-  it('defers firing by DEFERRED_CHECK_DELAY_MS once an idle cycle observed deliveries', async () => {
-    const ctx = makeCtx();
-    // First poll sees 1 (arms sawPendingDeliveries); subsequent reads see 0
-    // so the polling loop terminates and fireWhenReady is reached.
-    stubPendingDeliveries(ctx, [1, 0]);
-    const fn = vi.fn();
-    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
-
-    scheduleWhenIdle(ctx, fn);
-
-    // Drive the chain past every 0ms hop but stay inside the propagation
-    // window. fn must still be pending while the deferred timer ticks.
-    await vi.advanceTimersByTimeAsync(DRAIN_MS);
-    expect(fn).not.toHaveBeenCalled();
-    const deferredCalls = timerSpy.mock.calls.filter(
-      ([, delay]) => delay === DEFERRED_CHECK_DELAY_MS
-    );
-    expect(deferredCalls.length).toBeGreaterThan(0);
-
-    // Cross the propagation delay; fn fires.
-    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('re-loops when pendingDeliveries reappears during the deferred wait', async () => {
+  it('does not fire while pendingDeliveries > 0', async () => {
     const ctx = makeCtx();
-    // First poll sees 1 (arms saw), drains to 0 (enters deferred wait), then
-    // a new delivery (1) reappears when the deferred timer fires, and
-    // finally drains to 0 again.
-    stubPendingDeliveries(ctx, [1, 0, 0, 1, 0]);
+    ctx.pendingDeliveries = 1;
     const fn = vi.fn();
-
     scheduleWhenIdle(ctx, fn);
-
-    // First deferred window: timer fires, sees a fresh delivery, re-enters
-    // the polling loop instead of suspending.
-    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS + DRAIN_MS);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
     expect(fn).not.toHaveBeenCalled();
+  });
 
-    // Second deferred window: deliveries are drained, fn fires.
-    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS * 2);
+  it('does not fire while pendingVmWork > 0', async () => {
+    const ctx = makeCtx();
+    ctx.pendingVmWork = 1;
+    const fn = vi.fn();
+    scheduleWhenIdle(ctx, fn);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('fires once both counters drain via observer notification', async () => {
+    const ctx = makeCtx();
+    ctx.pendingDeliveries = 1;
+    ctx.pendingVmWork = 1;
+    const fn = vi.fn();
+    scheduleWhenIdle(ctx, fn);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
+    expect(fn).not.toHaveBeenCalled();
+    // Drain counters and notify the observer
+    ctx.pendingDeliveries = 0;
+    ctx.pendingVmWork = 0;
+    notifyVmIdleObservers(ctx);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps polling while pendingDeliveries persists across multiple check rounds', async () => {
+  it('re-waits when a new delivery starts between notification and fire', async () => {
     const ctx = makeCtx();
-    // Deliveries stay non-zero for several `check` iterations before draining.
-    // Each non-zero read takes the "still delivering" branch (queue drain ->
-    // setTimeout(0) -> check again), exercising the multi-iteration poll path
-    // that the other tests collapse into a single round.
-    stubPendingDeliveries(ctx, [2, 1, 1, 0, 0]);
+    ctx.pendingVmWork = 1;
     const fn = vi.fn();
-
     scheduleWhenIdle(ctx, fn);
-
-    // Drive the chain past several 0ms hops but stay well inside the
-    // propagation window. fn must still be pending while the poll loops.
-    await vi.advanceTimersByTimeAsync(DRAIN_MS);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
     expect(fn).not.toHaveBeenCalled();
 
-    // After the poll finally observes 0 and the propagation delay elapses,
-    // fn fires exactly once.
-    await vi.advanceTimersByTimeAsync(DEFERRED_CHECK_DELAY_MS);
+    // Counters momentarily reach 0; notify observers. But before the
+    // re-check macrotask runs, simulate a fresh delivery landing.
+    ctx.pendingVmWork = 0;
+    notifyVmIdleObservers(ctx);
+    ctx.pendingDeliveries = 1;
+
+    // The post-notification drain re-evaluates and sees the new delivery,
+    // so fn must NOT fire.
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
+    expect(fn).not.toHaveBeenCalled();
+
+    // Now drain the new delivery and notify again — fn fires.
+    ctx.pendingDeliveries = 0;
+    notifyVmIdleObservers(ctx);
+    await vi.advanceTimersByTimeAsync(FAST_PATH_DRAIN_MS);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires after the watchdog when counters are stuck', async () => {
+    const ctx = makeCtx();
+    // pendingVmWork stays >0 forever (simulating a lost decrement)
+    ctx.pendingVmWork = 1;
+    const fn = vi.fn();
+    scheduleWhenIdle(ctx, fn);
+
+    // Well past the fast-path drain but well within the 5-second watchdog
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fn).not.toHaveBeenCalled();
+
+    // Cross the watchdog ceiling — fn fires defensively
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires only once even if both the observer and the watchdog race', async () => {
+    const ctx = makeCtx();
+    ctx.pendingVmWork = 1;
+    const fn = vi.fn();
+    scheduleWhenIdle(ctx, fn);
+
+    // Notify just before the watchdog fires
+    await vi.advanceTimersByTimeAsync(4900);
+    ctx.pendingVmWork = 0;
+    notifyVmIdleObservers(ctx);
+    await vi.advanceTimersByTimeAsync(200);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });

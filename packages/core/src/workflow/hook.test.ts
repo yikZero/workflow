@@ -36,6 +36,8 @@ function setupWorkflowContext(events: Event[]): WorkflowOrchestratorContext {
     onWorkflowError: vi.fn(),
     promiseQueue: Promise.resolve(),
     pendingDeliveries: 0,
+    pendingVmWork: 0,
+    vmIdleObservers: new Set<() => void>(),
   };
 }
 

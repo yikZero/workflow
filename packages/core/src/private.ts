@@ -3,27 +3,23 @@
  */
 
 import type { CryptoKey } from './encryption.js';
-import {
-  DEFERRED_CHECK_DELAY_MS,
-  type EventsConsumer,
-} from './events-consumer.js';
+import type { EventsConsumer } from './events-consumer.js';
 import type { QueueItem } from './global.js';
 import type { Serializable } from './schemas.js';
 
 /**
- * Delay applied before firing WorkflowSuspension when this idle cycle has
- * observed in-flight replay deliveries. Aliased to
- * `DEFERRED_CHECK_DELAY_MS` so the two propagation guards share a single
- * source of truth today, but they are conceptually separate budgets and could
- * be tuned independently if the failure modes ever diverge.
+ * Hard upper bound on how long suspension / unconsumed-event checks will wait
+ * for `pendingVmWork` to drain before forcing a decision. The deterministic
+ * counter (`pendingVmWork`) handles the common case; this watchdog is only a
+ * safety net so a lost decrement (e.g. an exception in a delivery's microtask
+ * chain that prevents the `pendingVmWork--` from running) doesn't hang the
+ * run forever.
  *
- * TODO: Replace this wall-clock heuristic with a deterministic counter that
- * tracks VM-resumption work in flight (e.g. promises waiting to cross the VM
- * boundary into the workflow context, plus any follow-up `subscribe()` calls
- * not yet registered). Once such a counter exists, `scheduleWhenIdle` can wait
- * on it directly instead of guessing how long propagation needs.
+ * Tuned conservatively: the previous wall-clock heuristic was 100 ms and
+ * still missed real workflows. This isn't tuned to fit a specific workflow
+ * shape — it's "much longer than any reasonable VM-side continuation."
  */
-const REPLAY_PROPAGATION_DELAY_MS = DEFERRED_CHECK_DELAY_MS;
+const VM_IDLE_WATCHDOG_MS = 5000;
 
 export type StepFunction<
   Args extends Serializable[] = any[],
@@ -168,89 +164,211 @@ export interface WorkflowOrchestratorContext {
   promiseQueue: Promise<void>;
   /**
    * Counter of in-flight async data delivery operations (step result
-   * hydration, hook payload hydration). Suspensions must wait for this
-   * to reach 0 before firing, to avoid preempting data delivery.
+   * hydration, hook payload hydration). Incremented when a delivery's
+   * hydration begins; decremented in the same `finally` that calls
+   * `resolve()`/`reject()` on the VM-visible promise. Reflects only the
+   * host-side network/hydration window.
    */
   pendingDeliveries: number;
+  /**
+   * Counter of deliveries that have been resolved into the VM but whose
+   * follow-up continuation work has not yet settled. Incremented at the
+   * start of each delivery (alongside `pendingDeliveries`); decremented
+   * one microtask AFTER `resolve()` runs, so the body's awaiting
+   * continuation — including any synchronous `step()`/`subscribe()` calls
+   * it makes in response — has executed before the decrement is observed.
+   *
+   * The host is only safe to suspend (or to declare an event "unconsumed")
+   * when BOTH `pendingDeliveries === 0 AND pendingVmWork === 0`. The two
+   * counters cover complementary windows of in-flight work:
+   *
+   *   `pendingDeliveries`: network / hydration in flight on the host
+   *   `pendingVmWork`:     hydration completed, body's continuation pending
+   *
+   * Replaces the prior wall-clock heuristic (`REPLAY_PROPAGATION_DELAY_MS`
+   * + `DEFERRED_CHECK_DELAY_MS`), which guessed at how long the VM-side
+   * continuation would take. The counter measures it deterministically.
+   */
+  pendingVmWork: number;
+  /**
+   * Observers fired whenever the host transitions into the VM-idle state
+   * (both counters at 0 after a decrement). Used by `scheduleWhenIdle` and
+   * `EventsConsumer` to wait for VM-truly-idle without polling. Each
+   * observer is fired at most once per registration — observers that need
+   * to keep watching must re-register after being called.
+   */
+  vmIdleObservers: Set<() => void>;
 }
 
 /**
- * Schedule a callback to fire only after all pending data deliveries
- * (step results, hook payloads) and async deserialization have completed.
- * Uses a polling loop: setTimeout(0) → check pendingDeliveries →
- * if > 0, wait for promiseQueue → repeat.
+ * Returns true when neither the host nor the VM has work in flight.
  *
- * When pendingDeliveries reaches 0, do not fire immediately. Promise
- * resolutions can resume workflow code across the VM boundary and register
- * follow-up work after the host-side delivery has already decremented the
- * counter. Yield once, then re-drain promiseQueue before deciding the workflow
- * is truly idle.
+ * "VM-truly-idle" means:
+ *   - No active network/hydration calls (`pendingDeliveries === 0`)
+ *   - No pending body-continuation reactions to a recent delivery
+ *     (`pendingVmWork === 0`)
  *
- * If this schedule cycle actually observed in-flight deliveries, add the same
- * small non-zero delay used by EventsConsumer before suspending. That preserves
- * the fast path for ordinary "new work needs to be scheduled" suspensions while
- * giving replay propagation enough time to register follow-up callbacks after
- * hydrated results cross the VM boundary.
+ * Both `scheduleWhenIdle` and `EventsConsumer`'s deferred unconsumed-event
+ * check are only safe to fire under this condition. The functions consume
+ * this single source of truth rather than each maintaining its own timer.
+ */
+export function isVmIdle(ctx: WorkflowOrchestratorContext): boolean {
+  return ctx.pendingDeliveries === 0 && ctx.pendingVmWork === 0;
+}
+
+/**
+ * Notify observers waiting for the VM to go idle. Called from the
+ * decrement-side of `trackVmDelivery` after `pendingVmWork--`. No-op when
+ * the host isn't actually idle yet (e.g., a new delivery started between
+ * the decrement and the call).
  *
- * Unlike `EventsConsumer`'s deferred unconsumed-event check, this
- * propagation timer is not cancelled when a follow-up `useStep`/hook/sleep
- * registers during the wait. If a callback arrives mid-wait and consumes
- * the pending `*_created` event, the suspension still fires after the delay,
- * but it is harmless: the matching invocation already has
- * `hasCreatedEvent=true`, so the suspension handler will not re-create the
- * step, and the run simply continues replay from the persisted event log.
+ * Observers are removed from the set before being called so handlers that
+ * re-register inside their own callback don't fire reentrantly.
+ */
+export function notifyVmIdleObservers(ctx: WorkflowOrchestratorContext): void {
+  if (!isVmIdle(ctx)) return;
+  if (ctx.vmIdleObservers.size === 0) return;
+  const observers = Array.from(ctx.vmIdleObservers);
+  ctx.vmIdleObservers.clear();
+  for (const observer of observers) {
+    try {
+      observer();
+    } catch {
+      // Observer errors are not the orchestrator's concern. Don't let one
+      // misbehaving observer prevent the others from being notified.
+    }
+  }
+}
+
+/**
+ * Wrap a delivery body (the async function that hydrates and resolves a
+ * VM-visible promise) so both `pendingDeliveries` and `pendingVmWork` are
+ * managed correctly.
+ *
+ * The decrement of `pendingVmWork` is deferred via `setImmediate`, not
+ * `queueMicrotask`. Several VM-side patterns chain through multiple
+ * microtask hops between `resolve()` and the body's reactive code calling
+ * `subscribe()` — most notably the hook async iterator pattern
+ *
+ *     for await (const payload of hook) { ... }
+ *
+ * which involves the generator's `yield await this`, the hook's thenable
+ * `.then`, and the for-await runtime machinery, each adding a microtask
+ * hop. A `queueMicrotask` decrement would land too early (after one hop
+ * only), prematurely marking the VM as idle while the body is still
+ * navigating its hop chain to reach the next `subscribe()`.
+ *
+ * `setImmediate` fires in the event loop's check phase, which runs only
+ * after the current microtask queue has fully drained. By that point all
+ * synchronous body code reacting to the delivery — including any
+ * `step()`/`subscribe()` calls made from deeply nested awaits — has
+ * executed. `notifyVmIdleObservers` then fires only if no new deliveries
+ * were started in the meantime.
+ */
+export function trackVmDelivery<T>(
+  ctx: WorkflowOrchestratorContext,
+  body: () => Promise<T>
+): Promise<T> {
+  ctx.pendingDeliveries++;
+  ctx.pendingVmWork++;
+  const decrementVmWork = () => {
+    ctx.pendingVmWork--;
+    notifyVmIdleObservers(ctx);
+  };
+  return body().then(
+    (value) => {
+      ctx.pendingDeliveries--;
+      setImmediate(decrementVmWork);
+      return value;
+    },
+    (error) => {
+      ctx.pendingDeliveries--;
+      setImmediate(decrementVmWork);
+      throw error;
+    }
+  );
+}
+
+/**
+ * Schedule a callback to fire only when the VM is genuinely idle — both
+ * `pendingDeliveries` and `pendingVmWork` have reached 0 and stayed there
+ * across a yield to the event loop.
+ *
+ * Algorithm:
+ *   1. Drain `promiseQueue`, yield one macrotask (`setTimeout(0)`), drain
+ *      `promiseQueue` again. This ensures any in-flight microtask chain
+ *      that originated before this call has had its first turn to register
+ *      next-wave subscribers.
+ *   2. Check `isVmIdle(ctx)`. If true, fire `fn()`.
+ *   3. If false, register an observer on `vmIdleObservers`. The observer
+ *      re-enters step 1 — re-yielding before firing in case a new delivery
+ *      starts during the macrotask boundary.
+ *   4. A watchdog (`VM_IDLE_WATCHDOG_MS`) force-fires `fn()` if the counter
+ *      never reaches idle. This is purely a safety net; the deterministic
+ *      counter should drive normal behaviour.
+ *
+ * Replaces the previous wall-clock heuristic. The counter measures actual
+ * VM-side work rather than guessing at a propagation delay.
+ *
+ * Unlike `EventsConsumer`'s deferred unconsumed-event check, the suspension
+ * is NOT cancelled if a new subscribe() registers between the idle
+ * notification and the suspension firing — by the time we observe idle, all
+ * subscribers that the body was going to register from prior deliveries
+ * have registered. A late new delivery would re-increment the counter and
+ * delay firing further. If a delivery and re-subscribe happen between the
+ * watchdog timeout and the firing, the resulting suspension is harmless
+ * (the matching invocation already has `hasCreatedEvent=true`).
  */
 export function scheduleWhenIdle(
   ctx: WorkflowOrchestratorContext,
   fn: () => void
 ): void {
-  let sawPendingDeliveries = false;
+  let fired = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
 
-  const fireWhenReady = () => {
-    if (!sawPendingDeliveries) {
-      fn();
-      return;
+  const fire = () => {
+    if (fired) return;
+    fired = true;
+    if (watchdog !== null) {
+      clearTimeout(watchdog);
+      watchdog = null;
     }
-
-    setTimeout(() => {
-      if (ctx.pendingDeliveries > 0) {
-        // sawPendingDeliveries is already true on this branch (fireWhenReady's
-        // early return covers the false case), so no need to re-assign here.
-        ctx.promiseQueue.then(() => {
-          setTimeout(check, 0);
-        });
-      } else {
-        fn();
-      }
-    }, REPLAY_PROPAGATION_DELAY_MS);
+    ctx.vmIdleObservers.delete(observer);
+    fn();
   };
 
-  const runWhenStillIdle = () => {
+  const observer = () => {
+    // Notified that counters hit 0. Re-yield once before firing in case a
+    // new delivery starts during the macrotask boundary (concurrent
+    // workflow code can still queue more work).
+    drainAndCheck();
+  };
+
+  const drainAndCheck = () => {
+    if (fired) return;
     ctx.promiseQueue
       .then(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
       .then(() => ctx.promiseQueue)
       .then(() => {
-        if (ctx.pendingDeliveries > 0) {
-          sawPendingDeliveries = true;
-          ctx.promiseQueue.then(() => {
-            setTimeout(check, 0);
-          });
-        } else {
-          fireWhenReady();
+        if (fired) return;
+        if (isVmIdle(ctx)) {
+          fire();
+          return;
         }
+        // Not idle — wait for the next counter-decrement notification.
+        // observers are single-shot, so re-register.
+        ctx.vmIdleObservers.add(observer);
       });
   };
 
-  const check = () => {
-    if (ctx.pendingDeliveries > 0) {
-      sawPendingDeliveries = true;
-      // Still delivering data — wait for queue to drain, then re-check
-      ctx.promiseQueue.then(() => {
-        setTimeout(check, 0);
-      });
-    } else {
-      runWhenStillIdle();
-    }
-  };
-  setTimeout(check, 0);
+  watchdog = setTimeout(() => {
+    watchdog = null;
+    if (fired) return;
+    // Counter mechanism failed to settle within the watchdog window.
+    // Force-fire to prevent the run from hanging. Logged-not-thrown — the
+    // suspension is harmless if a stale delivery materializes after.
+    fire();
+  }, VM_IDLE_WATCHDOG_MS);
+
+  drainAndCheck();
 }

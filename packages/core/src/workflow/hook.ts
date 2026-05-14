@@ -6,6 +6,7 @@ import { EventConsumerResult } from '../events-consumer.js';
 import { WorkflowSuspension } from '../global.js';
 import { webhookLogger } from '../logger.js';
 import {
+  notifyVmIdleObservers,
   scheduleWhenIdle,
   type WorkflowOrchestratorContext,
 } from '../private.js';
@@ -113,7 +114,11 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
             // Reconstruct the payload from the event data.
             // Chain through ctx.promiseQueue to ensure that async
             // deserialization (e.g., decryption) resolves in event log order.
+            // See `trackVmDelivery` in ../private.ts for the full ordering
+            // argument behind the two counters and the queueMicrotask
+            // decrement.
             ctx.pendingDeliveries++;
+            ctx.pendingVmWork++;
             ctx.promiseQueue = ctx.promiseQueue.then(async () => {
               try {
                 const payload = await hydrateStepReturnValue(
@@ -127,6 +132,10 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
                 next.reject(error);
               } finally {
                 ctx.pendingDeliveries--;
+                setImmediate(() => {
+                  ctx.pendingVmWork--;
+                  notifyVmIdleObservers(ctx);
+                });
               }
             });
           }
@@ -178,7 +187,11 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         if (nextPayload) {
           // Chain through ctx.promiseQueue to ensure that async
           // deserialization (e.g., decryption) resolves in event log order.
+          // See `trackVmDelivery` in ../private.ts for the full ordering
+          // argument behind the two counters and the queueMicrotask
+          // decrement.
           ctx.pendingDeliveries++;
+          ctx.pendingVmWork++;
           ctx.promiseQueue = ctx.promiseQueue.then(async () => {
             try {
               const payload = await hydrateStepReturnValue(
@@ -192,6 +205,10 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
               resolvers.reject(error);
             } finally {
               ctx.pendingDeliveries--;
+              setImmediate(() => {
+                ctx.pendingVmWork--;
+                notifyVmIdleObservers(ctx);
+              });
             }
           });
           return resolvers.promise;

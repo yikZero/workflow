@@ -67,6 +67,8 @@ function setupWorkflowContext(events: Event[]): WorkflowOrchestratorContext {
       promiseQueueHolder.current = value;
     },
     pendingDeliveries: 0,
+    pendingVmWork: 0,
+    vmIdleObservers: new Set<() => void>(),
   };
   ctxRef.current = ctx;
   return ctx;

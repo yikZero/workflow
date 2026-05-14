@@ -4,6 +4,7 @@ import { EventConsumerResult } from './events-consumer.js';
 import { type StepInvocationQueueItem, WorkflowSuspension } from './global.js';
 import { stepLogger } from './logger.js';
 import {
+  notifyVmIdleObservers,
   scheduleWhenIdle,
   type WorkflowOrchestratorContext,
 } from './private.js';
@@ -163,7 +164,15 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
           // takes variable time, promises resolve in event log order.
           // Each step's hydration + resolve waits for all prior hydrations
           // to complete before executing, preserving deterministic ordering.
+          // Track both `pendingDeliveries` (network/hydration window) and
+          // `pendingVmWork` (post-resolve body-continuation window). The
+          // latter is decremented via `setImmediate` AFTER `resolve()` so
+          // the body's full microtask hop chain (await → for-await runtime
+          // → next `subscribe()`) gets to drain before we mark the VM as
+          // idle — see `trackVmDelivery` in private.ts for the full
+          // ordering argument.
           ctx.pendingDeliveries++;
+          ctx.pendingVmWork++;
           ctx.promiseQueue = ctx.promiseQueue.then(async () => {
             try {
               const hydratedResult = await hydrateStepReturnValue(
@@ -177,6 +186,10 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
               reject(error);
             } finally {
               ctx.pendingDeliveries--;
+              setImmediate(() => {
+                ctx.pendingVmWork--;
+                notifyVmIdleObservers(ctx);
+              });
             }
           });
           return EventConsumerResult.Finished;
