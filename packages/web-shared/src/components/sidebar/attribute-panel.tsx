@@ -630,6 +630,7 @@ const copyableBasicAttributes = new Set<AttributeKey>([
   'stepId',
   'hookId',
   'eventId',
+  'deploymentId',
 ]);
 
 export const AttributeBlock = ({
