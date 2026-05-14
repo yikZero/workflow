@@ -1,7 +1,15 @@
 'use client';
 
 import { parseStepName, parseWorkflowName } from '@workflow/utils/parse-name';
-import { RotateCcw, Search, X, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  Search,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -297,13 +305,31 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
   const [altHeld, setAltHeld] = useState(false);
 
   useEffect(() => {
+    const handleSidebarNavKey = (e: KeyboardEvent): void => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      const targetId =
+        e.key === 'k' ? prevSpanIdRef.current : nextSpanIdRef.current;
+      if (targetId) {
+        e.preventDefault();
+        handleSelectSpanRef.current(targetId);
+      }
+    };
+
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         clearActiveSpan();
-      }
-      if (e.key === 'Alt') {
+      } else if (e.key === 'Alt') {
         e.preventDefault();
         setAltHeld(true);
+      } else if (e.key === 'j' || e.key === 'k') {
+        handleSidebarNavKey(e);
       }
     };
     const onKeyUp = (e: KeyboardEvent): void => {
@@ -458,6 +484,31 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
     );
   }, [selectedSpan?.data, selectedSpan?.resource]);
 
+  const { prevSpanId, nextSpanId } = useMemo(() => {
+    if (!activeSpanId) return { prevSpanId: null, nextSpanId: null };
+    const i = filteredSpans.findIndex((s) => s.spanId === activeSpanId);
+    if (i === -1) return { prevSpanId: null, nextSpanId: null };
+    return {
+      prevSpanId: filteredSpans[i - 1]?.spanId ?? null,
+      nextSpanId: filteredSpans[i + 1]?.spanId ?? null,
+    };
+  }, [activeSpanId, filteredSpans]);
+
+  const handleSelectPrevSpan = useCallback(() => {
+    if (prevSpanId) handleSelectSpan(prevSpanId);
+  }, [prevSpanId, handleSelectSpan]);
+
+  const handleSelectNextSpan = useCallback(() => {
+    if (nextSpanId) handleSelectSpan(nextSpanId);
+  }, [nextSpanId, handleSelectSpan]);
+
+  const prevSpanIdRef = useRef(prevSpanId);
+  const nextSpanIdRef = useRef(nextSpanId);
+  const handleSelectSpanRef = useRef(handleSelectSpan);
+  prevSpanIdRef.current = prevSpanId;
+  nextSpanIdRef.current = nextSpanId;
+  handleSelectSpanRef.current = handleSelectSpan;
+
   return (
     <div
       data-pane="pane-root"
@@ -485,6 +536,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
               {searchQuery && (
                 <button
                   type="button"
+                  aria-label="Clear search"
                   onClick={() => setSearchQuery('')}
                   className="shrink-0 p-0.5 rounded-sm text-gray-800 hover:text-gray-1000 hover:bg-gray-200 transition-colors"
                 >
@@ -559,13 +611,39 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
             <span className="text-label-14 font-medium text-gray-1000 truncate block">
               {selectedSpanName}
             </span>
-            <button
-              type="button"
-              className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors shrink-0"
-              onClick={clearActiveSpan}
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                aria-label="Previous span"
+                aria-keyshortcuts="K"
+                onClick={handleSelectPrevSpan}
+                disabled={!prevSpanId}
+                className="p-1 rounded text-gray-900 transition-colors enabled:hover:text-gray-1000 enabled:hover:bg-gray-alpha-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Next span"
+                aria-keyshortcuts="J"
+                onClick={handleSelectNextSpan}
+                disabled={!nextSpanId}
+                className="p-1 rounded text-gray-900 transition-colors enabled:hover:text-gray-1000 enabled:hover:bg-gray-alpha-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              <div aria-hidden className="w-px h-4 bg-gray-alpha-400 mx-1" />
+              <button
+                type="button"
+                aria-label="Close span details"
+                aria-keyshortcuts="Escape"
+                title="Close (Esc)"
+                className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors"
+                onClick={clearActiveSpan}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           {/* Panel body */}
           <div className="flex-1 overflow-y-auto">
