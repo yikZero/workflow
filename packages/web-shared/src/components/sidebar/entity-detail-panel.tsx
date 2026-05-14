@@ -9,6 +9,7 @@ import { DecryptClickContext } from '../ui/data-inspector';
 import { AttributePanel } from './attribute-panel';
 import { EventsList } from './events-list';
 import { ResolveHookModal } from './resolve-hook-modal';
+import { useSidebarDataOptional } from './sidebar-data-context';
 
 // Type guards for runtime validation of span attribute data
 function isStep(data: unknown): data is Step {
@@ -115,6 +116,9 @@ export function EntityDetailPanel({
   const [resolvedHookIds, setResolvedHookIds] = useState<Set<string>>(
     new Set()
   );
+
+  const sidebar = useSidebarDataOptional();
+  const hasEncryptedData = Boolean(sidebar?.hasEncryptedData && !encryptionKey);
 
   const data = selectedSpan?.data;
   const rawEvents = selectedSpan?.rawEvents;
@@ -345,7 +349,9 @@ export function EntityDetailPanel({
   return (
     <div className="flex h-full flex-col">
       <DecryptClickContext.Provider
-        value={onDecrypt ? { onDecrypt, isDecrypting } : undefined}
+        value={
+          onDecrypt ? { onDecrypt, isDecrypting, hasEncryptedData } : undefined
+        }
       >
         <div className="flex-1 overflow-y-auto px-3 pb-8">
           {hasPendingActions && (

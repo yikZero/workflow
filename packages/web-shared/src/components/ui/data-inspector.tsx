@@ -139,6 +139,7 @@ export const StreamClickContext = createContext<
 export type DecryptClickContextValue = {
   onDecrypt: () => void;
   isDecrypting: boolean;
+  hasEncryptedData?: boolean;
 };
 
 export const DecryptClickContext = createContext<

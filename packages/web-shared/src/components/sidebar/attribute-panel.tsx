@@ -645,6 +645,7 @@ export const AttributeBlock = ({
   inline?: boolean;
   context?: DisplayContext;
 }) => {
+  const decryptCtx = useContext(DecryptClickContext);
   const isExpandableLoadingTarget =
     attribute === 'input' ||
     attribute === 'output' ||
@@ -656,6 +657,9 @@ export const AttributeBlock = ({
         : attribute === 'output'
           ? 'Output'
           : 'Input';
+    if (decryptCtx?.hasEncryptedData) {
+      return <DetailCard summary={label} trailing={<DecryptTrailing />} />;
+    }
     return <DetailCard summary={label} />;
   }
 
@@ -834,12 +838,19 @@ export const AttributePanel = ({
       });
   }, []);
 
+  const outerDecryptCtx = useContext(DecryptClickContext);
+  const decryptValue = onDecrypt
+    ? {
+        onDecrypt,
+        isDecrypting,
+        hasEncryptedData: outerDecryptCtx?.hasEncryptedData,
+      }
+    : outerDecryptCtx;
+
   return (
     <RunClickContext.Provider value={onRunClick}>
       <StreamClickContext.Provider value={onStreamClick}>
-        <DecryptClickContext.Provider
-          value={onDecrypt ? { onDecrypt, isDecrypting } : undefined}
-        >
+        <DecryptClickContext.Provider value={decryptValue}>
           {visibleBasicAttributes.length > 0 && (
             <div className="flex flex-col overflow-hidden divide-y divide-gray-alpha-400 mb-3">
               {orderedBasicAttributes.map((attribute) => {
