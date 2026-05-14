@@ -51,7 +51,7 @@ export function DetailCard({
       );
     }
     return (
-      <details className="group" open={open} onToggle={handleToggle}>
+      <details className="group/card" open={open} onToggle={handleToggle}>
         <summary
           className={cn(
             'list-none cursor-pointer px-3 py-4 border-t border-gray-alpha-400 bg-background-200 hover:bg-gray-100 [&::-webkit-details-marker]:hidden',
@@ -61,7 +61,10 @@ export function DetailCard({
           <span className="flex items-center gap-1.5">
             <ChevronRight
               size={14}
-              className={cn('shrink-0', open && 'rotate-90')}
+              className={cn(
+                'shrink-0 text-gray-700 group-hover/card:text-gray-1000',
+                open && 'rotate-90'
+              )}
             />
             {summary}
           </span>
@@ -82,7 +85,7 @@ export function DetailCard({
       <section className="-mx-3 border-t px-3 border-gray-alpha-400">
         <div className={cn(rowClasses, summaryClassName)}>
           <div
-            className="isolate relative shrink-0 text-gray-900"
+            className="isolate relative shrink-0 text-gray-700"
             style={{ width: 14, height: 14 }}
           >
             <ChevronRight
