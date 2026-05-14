@@ -526,7 +526,7 @@ const attributeToDisplayFn: Record<
             </DetailCard>
           )}
           {hasThisVal && (
-            <DetailCard summary="this">{JsonBlock(thisVal)}</DetailCard>
+            <DetailCard summary="Context">{JsonBlock(thisVal)}</DetailCard>
           )}
         </>
       );
