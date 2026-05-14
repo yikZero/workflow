@@ -81,6 +81,64 @@ export function formatDuration(ms: number, compact = false): string {
 }
 
 /**
+ * Formats a duration in milliseconds with as much precision as can fit in
+ * a compact label, without rounding up to the next-larger unit.
+ *
+ * Unlike `formatDuration`, this preserves sub-second / sub-minute detail so
+ * the displayed value never overstates the underlying duration (e.g. 1500ms
+ * renders as `1.5s` rather than `2s`). Use for hover labels, detail panes,
+ * and other places where the value is meant to be read as an exact figure.
+ *
+ * Format:
+ * - < 1s: integer milliseconds (e.g. `380ms`)
+ * - < 1m: seconds with up to 2 decimal places, trailing zeros trimmed
+ *   (e.g. `1.5s`, `12.34s`, `59.99s`)
+ * - < 1h: `Xm Y.Zs` with one decimal of seconds (e.g. `1m 5.2s`)
+ * - >= 1h / >= 1d: same decomposition as `formatDuration`, but seconds are
+ *   floored rather than rounded so the label can't exceed the true value.
+ */
+export function formatDurationPrecise(ms: number): string {
+  if (ms === 0) {
+    return '0s';
+  }
+
+  if (ms < MS_IN_SECOND) {
+    return `${Math.round(ms)}ms`;
+  }
+
+  if (ms < MS_IN_MINUTE) {
+    const s = ms / MS_IN_SECOND;
+    return `${trimTrailingZeros(s.toFixed(2))}s`;
+  }
+
+  if (ms < MS_IN_HOUR) {
+    const m = Math.floor(ms / MS_IN_MINUTE);
+    const s = (ms % MS_IN_MINUTE) / MS_IN_SECOND;
+    if (s === 0) {
+      return `${m}m`;
+    }
+    return `${m}m ${trimTrailingZeros(s.toFixed(1))}s`;
+  }
+
+  const days = Math.floor(ms / MS_IN_DAY);
+  const hours = Math.floor((ms % MS_IN_DAY) / MS_IN_HOUR);
+  const minutes = Math.floor((ms % MS_IN_HOUR) / MS_IN_MINUTE);
+  const seconds = Math.floor((ms % MS_IN_MINUTE) / MS_IN_SECOND);
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+  return parts.join(' ');
+}
+
+function trimTrailingZeros(value: string): string {
+  if (!value.includes('.')) return value;
+  return value.replace(/\.?0+$/, '');
+}
+
+/**
  * Returns a formatted pagination display string
  * @param currentPage - The current page number
  * @param totalPages - The total number of pages visited so far

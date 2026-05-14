@@ -3,7 +3,10 @@
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Span } from '../trace-viewer/types';
-import { formatDuration, getHighResInMs } from '../trace-viewer/util/timing';
+import {
+  formatDurationPrecise,
+  getHighResInMs,
+} from '../trace-viewer/util/timing';
 import { getSpanDurationMs } from './utils';
 
 interface DetailPanelProps {
@@ -41,11 +44,11 @@ export function DetailPanel({
           <dd className="text-gray-1000 font-mono">{span.resource}</dd>
           <dt className="text-gray-900">Duration</dt>
           <dd className="text-gray-1000 tabular-nums font-mono">
-            {formatDuration(durationMs)}
+            {formatDurationPrecise(durationMs)}
           </dd>
           <dt className="text-gray-900">Offset</dt>
           <dd className="text-gray-1000 tabular-nums font-mono">
-            +{formatDuration(offsetMs)}
+            +{formatDurationPrecise(offsetMs)}
           </dd>
           <dt className="text-gray-900">Status</dt>
           <dd className="text-gray-1000 font-mono">

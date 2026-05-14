@@ -57,6 +57,7 @@ export type { StreamStep } from './lib/utils';
 export {
   extractConversation,
   formatDuration,
+  formatDurationPrecise,
   identifyStreamSteps,
   isDoStreamStep,
 } from './lib/utils';

@@ -5,7 +5,10 @@ import type { ReactNode } from 'react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../../../lib/utils';
 import type { Span } from '../../trace-viewer/types';
-import { formatDuration, getHighResInMs } from '../../trace-viewer/util/timing';
+import {
+  formatDurationPrecise,
+  getHighResInMs,
+} from '../../trace-viewer/util/timing';
 import type { SegmentStatus, TimeMarker } from '../utils';
 import {
   computeSpanGaps,
@@ -130,7 +133,7 @@ const TimelineBar = memo(function TimelineBar({
   );
   const getMinDurationLabelWidthPx = (label: string) =>
     Math.max(40, label.length * 6 + 12);
-  const totalDurationLabel = formatDuration(totalDurationMs);
+  const totalDurationLabel = formatDurationPrecise(totalDurationMs);
   const showBarDurationLabel =
     isRowHovered &&
     pixelWidth >= getMinDurationLabelWidthPx(totalDurationLabel);
@@ -151,7 +154,7 @@ const TimelineBar = memo(function TimelineBar({
       {segments.map((seg, i) => {
         const segPixelWidth =
           (seg.endFraction - seg.startFraction) * pixelWidth;
-        const segDurationLabel = formatDuration(
+        const segDurationLabel = formatDurationPrecise(
           (seg.endFraction - seg.startFraction) * totalDurationMs
         );
         const showSegmentDurationLabel =
@@ -371,7 +374,7 @@ export function Timeline({
               key={gap.rowIndex}
               leftFrac={gap.leftFrac}
               rightFrac={gap.rightFrac}
-              label={formatDuration(gap.gapMs, true)}
+              label={formatDurationPrecise(gap.gapMs)}
               rowIndex={gap.rowIndex}
             />
           ))}
