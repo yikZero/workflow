@@ -51,7 +51,11 @@ export function DetailCard({
       );
     }
     return (
-      <details className="group/card" open={open} onToggle={handleToggle}>
+      <details
+        className="group/card last:border-b border-gray-alpha-400"
+        open={open}
+        onToggle={handleToggle}
+      >
         <summary
           className={cn(
             'list-none cursor-pointer px-3 py-4 border-t border-gray-alpha-400 bg-background-200 hover:bg-gray-100 [&::-webkit-details-marker]:hidden',
