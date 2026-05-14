@@ -6,8 +6,8 @@ import { EventConsumerResult } from '../events-consumer.js';
 import { WorkflowSuspension } from '../global.js';
 import { webhookLogger } from '../logger.js';
 import {
-  notifyVmIdleObservers,
   scheduleWhenIdle,
+  trackVmDelivery,
   type WorkflowOrchestratorContext,
 } from '../private.js';
 import { hydrateStepReturnValue } from '../serialization.js';
@@ -81,8 +81,6 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         // Remove this hook from the invocations queue
         ctx.invocationsQueue.delete(correlationId);
 
-        // Store the conflict event so we can reject any awaited promises.
-        // Chain through promiseQueue to ensure deterministic ordering.
         const conflictEvent = event as HookConflictEvent;
         const conflictError = new HookConflictError(
           conflictEvent.eventData.token
@@ -94,11 +92,13 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
 
         // Capture and drain pending promises synchronously so the null event
         // handler won't see them and trigger a spurious WorkflowSuspension.
-        // The actual rejections are deferred through promiseQueue for ordering.
+        // The actual rejections are deferred through `trackVmDelivery` for
+        // event-log ordering AND so `pendingVmWork` covers the body's
+        // reaction window — same argument as `hook_received` below.
         const pendingPromises = promises.slice();
         promises.length = 0;
 
-        ctx.promiseQueue = ctx.promiseQueue.then(() => {
+        trackVmDelivery(ctx, async () => {
           for (const resolver of pendingPromises) {
             resolver.reject(conflictError);
           }
@@ -111,15 +111,7 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         if (promises.length > 0) {
           const next = promises.shift();
           if (next) {
-            // Reconstruct the payload from the event data.
-            // Chain through ctx.promiseQueue to ensure that async
-            // deserialization (e.g., decryption) resolves in event log order.
-            // See `trackVmDelivery` in ../private.ts for the full ordering
-            // argument behind the two counters and the queueMicrotask
-            // decrement.
-            ctx.pendingDeliveries++;
-            ctx.pendingVmWork++;
-            ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+            trackVmDelivery(ctx, async () => {
               try {
                 const payload = await hydrateStepReturnValue(
                   event.eventData.payload,
@@ -130,12 +122,6 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
                 next.resolve(payload as T);
               } catch (error) {
                 next.reject(error);
-              } finally {
-                ctx.pendingDeliveries--;
-                setImmediate(() => {
-                  ctx.pendingVmWork--;
-                  notifyVmIdleObservers(ctx);
-                });
               }
             });
           }
@@ -173,11 +159,13 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
     function createHookPromise(): Promise<T> {
       const resolvers = withResolvers<T>();
 
-      // If we have a conflict, reject through the promiseQueue to maintain
-      // deterministic ordering with any prior queued resolutions.
+      // If we have a conflict, reject through `trackVmDelivery` to
+      // maintain event-log ordering with prior queued resolutions and to
+      // keep `pendingVmWork` covering the body's reaction window.
       if (hasConflict && conflictErrorRef) {
-        ctx.promiseQueue = ctx.promiseQueue.then(() => {
-          resolvers.reject(conflictErrorRef);
+        const conflictError = conflictErrorRef;
+        trackVmDelivery(ctx, async () => {
+          resolvers.reject(conflictError);
         });
         return resolvers.promise;
       }
@@ -185,14 +173,7 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       if (payloadsQueue.length > 0) {
         const nextPayload = payloadsQueue.shift();
         if (nextPayload) {
-          // Chain through ctx.promiseQueue to ensure that async
-          // deserialization (e.g., decryption) resolves in event log order.
-          // See `trackVmDelivery` in ../private.ts for the full ordering
-          // argument behind the two counters and the queueMicrotask
-          // decrement.
-          ctx.pendingDeliveries++;
-          ctx.pendingVmWork++;
-          ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+          trackVmDelivery(ctx, async () => {
             try {
               const payload = await hydrateStepReturnValue(
                 nextPayload.eventData.payload,
@@ -203,12 +184,6 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
               resolvers.resolve(payload as T);
             } catch (error) {
               resolvers.reject(error);
-            } finally {
-              ctx.pendingDeliveries--;
-              setImmediate(() => {
-                ctx.pendingVmWork--;
-                notifyVmIdleObservers(ctx);
-              });
             }
           });
           return resolvers.promise;

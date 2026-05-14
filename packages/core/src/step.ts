@@ -4,8 +4,8 @@ import { EventConsumerResult } from './events-consumer.js';
 import { type StepInvocationQueueItem, WorkflowSuspension } from './global.js';
 import { stepLogger } from './logger.js';
 import {
-  notifyVmIdleObservers,
   scheduleWhenIdle,
+  trackVmDelivery,
   type WorkflowOrchestratorContext,
 } from './private.js';
 import type { Serializable } from './schemas.js';
@@ -116,11 +116,9 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
         if (event.eventType === 'step_failed') {
           // Terminal state - we can remove the invocationQueue item
           ctx.invocationsQueue.delete(event.correlationId);
-          // Step failed - chain through promiseQueue to ensure
-          // deterministic ordering of all promise resolutions/rejections.
           // Hydrate the serialized thrown value from the event log so the
           // original type identity and custom properties are preserved.
-          ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+          trackVmDelivery(ctx, async () => {
             try {
               const hydrated = await hydrateStepError(
                 event.eventData.error,
@@ -157,23 +155,7 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
         if (event.eventType === 'step_completed') {
           // Terminal state - we can remove the invocationQueue item
           ctx.invocationsQueue.delete(event.correlationId);
-
-          // Step has completed, so resolve the Promise with the cached result.
-          // The hydration is async (e.g., decryption), so we chain it through
-          // ctx.promiseQueue to ensure that even if deserialization
-          // takes variable time, promises resolve in event log order.
-          // Each step's hydration + resolve waits for all prior hydrations
-          // to complete before executing, preserving deterministic ordering.
-          // Track both `pendingDeliveries` (network/hydration window) and
-          // `pendingVmWork` (post-resolve body-continuation window). The
-          // latter is decremented via `setImmediate` AFTER `resolve()` so
-          // the body's full microtask hop chain (await → for-await runtime
-          // → next `subscribe()`) gets to drain before we mark the VM as
-          // idle — see `trackVmDelivery` in private.ts for the full
-          // ordering argument.
-          ctx.pendingDeliveries++;
-          ctx.pendingVmWork++;
-          ctx.promiseQueue = ctx.promiseQueue.then(async () => {
+          trackVmDelivery(ctx, async () => {
             try {
               const hydratedResult = await hydrateStepReturnValue(
                 event.eventData.result,
@@ -184,12 +166,6 @@ export function createUseStep(ctx: WorkflowOrchestratorContext) {
               resolve(hydratedResult as Result);
             } catch (error) {
               reject(error);
-            } finally {
-              ctx.pendingDeliveries--;
-              setImmediate(() => {
-                ctx.pendingVmWork--;
-                notifyVmIdleObservers(ctx);
-              });
             }
           });
           return EventConsumerResult.Finished;

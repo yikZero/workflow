@@ -201,13 +201,32 @@ export class EventsConsumer {
     currentEvent: Event,
     checkVersion: number
   ): void {
+    // Each re-entry installs a fresh watchdog. Clear any prior one so
+    // recursive re-registration (observer fired but VM not yet idle) doesn't
+    // leak timers — and so a stale timer can't fire onUnconsumedEvent a
+    // second time after a fresh fire/cancel.
+    if (this.pendingUnconsumedTimeout !== null) {
+      clearTimeout(this.pendingUnconsumedTimeout);
+      this.pendingUnconsumedTimeout = null;
+    }
+
     const fire = () => {
-      // A subscribe() (or other concurrent state change) may have raced us;
-      // honour the version guard to keep cancellation deterministic.
+      // Idempotency guard: `pendingUnconsumedCheck` is null'd both on
+      // successful fire AND when `subscribe()` cancels the check. Combined
+      // with the version check below, this prevents stale timers, stale
+      // observers, or a leaked recursion path from double-firing
+      // `onUnconsumedEvent`.
+      if (this.pendingUnconsumedCheck === null) return;
       if (this.unconsumedCheckVersion !== checkVersion) return;
       this.pendingUnconsumedCheck = null;
-      this.pendingUnconsumedTimeout = null;
-      this.pendingUnconsumedUnsubscribe = null;
+      if (this.pendingUnconsumedTimeout !== null) {
+        clearTimeout(this.pendingUnconsumedTimeout);
+        this.pendingUnconsumedTimeout = null;
+      }
+      if (this.pendingUnconsumedUnsubscribe !== null) {
+        this.pendingUnconsumedUnsubscribe();
+        this.pendingUnconsumedUnsubscribe = null;
+      }
       this.onUnconsumedEvent(currentEvent);
     };
 
@@ -215,27 +234,17 @@ export class EventsConsumer {
     // UNCONSUMED_CHECK_WATCHDOG_MS. This protects against a stuck
     // `pendingVmWork` counter (e.g. an exception in a delivery's
     // microtask chain).
-    this.pendingUnconsumedTimeout = setTimeout(() => {
-      this.pendingUnconsumedTimeout = null;
-      if (this.pendingUnconsumedUnsubscribe !== null) {
-        this.pendingUnconsumedUnsubscribe();
-        this.pendingUnconsumedUnsubscribe = null;
-      }
-      fire();
-    }, UNCONSUMED_CHECK_WATCHDOG_MS);
+    this.pendingUnconsumedTimeout = setTimeout(
+      fire,
+      UNCONSUMED_CHECK_WATCHDOG_MS
+    );
 
     if (this.isVmIdle && this.onceVmIdle) {
       // Fast path: already idle — fire on the next microtask boundary so
       // any subscribe() arriving in the same synchronous tick can still
       // cancel us (preserves prior cancellation semantics).
       if (this.isVmIdle()) {
-        queueMicrotask(() => {
-          if (this.pendingUnconsumedTimeout !== null) {
-            clearTimeout(this.pendingUnconsumedTimeout);
-            this.pendingUnconsumedTimeout = null;
-          }
-          fire();
-        });
+        queueMicrotask(fire);
         return;
       }
       // Wait for the next VM-idle transition. The observer is single-shot.
@@ -244,12 +253,9 @@ export class EventsConsumer {
         // Re-check idle on a microtask boundary — by the time the observer
         // fires, a new delivery may already have started.
         queueMicrotask(() => {
+          if (this.pendingUnconsumedCheck === null) return;
           if (this.unconsumedCheckVersion !== checkVersion) return;
           if (this.isVmIdle?.()) {
-            if (this.pendingUnconsumedTimeout !== null) {
-              clearTimeout(this.pendingUnconsumedTimeout);
-              this.pendingUnconsumedTimeout = null;
-            }
             fire();
           } else {
             // New delivery in flight — re-register and wait again.

@@ -243,27 +243,38 @@ export function notifyVmIdleObservers(ctx: WorkflowOrchestratorContext): void {
 /**
  * Wrap a delivery body (the async function that hydrates and resolves a
  * VM-visible promise) so both `pendingDeliveries` and `pendingVmWork` are
- * managed correctly.
+ * managed correctly, AND the body runs in event-log order behind
+ * `ctx.promiseQueue`.
  *
- * The decrement of `pendingVmWork` is deferred via `setImmediate`, not
- * `queueMicrotask`. Several VM-side patterns chain through multiple
- * microtask hops between `resolve()` and the body's reactive code calling
- * `subscribe()` — most notably the hook async iterator pattern
+ * Use this for every event handler that calls `resolvers.resolve()` or
+ * `resolvers.reject()` on a VM-visible promise (`step_completed`,
+ * `step_failed`, `hook_received`, `hook_conflict`, `wait_completed`, ...).
+ * Each of those deliveries opens the same race: between `resolve()` and
+ * the body's next `subscribe()`, host-side counters can briefly look
+ * idle even though the VM is mid-reaction. Tracking every delivery site
+ * uniformly is what makes `isVmIdle(ctx)` a reliable signal.
+ *
+ * Increment / decrement timing:
+ *  - Both counters are bumped synchronously when this function is called,
+ *    so a sequence of deliveries observed in the same consume() pass each
+ *    add up before any decrement runs.
+ *  - `pendingDeliveries` drops synchronously when `body` settles.
+ *  - `pendingVmWork` drops one `setImmediate` later, after the current
+ *    microtask queue has fully drained.
+ *
+ * Why `setImmediate` (not `queueMicrotask`): several VM-side patterns
+ * chain through multiple microtask hops between `resolve()` and the
+ * body's reactive code calling `subscribe()` — most notably the hook
+ * async iterator pattern
  *
  *     for await (const payload of hook) { ... }
  *
  * which involves the generator's `yield await this`, the hook's thenable
  * `.then`, and the for-await runtime machinery, each adding a microtask
- * hop. A `queueMicrotask` decrement would land too early (after one hop
- * only), prematurely marking the VM as idle while the body is still
- * navigating its hop chain to reach the next `subscribe()`.
- *
- * `setImmediate` fires in the event loop's check phase, which runs only
- * after the current microtask queue has fully drained. By that point all
- * synchronous body code reacting to the delivery — including any
- * `step()`/`subscribe()` calls made from deeply nested awaits — has
- * executed. `notifyVmIdleObservers` then fires only if no new deliveries
- * were started in the meantime.
+ * hop. A `queueMicrotask` decrement would land too early, prematurely
+ * marking the VM idle while the body is still mid-chain. `setImmediate`
+ * fires in the event loop's check phase, which runs only after the
+ * current microtask queue has fully drained.
  */
 export function trackVmDelivery<T>(
   ctx: WorkflowOrchestratorContext,
@@ -275,18 +286,22 @@ export function trackVmDelivery<T>(
     ctx.pendingVmWork--;
     notifyVmIdleObservers(ctx);
   };
-  return body().then(
-    (value) => {
+  const tracked = ctx.promiseQueue.then(async () => {
+    try {
+      return await body();
+    } finally {
       ctx.pendingDeliveries--;
       setImmediate(decrementVmWork);
-      return value;
-    },
-    (error) => {
-      ctx.pendingDeliveries--;
-      setImmediate(decrementVmWork);
-      throw error;
     }
+  });
+  // Continue the queue but swallow rejections so one delivery's failure
+  // doesn't poison subsequent deliveries — each body owns its own
+  // try/catch.
+  ctx.promiseQueue = tracked.then(
+    () => {},
+    () => {}
   );
+  return tracked;
 }
 
 /**

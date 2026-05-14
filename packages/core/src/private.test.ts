@@ -91,7 +91,14 @@ describe('notifyVmIdleObservers', () => {
 });
 
 describe('trackVmDelivery', () => {
-  it('increments both counters at entry and decrements them after body runs', async () => {
+  it('increments both counters synchronously at entry', () => {
+    const ctx = makeCtx();
+    trackVmDelivery(ctx, async () => 'ok');
+    expect(ctx.pendingDeliveries).toBe(1);
+    expect(ctx.pendingVmWork).toBe(1);
+  });
+
+  it('decrements pendingDeliveries synchronously when body resolves; pendingVmWork drops after setImmediate', async () => {
     const ctx = makeCtx();
     let observedDeliveries = -1;
     let observedVmWork = -1;
@@ -100,13 +107,8 @@ describe('trackVmDelivery', () => {
       observedVmWork = ctx.pendingVmWork;
       return 'ok';
     });
-    expect(ctx.pendingDeliveries).toBe(1);
-    expect(ctx.pendingVmWork).toBe(1);
     const result = await promise;
     expect(result).toBe('ok');
-    // pendingDeliveries drops synchronously with the resolve; pendingVmWork
-    // is deferred to setImmediate so the VM's body has had its full
-    // microtask hop chain (await → for-await → next subscribe()) to run.
     expect(observedDeliveries).toBe(1);
     expect(observedVmWork).toBe(1);
     expect(ctx.pendingDeliveries).toBe(0);
@@ -124,6 +126,36 @@ describe('trackVmDelivery', () => {
     expect(ctx.pendingDeliveries).toBe(0);
     await new Promise<void>((r) => setImmediate(r));
     expect(ctx.pendingVmWork).toBe(0);
+  });
+
+  it('runs bodies in promiseQueue order even when later bodies hydrate faster', async () => {
+    const ctx = makeCtx();
+    const observed: string[] = [];
+    const slow = trackVmDelivery(ctx, async () => {
+      await new Promise<void>((r) => setTimeout(r, 20));
+      observed.push('slow');
+    });
+    const fast = trackVmDelivery(ctx, async () => {
+      observed.push('fast');
+    });
+    // pendingDeliveries reflects both queued bodies before either has run
+    expect(ctx.pendingDeliveries).toBe(2);
+    await Promise.all([slow, fast]);
+    expect(observed).toEqual(['slow', 'fast']);
+  });
+
+  it('does not poison subsequent deliveries when an earlier body rejects', async () => {
+    const ctx = makeCtx();
+    const observed: string[] = [];
+    const first = trackVmDelivery(ctx, async () => {
+      throw new Error('first');
+    });
+    const second = trackVmDelivery(ctx, async () => {
+      observed.push('second');
+    });
+    await expect(first).rejects.toThrow('first');
+    await second;
+    expect(observed).toEqual(['second']);
   });
 });
 
