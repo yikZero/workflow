@@ -103,12 +103,12 @@ export function formatDurationPrecise(ms: number): string {
   }
 
   if (ms < MS_IN_SECOND) {
-    return `${Math.round(ms)}ms`;
+    return `${Math.floor(ms)}ms`;
   }
 
   if (ms < MS_IN_MINUTE) {
     const s = ms / MS_IN_SECOND;
-    return `${trimTrailingZeros(s.toFixed(2))}s`;
+    return `${trimTrailingZeros(truncateToFixed(s, 2))}s`;
   }
 
   if (ms < MS_IN_HOUR) {
@@ -117,7 +117,7 @@ export function formatDurationPrecise(ms: number): string {
     if (s === 0) {
       return `${m}m`;
     }
-    return `${m}m ${trimTrailingZeros(s.toFixed(1))}s`;
+    return `${m}m ${trimTrailingZeros(truncateToFixed(s, 1))}s`;
   }
 
   const days = Math.floor(ms / MS_IN_DAY);
@@ -136,6 +136,12 @@ export function formatDurationPrecise(ms: number): string {
 function trimTrailingZeros(value: string): string {
   if (!value.includes('.')) return value;
   return value.replace(/\.?0+$/, '');
+}
+
+/** Truncate (floor) a number to a fixed number of decimal places, without rounding up. */
+function truncateToFixed(value: number, decimals: number): string {
+  const factor = Math.pow(10, decimals);
+  return (Math.floor(value * factor) / factor).toFixed(decimals);
 }
 
 /**
