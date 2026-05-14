@@ -614,7 +614,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
             <div className="flex items-center gap-0.5 shrink-0">
               <button
                 type="button"
-                aria-label="Previous span"
+                aria-label="Navigate to previous span"
                 aria-keyshortcuts="K"
                 onClick={handleSelectPrevSpan}
                 disabled={!prevSpanId}
@@ -624,7 +624,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
               </button>
               <button
                 type="button"
-                aria-label="Next span"
+                aria-label="Navigate to next span"
                 aria-keyshortcuts="J"
                 onClick={handleSelectNextSpan}
                 disabled={!nextSpanId}
@@ -637,7 +637,6 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
                 type="button"
                 aria-label="Close span details"
                 aria-keyshortcuts="Escape"
-                title="Close (Esc)"
                 className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors"
                 onClick={clearActiveSpan}
               >
