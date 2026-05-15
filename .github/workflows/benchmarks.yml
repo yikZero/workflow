@@ -617,9 +617,9 @@ jobs:
     permissions:
       # `id-token: write` is required to mint a scoped GitHub App
       # installation token via gh-sts (used to push a GitHub-signed
-      # commit to `gh-pages`).
+      # commit to `gh-pages`). `contents: read` is for actions/checkout.
       id-token: write
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4

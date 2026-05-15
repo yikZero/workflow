@@ -21,9 +21,14 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      # `id-token: write` is required so we can mint a GitHub Actions
+      # OIDC token and exchange it for a scoped GitHub App installation
+      # token via gh-sts. The gh-sts token (not the default GITHUB_TOKEN)
+      # is used by changesets/action to update the "Version Packages" PR
+      # and to create the GitHub Release, so we only need `contents:
+      # read` here for the checkout step.
       id-token: write
+      contents: read
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}

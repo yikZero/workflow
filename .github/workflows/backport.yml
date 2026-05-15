@@ -34,10 +34,16 @@ jobs:
     permissions:
       # `id-token: write` is required so we can mint a GitHub Actions
       # OIDC token and exchange it for a scoped GitHub App installation
-      # token via gh-sts.
+      # token via gh-sts. The gh-sts token (not the default GITHUB_TOKEN)
+      # is used for everything that actually writes to the repo —
+      # creating the backport branch, pushing the signed commit, and
+      # opening the PR. The default GITHUB_TOKEN is only used for
+      # read-only lookups (gh api / gh pr list) and for posting issue
+      # comments on the source PR, so read perms suffice for contents
+      # and pull-requests; only `issues: write` is needed for comments.
       id-token: write
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
       issues: write
     steps:
       - name: Resolve commit SHA
@@ -610,7 +616,7 @@ jobs:
         uses: vercel/gh-sts-action@c30f0b7a16e0766c4ffbc0d210b54d0e75053fd2 # main as of 2026-05-14
         with:
           repos: vercel/workflow
-          permissions: '{"contents":"write","issues":"write","pull_requests":"write"}'
+          permissions: '{"contents":"write","pull_requests":"write"}'
 
       - name: Push backport branch via GitHub API
         # Branch protection on this repo requires verified signatures on
