@@ -124,7 +124,7 @@ export const recipes: Record<string, Recipe> = {
     slug: 'resume-or-start',
     title: 'Resume or start by hook token',
     description:
-      'Look up an existing run with getHookByToken (or world.hooks.getByToken) before start(); pair with stronger idempotency when duplicate starts must be impossible.',
+      'Look up an existing run with getHookByToken (or world.hooks.getByToken) before start(); encode a stable application ID (not runId) in the hook token. Pair with stronger idempotency when duplicate starts must be impossible.',
     category: 'common-patterns',
   },
   webhooks: {
