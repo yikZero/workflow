@@ -72,7 +72,7 @@ This pattern is **not atomic**. Two concurrent requests can both observe “no h
 Mitigations:
 
 - **Accept rare duplicates** and detect them downstream (second run fails on `HookConflictError`, or you branch on run state).
-- **Add an outside-workflow idempotency layer** — for example a database unique constraint on **your stable application ID** (the same value you embed in the hook token), a single-row transaction, or (when available on your stack) an idempotency key on **`start()`** so only one run is created per ID.
+- **Add an outside-workflow coordination layer** — for example a **row keyed by your stable application ID** (the same value you embed in the hook token) with a **unique constraint** that stores the authoritative **`runId`**, using **insert-if-absent**, **`INSERT … ON CONFLICT`**, or a **transaction with row-level locking** so only one concurrent handler reaches **`start()`** for that ID. A bare unique constraint on your domain table primary key does not by itself dedupe workflow runs; you need a **dedicated mapping or lease** tied to that ID. **`start()`** does not expose an idempotency-key option today (only `world`, `specVersion`, and `deploymentId` in [`StartOptions`](/docs/api-reference/workflow-api/start)).
 - **Serialize creates** for the same stable ID (queue, advisory lock, or other mutual exclusion) if you must not spin up a second run even briefly.
 
 For replay-safe **step** side effects inside a workflow, still follow [Idempotency](/cookbook/common-patterns/idempotency) (`getStepMetadata().stepId`, external idempotency keys).
