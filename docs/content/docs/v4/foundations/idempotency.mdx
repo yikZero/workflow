@@ -18,7 +18,7 @@ Consider a payment API that charges the user $10, but due to network failures, t
 
 To prevent this, many external APIs support idempotency keys. An idempotency key is a unique identifier for an operation that can be used to deduplicate requests.
 
-## The core pattern: use the step ID as your idempotency key
+## Step Idempotency
 
 Every step invocation has a stable `stepId` that stays the same across retries.
 Use it as the idempotency key when calling third-party APIs.
@@ -29,7 +29,7 @@ import { getStepMetadata } from "workflow";
 async function chargeUser(userId: string, amount: number) {
   "use step";
 
-  const { stepId } = getStepMetadata();
+  const { stepId } = getStepMetadata(); // [!code highlight]
 
   // Example: Stripe-style idempotency key
   // This guarantees only one charge is created even if the step retries
@@ -55,7 +55,9 @@ Why this works:
 
 Step idempotency protects side effects **inside** a workflow run. Run idempotency answers a different question: if the same API request is sent twice, should it create one workflow run or two?
 
-Use a hook token as the idempotency key for a workflow run. Hook tokens are globally unique while they are active: if another run tries to create a hook with the same token, that hook rejects with `HookConflictError`.
+Because [hooks](/docs/foundations/hooks) already ensure globally unique active tokens, Workflow can use the same mechanism for idempotency.
+
+Use a hook token as the idempotency key for a workflow run. Hook tokens are globally unique while they are active: if another run tries to create a hook with the same token, that hook rejects with [`HookConflictError`](/docs/errors/hook-conflict).
 
 The token should come from your domain, such as an order ID, invoice ID, import ID, or request ID. Create the hook near the beginning of the workflow, before doing duplicate-sensitive work.
 
@@ -90,12 +92,12 @@ export async function processOrder(orderId: string) {
 }
 ```
 
-The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that reaches the same `createHook({ token })` fails with `HookConflictError`.
+The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that reaches the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict).
 
-Outside the workflow, use the same token to find or resume the active run:
+Outside the workflow, you can simply call `start()` for duplicate requests and let the runs that fail to claim the hook end immediately. To avoid starting a new run when the hook already exists, pre-emptively check for a conflict with `getHookByToken()`:
 
 ```typescript lineNumbers
-import { getHookByToken, resumeHook, start } from "workflow/api";
+import { getHookByToken, start } from "workflow/api";
 import { HookNotFoundError } from "workflow/errors";
 import { processOrder } from "./workflows/process-order";
 
@@ -103,38 +105,44 @@ export async function POST(request: Request) {
   const { orderId } = await request.json();
   const token = `order:${orderId}`;
 
-  const hook = await getOrStartOrderHook(orderId, token); // [!code highlight]
-  await resumeHook(hook, { confirmed: true }); // [!code highlight]
-
-  return Response.json({ runId: hook.runId });
-}
-
-async function getOrStartOrderHook(orderId: string, token: string) {
   try {
-    return await getHookByToken(token);
+    const hook = await getHookByToken(token); // [!code highlight]
+    return Response.json({ runId: hook.runId, reused: true });
   } catch (error) {
     if (!HookNotFoundError.is(error)) throw error;
   }
 
-  await start(processOrder, [orderId]); // [!code highlight]
-  return await waitForHook(token);
-}
-
-async function waitForHook(token: string) {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    try {
-      return await getHookByToken(token);
-    } catch (error) {
-      if (!HookNotFoundError.is(error)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-
-  throw new Error(`Timed out waiting for hook ${token}`);
+  const run = await start(processOrder, [orderId]); // [!code highlight]
+  return Response.json({ runId: run.runId, reused: false });
 }
 ```
 
-`start()` and the first `createHook()` call are not a single transaction today, so callers may need to retry `getHookByToken()` or `resumeHook()` briefly while the new run registers its hook. If two callers both start a run at the same time, hook token uniqueness still selects one active owner and the duplicate run receives `HookConflictError` when it tries to register the same token.
+<Callout type="warn">
+This avoids creating a new run only after the first run has registered its hook. `start()` and the first `createHook()` call are not a single transaction today, so concurrent requests can still start multiple runs while the hook is being registered. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
+</Callout>
+
+Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. One request starts the run, and later requests resume the hook with the same token:
+
+```typescript lineNumbers
+import { resumeHook, start } from "workflow/api";
+import { HookNotFoundError } from "workflow/errors";
+import { processOrder } from "./workflows/process-order";
+
+export async function POST(request: Request) {
+  const { orderId, confirmed } = await request.json();
+  const token = `order:${orderId}`;
+
+  try {
+    const hook = await resumeHook(token, { confirmed }); // [!code highlight]
+    return Response.json({ runId: hook.runId, reused: true });
+  } catch (error) {
+    if (!HookNotFoundError.is(error)) throw error;
+  }
+
+  const run = await start(processOrder, [orderId]); // [!code highlight]
+  return Response.json({ runId: run.runId, reused: false });
+}
+```
 
 ## Best practices
 
@@ -142,7 +150,6 @@ async function waitForHook(token: string) {
 - **Prefer `stepId` as your key**; it is stable across retries and unique per step.
 - **Keep keys deterministic**; avoid including timestamps or attempt counters.
 - **Use deterministic hook tokens for run idempotency**; the token is the stable key that routes retries and duplicate starts to one active hook owner.
-- **Handle 409/conflict responses** gracefully; treat them as success if the prior attempt completed.
 
 ## Related docs
 
