@@ -75,12 +75,7 @@ export async function processOrder(orderId: string) {
   const token = `order:${orderId}`;
 
   try {
-    using hook = createHook<{ confirmed: boolean }>({ token }); // [!code highlight]
-    const confirmation = await hook; // [!code highlight]
-
-    if (!confirmation.confirmed) {
-      return { status: "cancelled" as const };
-    }
+    using _idempotency = createHook({ token }); // [!code highlight]
 
     await chargeOrder(orderId);
     return { status: "processed" as const };
@@ -95,6 +90,8 @@ export async function processOrder(orderId: string) {
 ```
 
 The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that reaches the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict).
+
+The hook does not need to be resumed for this pattern. Reserving the token is enough to make one active workflow run own the idempotency key.
 
 Outside the workflow, you can simply call `start()` for duplicate requests and let the runs that fail to claim the hook end immediately. To avoid starting a new run when the hook already exists, pre-emptively check for a conflict with `getHookByToken()`:
 
@@ -123,12 +120,12 @@ export async function POST(request: Request) {
 This avoids creating a new run only after the first run has registered its hook. `start()` and the first `createHook()` call are not a single transaction today, so concurrent requests can still start multiple runs while the hook is being registered. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
 </Callout>
 
-Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. One request starts the run, and later requests resume the hook with the same token:
+Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. When the workflow awaits the hook payload, one request starts the run and later requests resume the hook with the same token. In this example, `processOrderWithConfirmation` awaits `createHook<{ confirmed: boolean }>({ token })` before processing the order:
 
 ```typescript lineNumbers
 import { resumeHook, start } from "workflow/api";
 import { HookNotFoundError } from "workflow/errors";
-import { processOrder } from "./workflows/process-order";
+import { processOrderWithConfirmation } from "./workflows/process-order";
 
 export async function POST(request: Request) {
   const { orderId, confirmed } = await request.json();
@@ -141,17 +138,10 @@ export async function POST(request: Request) {
     if (!HookNotFoundError.is(error)) throw error;
   }
 
-  const run = await start(processOrder, [orderId]); // [!code highlight]
+  const run = await start(processOrderWithConfirmation, [orderId]); // [!code highlight]
   return Response.json({ runId: run.runId, reused: false });
 }
 ```
-
-## Best practices
-
-- **Always provide idempotency keys to external side effects that are not idempotent** inside steps (payments, emails, SMS, queues).
-- **Prefer `stepId` as your key**; it is stable across retries and unique per step.
-- **Keep keys deterministic**; avoid including timestamps or attempt counters.
-- **Use deterministic hook tokens for run idempotency**; the token is the stable key that routes retries and duplicate starts to one active hook owner.
 
 ## Related docs
 
