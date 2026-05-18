@@ -86,7 +86,7 @@ export async function processOrder(orderId: string) {
 The parent continues immediately after `start()` returns. The child runs independently and can be monitored separately using the returned `runId` (e.g., via [`getRun()`](/docs/api-reference/workflow-api/get-run)).
 
 <Callout type="info">
-Each background spawn creates a separate run. If a parent replay or retried request must not create duplicate child runs for the same business key, use an atomic idempotency reservation around the `start()` call. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+Each background spawn creates a separate run. If duplicate requests must route to one active child workflow, have the child create a deterministic hook token from the business key and use that hook as the idempotency point. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
 </Callout>
 
 <Callout type="info">

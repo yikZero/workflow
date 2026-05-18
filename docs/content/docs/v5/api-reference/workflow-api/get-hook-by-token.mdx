@@ -16,7 +16,7 @@ Retrieves a hook by its unique token, returning the associated workflow run info
 </Callout>
 
 <Callout type="info">
-Looking up a deterministic hook token can help route a request to an existing run. This lookup is not an atomic "start once" primitive: two callers can both miss the hook before the first run registers it. If duplicate run creation is unsafe, use an atomic reservation before [`start()`](/docs/api-reference/workflow-api/start). See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+Looking up a deterministic hook token is the runtime entry point for hook-based idempotency. In a resume-or-start flow, call `getHookByToken()` first, start the workflow only when the hook is not found, then retry the lookup until the new run registers its hook. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
 </Callout>
 
 ```typescript lineNumbers

@@ -103,7 +103,7 @@ export async function POST(req: Request) {
 4. **Fresh hooks per window** — after a sleep completes normally, the previous hook instance is consumed. A new `.create()` call registers a fresh hook for the next sleep window, reusing the same token.
 
 <Callout type="info">
-Deterministic hook tokens route cancellation messages to the active workflow after it has started. They are not a substitute for run idempotency. If duplicate schedule starts would send duplicate campaigns or reminders, reserve the campaign key before calling `start()`. See [Idempotency](/docs/foundations/idempotency).
+Deterministic hook tokens can also serve as the idempotency point for scheduled runs. If duplicate schedule starts would send duplicate campaigns or reminders, create a hook with a token derived from the campaign key near the beginning of the workflow and route retries through that hook. See [Idempotency](/docs/foundations/idempotency).
 </Callout>
 
 ## Adapting to your use case

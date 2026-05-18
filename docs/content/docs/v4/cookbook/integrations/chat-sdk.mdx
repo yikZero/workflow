@@ -173,7 +173,7 @@ export type ChatTurnPayload = {
 Handlers live outside the workflow file so adapter dependencies don't leak in. They decide whether to start a new workflow or resume an existing one, then store the `runId` in thread state:
 
 <Callout type="info">
-If the platform can deliver the same first message concurrently, make the `thread.setState({ runId })` path atomic or reserve the thread ID before calling `start()`. Otherwise two handlers can both see "no run yet" and start duplicate sessions. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+If the platform can deliver the same first message concurrently, use a deterministic hook token derived from the thread ID so duplicate handlers route to the active chat session hook. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
 </Callout>
 
 ```typescript title="lib/chat-session-handlers.ts" lineNumbers

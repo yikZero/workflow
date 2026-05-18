@@ -2,7 +2,7 @@
 title: Idempotency
 description: Ensure external side effects and workflow starts are safe to retry.
 type: guide
-summary: Use step IDs for retried side effects, and use an atomic app-level key when duplicate requests must map to one workflow run.
+summary: Use step IDs for retried side effects, and use deterministic hook tokens when duplicate requests must route to one active workflow.
 ---
 
 Workflow steps can be retried (on failure) and replayed (on cold start). If a step calls an external API that isn't idempotent, retries could create duplicate charges, send duplicate emails, or double-process records. Use idempotency keys to make these operations safe.
@@ -85,7 +85,7 @@ async function sendReceipt(customerId: string, chargeId: string): Promise<void> 
 
 ## Race condition caveats
 
-Workflow does not currently provide distributed locking or true exactly-once delivery across concurrent runs. If two workflow runs could process the same entity concurrently:
+If two workflow runs could process the same entity concurrently:
 
 - **Rely on the external API's idempotency** (like Stripe's `Idempotency-Key`) rather than checking a local flag.
 - **Don't use check-then-act patterns** like "read a flag, then write if not set" -- another run could read the same flag between your read and write.
@@ -96,44 +96,87 @@ If your external API doesn't support idempotency keys natively, consider adding 
 
 Run idempotency is about deduplicating the workflow run itself. For example, a checkout endpoint might be retried by the client, but you still want only one `processOrder` run for a given `orderId`.
 
-Each [`start()`](/docs/api-reference/workflow-api/start) call creates a new run. There is no `start(..., { idempotencyKey })` option today, so callers that need one run per business key should reserve that key atomically before calling `start()`.
+Use a deterministic hook token as the workflow's idempotency key. The workflow creates the hook near the beginning of the run, and external callers use that same token to find or resume the active run.
 
-{/* @skip-typecheck - conceptual idempotency store API */}
 ```typescript
-import { getRun, start } from "workflow/api";
-import { processOrder } from "./workflows/process-order";
+import { createHook } from "workflow";
+import { HookConflictError } from "workflow/errors";
 
-export async function startOrderOnce(orderId: string) {
-  const key = `order:${orderId}`;
-  const reservation = await idempotencyStore.claim(key); // [!code highlight]
+declare function fulfillOrder(orderId: string): Promise<void>; // @setup
 
-  if (reservation.status === "created") {
-    const run = await start(processOrder, [orderId]);
-    await idempotencyStore.attachRunId(key, run.runId);
-    return run;
+export async function processOrder(orderId: string) {
+  "use workflow";
+
+  const token = `order:${orderId}`;
+
+  try {
+    using hook = createHook<{ confirmed: boolean }>({ token }); // [!code highlight]
+    const confirmation = await hook;
+
+    if (confirmation.confirmed) {
+      await fulfillOrder(orderId);
+    }
+  } catch (error) {
+    if (HookConflictError.is(error)) { // [!code highlight]
+      return;
+    }
+
+    throw error;
   }
-
-  const runId = await idempotencyStore.waitForRunId(key);
-  return getRun(runId); // [!code highlight]
 }
 ```
 
-Back `idempotencyStore.claim()` with a database unique constraint, transaction, or atomic lock. If `start()` fails after a reservation is claimed, mark the reservation failed or release it so a later retry can try again.
+```typescript
+import { getHookByToken, resumeHook, start } from "workflow/api";
+import { HookNotFoundError } from "workflow/errors";
+import { processOrder } from "./workflows/process-order";
 
-Custom hook tokens can coordinate work after a workflow starts, and token conflicts are atomic, but they do not stop multiple callers from creating multiple runs before the first run registers its hook. Use an external atomic reservation when duplicate run creation itself is unsafe.
+export async function confirmOrder(orderId: string) {
+  const token = `order:${orderId}`;
+  const hook = await getOrStartOrderHook(orderId, token); // [!code highlight]
+
+  await resumeHook(hook, { confirmed: true }); // [!code highlight]
+  return { runId: hook.runId };
+}
+
+async function getOrStartOrderHook(orderId: string, token: string) {
+  try {
+    return await getHookByToken(token);
+  } catch (error) {
+    if (!HookNotFoundError.is(error)) throw error;
+  }
+
+  await start(processOrder, [orderId]); // [!code highlight]
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      return await getHookByToken(token);
+    } catch (error) {
+      if (!HookNotFoundError.is(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  throw new Error(`Timed out waiting for hook ${token}`);
+}
+```
+
+Hook creation is the atomic part of this flow. `start()` and the first `createHook()` call are not a single transaction today, so the caller waits until the hook is visible. If two callers both start a run before either hook is visible, only one run can own the token and the duplicate run receives `HookConflictError`.
 
 ## Tips
 
 - **`stepId` is deterministic.** It's the same value across retries and replays of the same step, making it a reliable idempotency key.
 - **Always provide idempotency keys for non-idempotent external calls.** Even if you think a step won't be retried, cold-start replay will re-execute it.
-- **Reserve a business key before calling `start()`** when retried requests must resolve to one workflow run.
+- **Use deterministic hook tokens for run idempotency.** The token is the key that lets duplicate requests find the active workflow.
 - **Handle 409/conflict as success.** If an external API returns "already processed," treat that as a successful result, not an error.
-- **Make your own APIs idempotent** where possible. Accept an idempotency key and return the cached result on duplicate requests.
 
 ## Key APIs
 
 - [`"use workflow"`](/docs/api-reference/workflow/use-workflow) -- declares the orchestrator function
 - [`"use step"`](/docs/api-reference/workflow/use-step) -- declares step functions with full Node.js access
-- [`getStepMetadata()`](/docs/api-reference/step/get-step-metadata) -- provides the deterministic `stepId` for idempotency keys
+- [`getStepMetadata()`](/docs/api-reference/workflow/get-step-metadata) -- provides the deterministic `stepId` for idempotency keys
+- [`createHook()`](/docs/api-reference/workflow/create-hook) -- creates a hook with an optional deterministic token
+- [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token) -- finds the active hook for a token
+- [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) -- resumes the active hook
 - [`start()`](/docs/api-reference/workflow-api/start) -- starts a new workflow run
 - [`getRun()`](/docs/api-reference/workflow-api/get-run) -- retrieves an existing workflow run by `runId`

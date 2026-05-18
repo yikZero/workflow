@@ -297,7 +297,7 @@ export async function sandboxSessionWorkflow() {
 Two endpoints. `/start` accepts an optional `{ runId }` — if the run still exists, it replays the event log from index 0 so a returning client fully rehydrates. `/command` resumes the hook and returns immediately; command output lands on the `/start` stream.
 
 <Callout type="info">
-This example starts a fresh sandbox session when no `runId` is provided. If your product needs one sandbox session per user, project, or task, reserve that key atomically before calling `start()` and reuse the stored `runId` on retries. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+This example starts a fresh sandbox session when no `runId` is provided. If your product needs one sandbox session per user, project, or task, use a deterministic hook token derived from that session key and route retries through the active hook. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
 </Callout>
 
 ```typescript title="app/api/sandbox/start/route.ts" lineNumbers

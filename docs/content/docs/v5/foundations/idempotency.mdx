@@ -1,8 +1,8 @@
 ---
 title: Idempotency
-description: Ensure operations and workflow starts can be safely retried without producing duplicate side effects.
+description: Ensure operations and hook-coordinated workflow starts can be safely retried without producing duplicate side effects.
 type: conceptual
-summary: Prevent duplicate side effects when retrying step operations, and coordinate duplicate requests before they start extra workflow runs.
+summary: Prevent duplicate side effects with step IDs, and coordinate duplicate workflow starts with deterministic hook tokens.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -55,53 +55,101 @@ Why this works:
 
 Step idempotency protects side effects **inside** a workflow run. Run idempotency answers a different question: if the same API request is sent twice, should it create one workflow run or two?
 
-By default, each call to [`start()`](/docs/api-reference/workflow-api/start) creates a new workflow run with a new `runId`. `start()` does not currently accept an idempotency key, so retrying a request that calls `start()` can create duplicate runs unless your application coordinates those requests.
+Use a hook token as the idempotency key for a workflow run. Hook tokens are globally unique while they are active: if another run tries to create a hook with the same token, that hook rejects with `HookConflictError`.
 
-If duplicate runs are harmful, use an application-level idempotency key before starting the workflow. This key usually comes from your domain, such as an order ID, invoice ID, import ID, or request ID.
+The token should come from your domain, such as an order ID, invoice ID, import ID, or request ID. Create the hook near the beginning of the workflow, before doing duplicate-sensitive work.
 
-{/* @skip-typecheck - conceptual idempotency store API */}
 ```typescript lineNumbers
-import { getRun, start } from "workflow/api";
+import { createHook } from "workflow";
+import { HookConflictError } from "workflow/errors";
+
+declare function chargeOrder(orderId: string): Promise<void>; // @setup
+
+export async function processOrder(orderId: string) {
+  "use workflow";
+
+  const token = `order:${orderId}`;
+
+  try {
+    using hook = createHook<{ confirmed: boolean }>({ token }); // [!code highlight]
+    const confirmation = await hook; // [!code highlight]
+
+    if (!confirmation.confirmed) {
+      return { status: "cancelled" as const };
+    }
+
+    await chargeOrder(orderId);
+    return { status: "processed" as const };
+  } catch (error) {
+    if (HookConflictError.is(error)) { // [!code highlight]
+      return { status: "duplicate" as const };
+    }
+
+    throw error;
+  }
+}
+```
+
+The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that reaches the same `createHook({ token })` fails with `HookConflictError`.
+
+Outside the workflow, use the same token to find or resume the active run:
+
+```typescript lineNumbers
+import { getHookByToken, resumeHook, start } from "workflow/api";
+import { HookNotFoundError } from "workflow/errors";
 import { processOrder } from "./workflows/process-order";
 
 export async function POST(request: Request) {
   const { orderId } = await request.json();
-  const key = `order:${orderId}`;
+  const token = `order:${orderId}`;
 
-  const reservation = await idempotencyStore.claim(key); // [!code highlight]
+  const hook = await getOrStartOrderHook(orderId, token); // [!code highlight]
+  await resumeHook(hook, { confirmed: true }); // [!code highlight]
 
-  if (reservation.status === "created") {
-    const run = await start(processOrder, [orderId]);
-    await idempotencyStore.attachRunId(key, run.runId); // [!code highlight]
+  return Response.json({ runId: hook.runId });
+}
 
-    return Response.json({ runId: run.runId });
+async function getOrStartOrderHook(orderId: string, token: string) {
+  try {
+    return await getHookByToken(token);
+  } catch (error) {
+    if (!HookNotFoundError.is(error)) throw error;
   }
 
-  const runId = await idempotencyStore.waitForRunId(key); // [!code highlight]
-  const run = getRun(runId);
+  await start(processOrder, [orderId]); // [!code highlight]
+  return await waitForHook(token);
+}
 
-  return Response.json({
-    runId: run.runId,
-    status: await run.status,
-  });
+async function waitForHook(token: string) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      return await getHookByToken(token);
+    } catch (error) {
+      if (!HookNotFoundError.is(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  throw new Error(`Timed out waiting for hook ${token}`);
 }
 ```
 
-In this example, `idempotencyStore.claim(key)` must be atomic. Implement it with a database unique constraint, a transaction, or an atomic lock such as Redis `SET NX`. If `start()` fails after the reservation is created, mark the reservation failed or release it so a later retry can start a run. Avoid a check-then-start pattern like "look for an existing run, then call `start()` if none exists" when concurrent requests are possible, because two callers can both observe "no run" and start separate workflows.
-
-For less strict cases, a workflow can create a hook with a deterministic token, and hook token uniqueness will ensure only one active hook owns that token. This can be useful for "resume or start" flows, but it still happens after a run has started. It does not prevent duplicate run creation by itself.
+`start()` and the first `createHook()` call are not a single transaction today, so callers may need to retry `getHookByToken()` or `resumeHook()` briefly while the new run registers its hook. If two callers both start a run at the same time, hook token uniqueness still selects one active owner and the duplicate run receives `HookConflictError` when it tries to register the same token.
 
 ## Best practices
 
 - **Always provide idempotency keys to external side effects that are not idempotent** inside steps (payments, emails, SMS, queues).
 - **Prefer `stepId` as your key**; it is stable across retries and unique per step.
 - **Keep keys deterministic**; avoid including timestamps or attempt counters.
-- **Use an atomic reservation before `start()` when the run itself must be unique**; `start()` creates a new run for each call.
+- **Use deterministic hook tokens for run idempotency**; the token is the stable key that routes retries and duplicate starts to one active hook owner.
 - **Handle 409/conflict responses** gracefully; treat them as success if the prior attempt completed.
 
 ## Related docs
 
 - Learn about retries in [Errors & Retrying](/docs/foundations/errors-and-retries)
 - API reference: [`getStepMetadata`](/docs/api-reference/workflow/get-step-metadata)
+- API reference: [`createHook()`](/docs/api-reference/workflow/create-hook)
+- API reference: [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token)
+- API reference: [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook)
 - API reference: [`start()`](/docs/api-reference/workflow-api/start)
 - Learn about deterministic hook tokens in [Hooks](/docs/foundations/hooks)

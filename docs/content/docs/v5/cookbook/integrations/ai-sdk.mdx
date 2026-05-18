@@ -334,7 +334,7 @@ Clients can send a `runId` from a long-gone workflow (localStorage, back button,
 
 ### Make the first turn idempotent when needed
 
-This example stores the `runId` after the first response. For strict one-session-per-thread behavior, reserve the thread ID or conversation ID atomically before calling `start()`, then reuse the stored `runId` on retries. See [Idempotency](/docs/foundations/idempotency).
+This example stores the `runId` after the first response. For strict one-session-per-thread behavior, use a deterministic hook token derived from the thread ID or conversation ID and route retries through the active hook. See [Idempotency](/docs/foundations/idempotency).
 
 ## streamText vs DurableAgent
 
