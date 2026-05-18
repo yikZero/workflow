@@ -618,7 +618,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
                 aria-keyshortcuts="K"
                 onClick={handleSelectPrevSpan}
                 disabled={!prevSpanId}
-                className="p-1 rounded text-gray-900 transition-colors enabled:hover:text-gray-1000 enabled:hover:bg-gray-alpha-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="p-1 rounded text-gray-1000 transition-colors enabled:hover:bg-gray-alpha-100 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronUp className="w-4 h-4" />
               </button>
@@ -628,7 +628,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
                 aria-keyshortcuts="J"
                 onClick={handleSelectNextSpan}
                 disabled={!nextSpanId}
-                className="p-1 rounded text-gray-900 transition-colors enabled:hover:text-gray-1000 enabled:hover:bg-gray-alpha-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="p-1 rounded text-gray-1000 transition-colors enabled:hover:bg-gray-alpha-100 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronDown className="w-4 h-4" />
               </button>
@@ -637,7 +637,7 @@ function NewTraceViewerContent({ trace }: NewTraceViewerProps): ReactNode {
                 type="button"
                 aria-label="Close span details"
                 aria-keyshortcuts="Escape"
-                className="p-1 rounded text-gray-900 hover:text-gray-1000 hover:bg-gray-alpha-200 transition-colors"
+                className="p-1 rounded text-gray-1000 hover:bg-gray-alpha-100 transition-colors"
                 onClick={clearActiveSpan}
               >
                 <X className="w-4 h-4" />
