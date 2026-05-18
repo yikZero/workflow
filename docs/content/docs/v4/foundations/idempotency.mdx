@@ -57,16 +57,17 @@ Why this works:
 
 Step idempotency protects side effects **inside** a workflow run. Run idempotency answers a different question: if the same API request is sent twice, should it create one workflow run or two?
 
-Because [hooks](/docs/foundations/hooks) already ensure globally unique active tokens, Workflow can use the same mechanism for idempotency.
+Because [hooks](/docs/foundations/hooks) already ensure globally unique active tokens, Workflow can use the same mechanism to coordinate duplicate requests while a run is active.
 
-Use a hook token as the idempotency key for a workflow run. Hook tokens are globally unique while they are active: if another run tries to create a hook with the same token, that hook rejects with [`HookConflictError`](/docs/errors/hook-conflict).
+Use a hook token as the idempotency key for an active workflow run. Hook tokens are globally unique while they are active: if another run tries to create a hook with the same token, the runtime records a conflict and the hook rejects with [`HookConflictError`](/docs/errors/hook-conflict) when the workflow awaits or iterates it.
 
-The token should come from your domain, such as an order ID, invoice ID, import ID, or request ID. Create the hook near the beginning of the workflow, before doing duplicate-sensitive work.
+The token should come from your domain, such as an order ID, invoice ID, import ID, or request ID. Create and await or iterate the hook near the beginning of the workflow, before doing duplicate-sensitive work that depends on owning the active token.
 
 ```typescript lineNumbers
 import { createHook } from "workflow";
 import { HookConflictError } from "workflow/errors";
 
+type OrderRequest = { confirmed: boolean };
 declare function chargeOrder(orderId: string): Promise<void>; // @setup
 
 export async function processOrder(orderId: string) {
@@ -75,7 +76,12 @@ export async function processOrder(orderId: string) {
   const token = `order:${orderId}`;
 
   try {
-    using _idempotency = createHook({ token }); // [!code highlight]
+    using request = createHook<OrderRequest>({ token }); // [!code highlight]
+    const { confirmed } = await request; // [!code highlight]
+
+    if (!confirmed) {
+      return { status: "cancelled" as const };
+    }
 
     await chargeOrder(orderId);
     return { status: "processed" as const };
@@ -89,59 +95,57 @@ export async function processOrder(orderId: string) {
 }
 ```
 
-The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that reaches the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict).
+The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that awaits the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict) before it reaches `chargeOrder()`.
 
-The hook does not need to be resumed for this pattern. Reserving the token is enough to make one active workflow run own the idempotency key.
-
-Outside the workflow, you can simply call `start()` for duplicate requests and let the runs that fail to claim the hook end immediately. To avoid starting a new run when the hook already exists, pre-emptively check for a conflict with `getHookByToken()`:
+Outside the workflow, try to resume the hook first. If the hook is not registered yet, start the workflow and retry the resume until the new run creates the hook:
 
 ```typescript lineNumbers
-import { getHookByToken, start } from "workflow/api";
+import { resumeHook, start } from "workflow/api";
 import { HookNotFoundError } from "workflow/errors";
 import { processOrder } from "./workflows/process-order";
 
+type OrderRequest = { confirmed: boolean };
+
+async function resumeOrder(token: string, payload: OrderRequest) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await resumeHook(token, payload); // [!code highlight]
+    } catch (error) {
+      if (!HookNotFoundError.is(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  throw new Error("Order workflow did not register its hook in time");
+}
+
 export async function POST(request: Request) {
-  const { orderId } = await request.json();
+  const { orderId, confirmed } = await request.json();
   const token = `order:${orderId}`;
+  const payload = { confirmed };
 
   try {
-    const hook = await getHookByToken(token); // [!code highlight]
+    const hook = await resumeHook(token, payload); // [!code highlight]
     return Response.json({ runId: hook.runId, reused: true });
   } catch (error) {
     if (!HookNotFoundError.is(error)) throw error;
   }
 
   const run = await start(processOrder, [orderId]); // [!code highlight]
+  await resumeOrder(token, payload);
   return Response.json({ runId: run.runId, reused: false });
 }
 ```
 
 <Callout type="warn">
-This avoids creating a new run only after the first run has registered its hook. `start()` and the first `createHook()` call are not a single transaction today, so concurrent requests can still start multiple runs while the hook is being registered. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
+This avoids creating a new run only after the first run has registered its hook. Because `start()` returns before the run body executes and calls `createHook()`, two concurrent requests can both observe "no hook yet" and each call `start()`. The race is resolved inside the workflow body, where the second run's awaited hook rejects with `HookConflictError` and that run exits via the `catch` block. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
 </Callout>
 
-Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. When the workflow awaits the hook payload, one request starts the run and later requests resume the hook with the same token. In this example, `processOrderWithConfirmation` awaits `createHook<{ confirmed: boolean }>({ token })` before processing the order:
+This is active-run coordination. When the workflow completes and disposes the hook, the token can be used again. If a duplicate request after completion must return the original result instead of starting fresh work, persist that completed result under the same domain key.
 
-```typescript lineNumbers
-import { resumeHook, start } from "workflow/api";
-import { HookNotFoundError } from "workflow/errors";
-import { processOrderWithConfirmation } from "./workflows/process-order";
+If duplicate requests should only reuse the active run without sending data, use [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token) as an advisory pre-check before calling `start()`. The workflow should still handle [`HookConflictError`](/docs/errors/hook-conflict), because the lookup and `start()` are not atomic.
 
-export async function POST(request: Request) {
-  const { orderId, confirmed } = await request.json();
-  const token = `order:${orderId}`;
-
-  try {
-    const hook = await resumeHook(token, { confirmed }); // [!code highlight]
-    return Response.json({ runId: hook.runId, reused: true });
-  } catch (error) {
-    if (!HookNotFoundError.is(error)) throw error;
-  }
-
-  const run = await start(processOrderWithConfirmation, [orderId]); // [!code highlight]
-  return Response.json({ runId: run.runId, reused: false });
-}
-```
+Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. The route example above uses `resumeHook()` for that: if the hook already exists, the duplicate request resumes the active workflow; if the hook is not registered yet, the route starts the workflow and retries `resumeHook()` so the payload is not dropped.
 
 ## Related docs
 

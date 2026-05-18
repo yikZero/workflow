@@ -15,7 +15,7 @@ Resumes a workflow run by sending a payload to a hook identified by its token.
 It creates a `hook_received` event and re-triggers the workflow to continue execution.
 
 <Callout type="info">
-For "resume or start" flows, `resumeHook()` is the resume half. If no hook exists yet, call [`start()`](/docs/api-reference/workflow-api/start) and have the workflow create the deterministic hook near the beginning of the run. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+For "resume or start" flows, `resumeHook()` is the resume half. If no hook exists yet, pass the payload to [`start()`](/docs/api-reference/workflow-api/start), persist it durably, or retry `resumeHook()` after the workflow has registered its deterministic hook. If you simply drop the payload and start the workflow, the data from this request is lost. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
 </Callout>
 
 <Callout type="warn">
