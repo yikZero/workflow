@@ -18,6 +18,7 @@ export interface HookInvocationQueueItem {
   token: string;
   metadata?: Serializable;
   hasCreatedEvent?: boolean;
+  hasReadyAwaiter?: boolean;
   disposed?: boolean;
   isWebhook?: boolean;
   isSystem?: boolean;

@@ -34,7 +34,13 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
     // Queue of promises that resolve to the next hook payload
     const promises: PromiseWithResolvers<T>[] = [];
 
+    // Queue of promises that resolve once hook creation is confirmed
+    const readyPromises: PromiseWithResolvers<void>[] = [];
+
     let eventLogEmpty = false;
+
+    // Track if the event log confirms hook creation happened
+    let hasReady = false;
 
     // Track if the event log confirms disposal happened (replay no-op)
     let hasDisposedEvent = false;
@@ -51,7 +57,10 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       if (!event) {
         eventLogEmpty = true;
 
-        if (promises.length > 0 && payloadsQueue.length === 0) {
+        if (
+          (promises.length > 0 && payloadsQueue.length === 0) ||
+          (readyPromises.length > 0 && !hasReady && !hasConflict)
+        ) {
           scheduleWhenIdle(ctx, () => {
             ctx.onWorkflowError(
               new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
@@ -72,6 +81,16 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         if (queueItem && queueItem.type === 'hook') {
           queueItem.hasCreatedEvent = true;
         }
+        hasReady = true;
+
+        const pendingReadyPromises = readyPromises.slice();
+        readyPromises.length = 0;
+        ctx.promiseQueue = ctx.promiseQueue.then(() => {
+          for (const resolver of pendingReadyPromises) {
+            resolver.resolve();
+          }
+        });
+
         return EventConsumerResult.Consumed;
       }
 
@@ -96,9 +115,14 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
         // The actual rejections are deferred through promiseQueue for ordering.
         const pendingPromises = promises.slice();
         promises.length = 0;
+        const pendingReadyPromises = readyPromises.slice();
+        readyPromises.length = 0;
 
         ctx.promiseQueue = ctx.promiseQueue.then(() => {
           for (const resolver of pendingPromises) {
+            resolver.reject(conflictError);
+          }
+          for (const resolver of pendingReadyPromises) {
             resolver.reject(conflictError);
           }
         });
@@ -211,6 +235,39 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
       return resolvers.promise;
     }
 
+    // Helper function to create a promise that waits for hook registration
+    function createReadyPromise(): Promise<void> {
+      const resolvers = withResolvers<void>();
+
+      if (hasReady) {
+        resolvers.resolve();
+        return resolvers.promise;
+      }
+
+      if (hasConflict && conflictErrorRef) {
+        ctx.promiseQueue = ctx.promiseQueue.then(() => {
+          resolvers.reject(conflictErrorRef);
+        });
+        return resolvers.promise;
+      }
+
+      const queueItem = ctx.invocationsQueue.get(correlationId);
+      if (queueItem && queueItem.type === 'hook') {
+        queueItem.hasReadyAwaiter = true;
+      }
+
+      if (eventLogEmpty) {
+        scheduleWhenIdle(ctx, () => {
+          ctx.onWorkflowError(
+            new WorkflowSuspension(ctx.invocationsQueue, ctx.globalThis)
+          );
+        });
+      }
+
+      readyPromises.push(resolvers);
+      return resolvers.promise;
+    }
+
     // Helper function to dispose the hook
     function disposeHook(): void {
       if (isDisposed) {
@@ -247,6 +304,10 @@ export function createCreateHook(ctx: WorkflowOrchestratorContext) {
 
     const hook: Hook<T> = {
       token,
+
+      get ready(): Promise<void> {
+        return createReadyPromise();
+      },
 
       // biome-ignore lint/suspicious/noThenProperty: Intentionally thenable
       then<TResult1 = T, TResult2 = never>(

@@ -159,6 +159,110 @@ describe('createCreateHook', () => {
     expect(ctx.onWorkflowError).not.toHaveBeenCalled();
   });
 
+  it('should resolve ready when hook_created event is received', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_created',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {},
+        createdAt: new Date(),
+      },
+    ]);
+
+    const createHook = createCreateHook(ctx);
+    const hook = createHook();
+
+    await expect(hook.ready).resolves.toBeUndefined();
+
+    expect(ctx.invocationsQueue.size).toBe(1);
+    const queueItem = ctx.invocationsQueue.values().next().value;
+    expect(queueItem?.type).toBe('hook');
+    expect(queueItem?.hasCreatedEvent).toBe(true);
+    expect(ctx.onWorkflowError).not.toHaveBeenCalled();
+  });
+
+  it('should suspend when ready is awaited before hook creation is recorded', async () => {
+    const ctx = setupWorkflowContext([]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const createHook = createCreateHook(ctx);
+    const hook = createHook();
+
+    void (async () => {
+      await hook.ready;
+    })();
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowSuspension);
+    if (WorkflowSuspension.is(workflowError)) {
+      expect(workflowError.hookCount).toBe(1);
+      expect(workflowError.steps[0]).toMatchObject({
+        type: 'hook',
+        hasReadyAwaiter: true,
+      });
+    }
+  });
+
+  it('should reject ready with HookConflictError when hook_conflict event is received', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_conflict',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          token: 'my-conflicting-token',
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const createHook = createCreateHook(ctx);
+    const hook = createHook({ token: 'my-conflicting-token' });
+
+    await expect(hook.ready).rejects.toThrow(HookConflictError);
+    await expect(hook.ready).rejects.toThrow(/already in use/);
+  });
+
+  it('should not consume payloads when ready resolves', async () => {
+    const ops: Promise<any>[] = [];
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_created',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {},
+        createdAt: new Date(),
+      },
+      {
+        eventId: 'evnt_1',
+        runId: 'wrun_123',
+        eventType: 'hook_received',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          payload: await dehydrateStepReturnValue(
+            { data: 'after-ready' },
+            'wrun_test',
+            undefined,
+            ops
+          ),
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const createHook = createCreateHook(ctx);
+    const hook = createHook<{ data: string }>();
+
+    await hook.ready;
+    await expect(hook).resolves.toEqual({ data: 'after-ready' });
+  });
+
   it('should finish processing when hook_disposed event is received', async () => {
     const ctx = setupWorkflowContext([
       {

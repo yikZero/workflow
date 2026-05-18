@@ -606,6 +606,80 @@ export async function hookCleanupTestWorkflow(
 
 //////////////////////////////////////////////////////////
 
+export async function hookReadyWorkflow(token: string, customData: string) {
+  'use workflow';
+
+  using hook = createHook({
+    token,
+    metadata: { customData },
+  });
+
+  await hook.ready;
+
+  return {
+    token,
+    customData,
+    hookReadyTestData: 'hook_registered_without_payload',
+  };
+}
+
+async function hookReadyStep(customData: string) {
+  'use step';
+  return {
+    customData,
+    hookReadyStepData: 'step_completed',
+  };
+}
+
+export async function hookReadyWithPriorStepWorkflow(
+  token: string,
+  customData: string
+) {
+  'use workflow';
+
+  using hook = createHook({
+    token,
+    metadata: { customData },
+  });
+
+  const stepPromise = hookReadyStep(customData);
+
+  await hook.ready;
+
+  return {
+    token,
+    customData,
+    stepResult: await stepPromise,
+    hookReadyTestData: 'prior_step_completed_after_ready',
+  };
+}
+
+export async function hookReadyWithParallelStepWorkflow(
+  token: string,
+  customData: string
+) {
+  'use workflow';
+
+  using hook = createHook({
+    token,
+    metadata: { customData },
+  });
+
+  const [stepResult] = await Promise.all([
+    hookReadyStep(customData),
+    hook.ready,
+  ]);
+
+  return {
+    token,
+    customData,
+    stepResult,
+    hookReadyTestData: 'parallel_step_completed_with_ready',
+  };
+}
+
+//////////////////////////////////////////////////////////
+
 /**
  * Workflow for testing early hook disposal - allows another workflow to reuse
  * the token while this workflow is still running.

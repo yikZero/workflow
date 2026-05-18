@@ -30,6 +30,22 @@ export interface Hook<T = any> extends AsyncIterable<T>, Thenable<T> {
   token: string;
 
   /**
+   * Resolves when the hook has been registered and is ready to receive payloads.
+   *
+   * This can be awaited when you need to know that the hook token has been
+   * claimed, but you do not want to wait for a hook payload yet. If another
+   * active hook already owns the token, this promise rejects with
+   * `HookConflictError`.
+   *
+   * @example
+   * ```ts
+   * using hook = createHook({ token: `order:${orderId}` });
+   * await hook.ready; // token is now claimed, without waiting for payload data
+   * ```
+   */
+  readonly ready: Promise<void>;
+
+  /**
    * Disposes the hook, releasing its token for reuse by other workflows.
    *
    * After calling `dispose()`, the hook will no longer receive any events.

@@ -849,6 +849,8 @@ export function workflowEntrypoint(
                           pendingSteps: suspensionResult.pendingSteps.length,
                           timeoutSeconds: suspensionResult.timeoutSeconds,
                           hasHookConflict: suspensionResult.hasHookConflict,
+                          hasHookReadyCreation:
+                            suspensionResult.hasHookReadyCreation,
                         });
 
                         // Hook conflict: break loop, re-invoke via queue
@@ -860,6 +862,9 @@ export function workflowEntrypoint(
 
                         if (pendingSteps.length === 0) {
                           // No steps — only waits/hooks
+                          if (suspensionResult.hasHookReadyCreation) {
+                            return { timeoutSeconds: 0 };
+                          }
                           if (suspensionResult.timeoutSeconds !== undefined) {
                             return {
                               timeoutSeconds: suspensionResult.timeoutSeconds,
@@ -942,6 +947,9 @@ export function workflowEntrypoint(
                         // Nothing to execute inline — we already queued all
                         // pending steps above, exit and let the queue drive.
                         if (!inlineStep) {
+                          if (suspensionResult.hasHookReadyCreation) {
+                            return { timeoutSeconds: 0 };
+                          }
                           if (suspensionResult.timeoutSeconds !== undefined) {
                             return {
                               timeoutSeconds: suspensionResult.timeoutSeconds,

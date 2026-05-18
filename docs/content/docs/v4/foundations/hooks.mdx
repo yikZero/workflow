@@ -85,6 +85,31 @@ The key points:
 - You need the hook's `token` to resume it
 - The workflow will resume execution right where it left off
 
+### Waiting for Hook Registration
+
+Sometimes you need to know that a hook token has been claimed, but you do not want to wait for external data yet. Await `hook.ready` for that:
+
+```typescript lineNumbers
+import { createHook } from "workflow";
+
+declare function processOrder(orderId: string): Promise<void>; // @setup
+
+export async function orderWorkflow(orderId: string) {
+  "use workflow";
+
+  using hook = createHook({
+    token: `order:${orderId}`
+  });
+
+  await hook.ready; // [!code highlight]
+
+  // The hook token is registered and reserved here.
+  await processOrder(orderId);
+}
+```
+
+`hook.ready` resolves when the hook is registered and ready to receive payloads. If another active hook already owns the same token, it rejects with [`HookConflictError`](/docs/errors/hook-conflict).
+
 ### Custom Tokens for Deterministic Hooks
 
 By default, hooks generate a random token. However, you often want to use a **custom token** that external systems can reconstruct. This is especially useful for long-running workflows where the same workflow instance should handle multiple events.

@@ -1575,6 +1575,119 @@ describe('e2e', () => {
     }
   );
 
+  test('hookReadyWorkflow - hook.ready registers hook without payload', async () => {
+    const token = Math.random().toString(36).slice(2);
+    const customData = Math.random().toString(36).slice(2);
+
+    const run = await start(await e2e('hookReadyWorkflow'), [
+      token,
+      customData,
+    ]);
+
+    const returnValue = await run.returnValue;
+    expect(returnValue).toEqual({
+      token,
+      customData,
+      hookReadyTestData: 'hook_registered_without_payload',
+    });
+
+    const world = await getWorld();
+    const { data: events } = await world.events.list({ runId: run.runId });
+    const hookCreated = events.find((e) => e.eventType === 'hook_created');
+    const hookReceived = events.find((e) => e.eventType === 'hook_received');
+
+    expect(
+      hookCreated,
+      'awaiting hook.ready should suspend and create the hook'
+    ).toBeDefined();
+    expect(
+      hookReceived,
+      'hook.ready should not require or consume hook payload data'
+    ).toBeUndefined();
+  });
+
+  test.each([
+    {
+      workflow: 'hookReadyWithPriorStepWorkflow',
+      hookReadyTestData: 'prior_step_completed_after_ready',
+    },
+    {
+      workflow: 'hookReadyWithParallelStepWorkflow',
+      hookReadyTestData: 'parallel_step_completed_with_ready',
+    },
+  ])(
+    '$workflow - hook.ready does not block step execution',
+    { timeout: 60_000 },
+    async ({ workflow, hookReadyTestData }) => {
+      const token = Math.random().toString(36).slice(2);
+      const customData = Math.random().toString(36).slice(2);
+
+      const run = await start(await e2e(workflow), [token, customData]);
+
+      const returnValue = await run.returnValue;
+      expect(returnValue).toEqual({
+        token,
+        customData,
+        stepResult: {
+          customData,
+          hookReadyStepData: 'step_completed',
+        },
+        hookReadyTestData,
+      });
+
+      const world = await getWorld();
+      const { data: events } = await world.events.list({ runId: run.runId });
+
+      expect(events.some((e) => e.eventType === 'hook_created')).toBe(true);
+      expect(events.some((e) => e.eventType === 'hook_received')).toBe(false);
+      expect(events.some((e) => e.eventType === 'step_created')).toBe(true);
+      expect(events.some((e) => e.eventType === 'step_completed')).toBe(true);
+    }
+  );
+
+  test(
+    'hookReadyWorkflow - hook.ready rejects when token is already registered',
+    { timeout: 60_000 },
+    async () => {
+      const token = Math.random().toString(36).slice(2);
+      const customData = Math.random().toString(36).slice(2);
+
+      const run1 = await start(await e2e('hookCleanupTestWorkflow'), [
+        token,
+        customData,
+      ]);
+
+      const hook = await waitForHook(token, { runId: run1.runId });
+
+      const run2 = await start(await e2e('hookReadyWorkflow'), [
+        token,
+        customData,
+      ]);
+
+      const run2Error = await run2.returnValue.catch((e: unknown) => e);
+      expect(WorkflowRunFailedError.is(run2Error)).toBe(true);
+      assert(WorkflowRunFailedError.is(run2Error));
+      expect(run2Error.cause.message).toContain(
+        'already in use by another workflow'
+      );
+
+      const { json: run2Data } = await cliInspectJson(`runs ${run2.runId}`);
+      expect(run2Data.status).toBe('failed');
+
+      await resumeHook(hook, {
+        message: 'ready-conflict-holder',
+        customData: (hook.metadata as any)?.customData,
+      });
+
+      const run1Result = await run1.returnValue;
+      expect(run1Result).toMatchObject({
+        message: 'ready-conflict-holder',
+        customData,
+        hookCleanupTestData: 'workflow_completed',
+      });
+    }
+  );
+
   test(
     'hookDisposeTestWorkflow - hook token reuse after explicit disposal while workflow still running',
     { timeout: 90_000 },
