@@ -258,6 +258,10 @@ const hook = await world.hooks.get(hookId); // [!code highlight]
 
 Look up a hook by its token. Useful in webhook resume flows where you receive a token in the callback URL.
 
+<Callout type="info">
+`hooks.getByToken()` is useful for finding the run that owns an existing hook. It is not an atomic replacement for a run idempotency key because the hook exists only after a workflow has started and registered it. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+</Callout>
+
 ```typescript lineNumbers
 const hook = await world.hooks.getByToken(token); // [!code highlight]
 ```

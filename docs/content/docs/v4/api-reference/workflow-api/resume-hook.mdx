@@ -7,11 +7,16 @@ prerequisites:
   - /docs/foundations/hooks
 related:
   - /docs/api-reference/workflow-api/resume-webhook
+  - /docs/foundations/idempotency
 ---
 
 Resumes a workflow run by sending a payload to a hook identified by its token.
 
 It creates a `hook_received` event and re-triggers the workflow to continue execution.
+
+<Callout type="info">
+For "resume or start" flows, `resumeHook()` is the resume half. If no hook exists yet and you need to call [`start()`](/docs/api-reference/workflow-api/start), protect that first start with an atomic idempotency key when duplicate runs are unsafe. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+</Callout>
 
 <Callout type="warn">
 `resumeHook` is a runtime function that must be called from outside a workflow function.
@@ -160,3 +165,4 @@ export async function POST(request: Request) {
 - [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token) - Get hook details before resuming.
 - [`createHook()`](/docs/api-reference/workflow/create-hook) - Create a hook in a workflow.
 - [`defineHook()`](/docs/api-reference/workflow/define-hook) - Type-safe hook helper.
+- [Idempotency](/docs/foundations/idempotency) - Deduplicate step side effects and workflow starts.

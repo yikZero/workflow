@@ -3,6 +3,9 @@ title: Child Workflows
 description: Spawn child workflows from a parent and poll their progress for batch processing, report generation, and other multi-workflow orchestration scenarios.
 type: guide
 summary: Orchestrate independent child workflows from a parent workflow using start(), sleep(), and getRun() to fan out work with isolated failure boundaries.
+related:
+  - /cookbook/common-patterns/idempotency
+  - /docs/api-reference/workflow-api/start
 ---
 
 Use child workflows when a single workflow needs to orchestrate many independent units of work. Each child runs as its own workflow with a separate event log, retry boundary, and failure scope -- if one child fails, it doesn't take down the parent or siblings.
@@ -91,6 +94,10 @@ async function spawnChildren(
   return runIds;
 }
 ```
+
+<Callout type="info">
+`start()` creates a new child run each time it is called. For batches that may be retried or resumed from an external request, reserve a stable business key for each child before spawning it if duplicate child runs would be unsafe. See [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+</Callout>
 
 ### Polling loop
 
@@ -361,6 +368,7 @@ async function pollWithRetries(
 - **Set a max iteration count on polling loops** to prevent runaway workflows. Calculate the count from your expected max duration and poll interval.
 - **Use chunked spawning for large batches.** Spawning 500 children in a single step can time out. Break it into chunks of 10-50.
 - **Each child has its own retry semantics.** Steps inside child workflows retry independently. The parent only sees the child's final status.
+- **Use idempotency keys for duplicate-sensitive children.** If one item must map to one child run, reserve that item key atomically before calling `start()`.
 - **Use `deploymentId: "latest"`** if children should run on the most recent deployment. See the [`start()` API reference](/docs/api-reference/workflow-api/start#using-deploymentid-latest) for compatibility considerations.
 
 ## Key APIs
@@ -368,5 +376,6 @@ async function pollWithRetries(
 - [`start()`](/docs/api-reference/workflow-api/start) -- spawn a new workflow run and get its run ID
 - [`getRun()`](/docs/api-reference/workflow-api/get-run) -- retrieve a workflow run's status and return value
 - [`sleep()`](/docs/api-reference/workflow/sleep) -- durably pause between polling iterations
+- [Idempotency](/docs/foundations/idempotency) -- reserve business keys before duplicate-sensitive starts
 - [`"use workflow"`](/docs/foundations/workflows-and-steps) -- marks the orchestrator function
 - [`"use step"`](/docs/foundations/workflows-and-steps) -- marks functions with full Node.js access

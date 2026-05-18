@@ -8,6 +8,7 @@ prerequisites:
 related:
   - /docs/api-reference/workflow/define-hook
   - /docs/api-reference/workflow/create-webhook
+  - /docs/foundations/idempotency
 ---
 
 Creates a low-level hook primitive that can be used to resume a workflow run with arbitrary payloads.
@@ -112,6 +113,10 @@ export async function slackBotWorkflow(channelId: string) {
 }
 ```
 
+<Callout type="info">
+Custom hook tokens are useful for routing future events to a running workflow and for detecting token conflicts after a workflow starts. They do not prevent duplicate workflow runs from being created before the hook is registered. For one-run-per-key behavior, see [Run idempotency](/docs/foundations/idempotency#run-idempotency).
+</Callout>
+
 ### Waiting for Multiple Payloads
 
 You can also wait for multiple payloads by using the `for await...of` syntax.
@@ -195,3 +200,4 @@ This is equivalent to manually calling `dispose()` but ensures the hook is alway
 - [`defineHook()`](/docs/api-reference/workflow/define-hook) - Type-safe hook helper
 - [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) - Resume a hook with a payload
 - [`createWebhook()`](/docs/api-reference/workflow/create-webhook) - Higher-level HTTP webhook abstraction
+- [Idempotency](/docs/foundations/idempotency) - Deduplicate step side effects and workflow starts

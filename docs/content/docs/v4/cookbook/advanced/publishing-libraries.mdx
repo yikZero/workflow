@@ -306,7 +306,7 @@ export async function processPayment(amount: number, currency: string) {
 }
 ```
 
-When called from inside a workflow run, the step wrapping this utility gets a stable idempotency key across replays — Stripe dedupes retries for free. When called from a plain Node.js process, it behaves like any other function and a fresh UUID is generated.
+When called from inside a workflow run, the step wrapping this utility gets a stable idempotency key across replays — Stripe dedupes retries for free. When called from a plain Node.js process, it behaves like any other function and a fresh UUID is generated. For more patterns, see [Idempotency](/docs/foundations/idempotency).
 
 ### In production
 

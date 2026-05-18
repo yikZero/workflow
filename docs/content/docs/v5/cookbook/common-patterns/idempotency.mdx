@@ -1,8 +1,8 @@
 ---
 title: Idempotency
-description: Ensure external side effects happen exactly once, even when steps are retried or workflows are replayed.
+description: Ensure external side effects and workflow starts are safe to retry.
 type: guide
-summary: Use step IDs as idempotency keys for external APIs like Stripe so that retries and replays don't create duplicate charges.
+summary: Use step IDs for retried side effects, and use an atomic app-level key when duplicate requests must map to one workflow run.
 ---
 
 Workflow steps can be retried (on failure) and replayed (on cold start). If a step calls an external API that isn't idempotent, retries could create duplicate charges, send duplicate emails, or double-process records. Use idempotency keys to make these operations safe.
@@ -92,10 +92,41 @@ Workflow does not currently provide distributed locking or true exactly-once del
 
 If your external API doesn't support idempotency keys natively, consider adding a deduplication layer (e.g., a database unique constraint on the operation ID).
 
+## Run idempotency for duplicate requests
+
+Run idempotency is about deduplicating the workflow run itself. For example, a checkout endpoint might be retried by the client, but you still want only one `processOrder` run for a given `orderId`.
+
+Each [`start()`](/docs/api-reference/workflow-api/start) call creates a new run. There is no `start(..., { idempotencyKey })` option today, so callers that need one run per business key should reserve that key atomically before calling `start()`.
+
+{/* @skip-typecheck - conceptual idempotency store API */}
+```typescript
+import { getRun, start } from "workflow/api";
+import { processOrder } from "./workflows/process-order";
+
+export async function startOrderOnce(orderId: string) {
+  const key = `order:${orderId}`;
+  const reservation = await idempotencyStore.claim(key); // [!code highlight]
+
+  if (reservation.status === "created") {
+    const run = await start(processOrder, [orderId]);
+    await idempotencyStore.attachRunId(key, run.runId);
+    return run;
+  }
+
+  const runId = await idempotencyStore.waitForRunId(key);
+  return getRun(runId); // [!code highlight]
+}
+```
+
+Back `idempotencyStore.claim()` with a database unique constraint, transaction, or atomic lock. If `start()` fails after a reservation is claimed, mark the reservation failed or release it so a later retry can try again.
+
+Custom hook tokens can coordinate work after a workflow starts, and token conflicts are atomic, but they do not stop multiple callers from creating multiple runs before the first run registers its hook. Use an external atomic reservation when duplicate run creation itself is unsafe.
+
 ## Tips
 
 - **`stepId` is deterministic.** It's the same value across retries and replays of the same step, making it a reliable idempotency key.
 - **Always provide idempotency keys for non-idempotent external calls.** Even if you think a step won't be retried, cold-start replay will re-execute it.
+- **Reserve a business key before calling `start()`** when retried requests must resolve to one workflow run.
 - **Handle 409/conflict as success.** If an external API returns "already processed," treat that as a successful result, not an error.
 - **Make your own APIs idempotent** where possible. Accept an idempotency key and return the cached result on duplicate requests.
 
@@ -105,3 +136,4 @@ If your external API doesn't support idempotency keys natively, consider adding 
 - [`"use step"`](/docs/api-reference/workflow/use-step) -- declares step functions with full Node.js access
 - [`getStepMetadata()`](/docs/api-reference/step/get-step-metadata) -- provides the deterministic `stepId` for idempotency keys
 - [`start()`](/docs/api-reference/workflow-api/start) -- starts a new workflow run
+- [`getRun()`](/docs/api-reference/workflow-api/get-run) -- retrieves an existing workflow run by `runId`
