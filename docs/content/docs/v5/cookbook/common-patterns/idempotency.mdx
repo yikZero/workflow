@@ -5,41 +5,21 @@ type: guide
 summary: Use step IDs for retry-safe external calls, and use deterministic hook tokens when duplicate requests must route to one active workflow.
 ---
 
-Workflow steps can be retried (on failure) and replayed (on cold start). If a step calls an external API that isn't idempotent, retries could create duplicate charges, send duplicate emails, or double-process records. Use idempotency keys to make these operations safe.
+Use idempotency when a retry or duplicate request should not repeat the underlying work. In Workflow, there are two common patterns: use the step ID for retry-safe external calls, and use hook tokens to coordinate duplicate workflow starts.
 
 ## When to use this
 
-- Charging a payment (Stripe, PayPal)
-- Sending transactional emails or SMS
-- Creating records in external systems where duplicates are harmful
-- Any step that has side effects in systems you don't control
+- A step charges a payment, sends an email, enqueues work, or creates an external record.
+- A route may receive duplicate requests that should map to one active workflow run.
 
-## Pattern: Step ID as idempotency key
+## Step idempotency
 
 Every step has a unique, deterministic `stepId` available via `getStepMetadata()`. Pass this as the idempotency key to external APIs:
 
 ```typescript
 import { getStepMetadata } from "workflow";
 
-declare function createCharge(customerId: string, amount: number): Promise<{ id: string }>; // @setup
-declare function sendReceipt(customerId: string, chargeId: string): Promise<void>; // @setup
-
-export async function chargeCustomer(customerId: string, amount: number) {
-  "use workflow";
-
-  const charge = await createCharge(customerId, amount);
-  await sendReceipt(customerId, charge.id);
-
-  return { customerId, chargeId: charge.id, status: "completed" };
-}
-```
-
-### Step function with idempotency key
-
-```typescript
-import { getStepMetadata } from "workflow";
-
-async function createCharge(
+export async function createCharge(
   customerId: string,
   amount: number
 ): Promise<{ id: string }> {
@@ -69,36 +49,13 @@ async function createCharge(
 
   return charge.json();
 }
-
-async function sendReceipt(customerId: string, chargeId: string): Promise<void> {
-  "use step";
-
-  const { stepId } = getStepMetadata();
-
-  await fetch("https://api.example.com/receipts", {
-    method: "POST",
-    headers: { "Idempotency-Key": stepId },
-    body: JSON.stringify({ customerId, chargeId }),
-  });
-}
 ```
 
-## Race condition caveats
+See [Step Idempotency](/docs/foundations/idempotency#step-idempotency) for why `stepId` is stable across retries and how to think about external API conflicts.
 
-If two workflow runs could process the same entity concurrently:
+## Run idempotency
 
-- **Rely on the external API's idempotency** (like Stripe's `Idempotency-Key`) rather than checking a local flag.
-- **Don't use check-then-act patterns** like "read a flag, then write if not set" -- another run could read the same flag between your read and write.
-
-If your external API doesn't support idempotency keys natively, consider adding a deduplication layer (e.g., a database unique constraint on the operation ID).
-
-If an external API returns a 409 or "already processed" response for a repeated idempotency key, treat that as a successful result for the step.
-
-## Run idempotency for duplicate requests
-
-Run idempotency is about deduplicating the workflow run itself. For example, a checkout endpoint might be retried by the client, but you still want only one `processOrder` run for a given `orderId`.
-
-Because [hooks](/docs/foundations/hooks) already ensure globally unique active tokens, Workflow can use the same mechanism for idempotency. Use a deterministic hook token as the workflow's idempotency key. The workflow creates the hook near the beginning of the run, and external callers use that same token to find or resume the active run.
+For duplicate workflow-start requests, derive a hook token from your domain key and create that hook near the beginning of the workflow. Duplicate runs that fail to claim the token can exit immediately.
 
 ```typescript
 import { createHook } from "workflow";
@@ -124,55 +81,21 @@ export async function processOrder(orderId: string) {
 }
 ```
 
-The hook does not need to be resumed for this pattern. Reserving the token is enough to make one active workflow run own the idempotency key.
-
-Outside the workflow, you can simply call `start()` for duplicate requests and let the runs that fail to claim the hook end immediately. To avoid starting a new run when the hook already exists, pre-emptively check for a conflict with `getHookByToken()`:
+Then start the workflow from your route:
 
 ```typescript
-import { getHookByToken, start } from "workflow/api";
-import { HookNotFoundError } from "workflow/errors";
+import { start } from "workflow/api";
 import { processOrder } from "./workflows/process-order";
 
-export async function confirmOrder(orderId: string) {
-  const token = `order:${orderId}`;
-
-  try {
-    const hook = await getHookByToken(token); // [!code highlight]
-    return { runId: hook.runId, reused: true };
-  } catch (error) {
-    if (!HookNotFoundError.is(error)) throw error;
-  }
+export async function POST(request: Request) {
+  const { orderId } = await request.json();
 
   const run = await start(processOrder, [orderId]); // [!code highlight]
-  return { runId: run.runId, reused: false };
+  return Response.json({ runId: run.runId });
 }
 ```
 
-<Callout type="warn">
-This avoids creating a new run only after the first run has registered its hook. `start()` and the first `createHook()` call are not a single transaction today, so concurrent requests can still start multiple runs while the hook is being registered. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
-</Callout>
-
-Because this pattern uses hooks for idempotency, duplicate requests can also inject additional data and steer the existing run. When the workflow awaits the hook payload, one request starts the run and later requests resume the hook with the same token. In this example, `processOrderWithConfirmation` awaits `createHook<{ confirmed: boolean }>({ token })` before processing the order:
-
-```typescript
-import { resumeHook, start } from "workflow/api";
-import { HookNotFoundError } from "workflow/errors";
-import { processOrderWithConfirmation } from "./workflows/process-order";
-
-export async function confirmOrder(orderId: string, confirmed: boolean) {
-  const token = `order:${orderId}`;
-
-  try {
-    const hook = await resumeHook(token, { confirmed }); // [!code highlight]
-    return { runId: hook.runId, reused: true };
-  } catch (error) {
-    if (!HookNotFoundError.is(error)) throw error;
-  }
-
-  const run = await start(processOrderWithConfirmation, [orderId]); // [!code highlight]
-  return { runId: run.runId, reused: false };
-}
-```
+See [Run idempotency](/docs/foundations/idempotency#run-idempotency) for the full pattern, including how to pre-check with `getHookByToken()`, steer an existing run with `resumeHook()`, and handle the current race between `start()` and hook registration.
 
 ## Key APIs
 
@@ -183,4 +106,3 @@ export async function confirmOrder(orderId: string, confirmed: boolean) {
 - [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token) -- finds the active hook for a token
 - [`resumeHook()`](/docs/api-reference/workflow-api/resume-hook) -- resumes the active hook
 - [`start()`](/docs/api-reference/workflow-api/start) -- starts a new workflow run
-- [`getRun()`](/docs/api-reference/workflow-api/get-run) -- retrieves an existing workflow run by `runId`
