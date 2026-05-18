@@ -1,8 +1,8 @@
 ---
 title: Idempotency
-description: Ensure operations and hook-coordinated workflow starts can be safely retried without producing duplicate side effects.
+description: Use step IDs for retry-safe side effects and hook tokens to coordinate duplicate workflow starts.
 type: conceptual
-summary: Prevent duplicate side effects with step IDs, and coordinate duplicate workflow starts with deterministic hook tokens.
+summary: Make step side effects retry-safe with step IDs, and route duplicate workflow-start requests through deterministic hook tokens.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
