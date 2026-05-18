@@ -1,8 +1,8 @@
 ---
 title: Idempotency
-description: Ensure external side effects and workflow starts are safe to retry.
+description: Make step retries safe and coordinate duplicate workflow starts with hook tokens.
 type: guide
-summary: Use step IDs for retried side effects, and use deterministic hook tokens when duplicate requests must route to one active workflow.
+summary: Use step IDs for retry-safe external calls, and use deterministic hook tokens when duplicate requests must route to one active workflow.
 ---
 
 Workflow steps can be retried (on failure) and replayed (on cold start). If a step calls an external API that isn't idempotent, retries could create duplicate charges, send duplicate emails, or double-process records. Use idempotency keys to make these operations safe.

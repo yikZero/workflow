@@ -1,8 +1,8 @@
 ---
 title: Idempotency
-description: Use step IDs for retry-safe side effects and hook tokens to coordinate duplicate workflow starts.
+description: Make step retries safe and coordinate duplicate workflow starts with hook tokens.
 type: conceptual
-summary: Make step side effects retry-safe with step IDs, and route duplicate workflow-start requests through deterministic hook tokens.
+summary: Use step IDs for retry-safe external calls, and route duplicate workflow-start requests through deterministic hook tokens.
 prerequisites:
   - /docs/foundations/workflows-and-steps
 related:
@@ -11,7 +11,9 @@ related:
   - /docs/foundations/hooks
 ---
 
-Idempotency is a property of an operation that ensures it can be safely retried without producing duplicate side effects.
+Idempotency is a property of an operation that ensures repeated attempts have the same effect as a single attempt.
+
+In Workflow, idempotency shows up in two related places: step idempotency makes external calls safe when a step retries, and run idempotency coordinates duplicate requests that try to start the same workflow.
 
 In distributed systems (calling external APIs), it is not always possible to ensure an operation has only been performed once just by seeing if it succeeds.
 Consider a payment API that charges the user $10, but due to network failures, the confirmation response is lost. When the step retries (because the previous attempt was considered a failure), it will charge the user again.
