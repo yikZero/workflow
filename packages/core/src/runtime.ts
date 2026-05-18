@@ -18,9 +18,9 @@ import { describeError } from './describe-error.js';
 import { WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import {
+  getReplayTimeoutMs,
   MAX_QUEUE_DELIVERIES,
   REPLAY_TIMEOUT_MAX_RETRIES,
-  REPLAY_TIMEOUT_MS,
 } from './runtime/constants.js';
 import {
   getQueueOverhead,
@@ -214,84 +214,123 @@ export function workflowEntrypoint(
 
         const spanLinks = await linkToCurrentContext();
 
-        // --- Replay timeout guard ---
-        // If the replay takes longer than the timeout, fail the run and exit.
-        // This must be lower than the function's maxDuration to ensure
-        // the failure is recorded before the platform kills the function.
-        let replayTimeout: NodeJS.Timeout | undefined;
-        if (process.env.VERCEL_URL !== undefined) {
-          replayTimeout = setTimeout(async () => {
-            // Allow a few retries before permanently failing the run.
-            // On early attempts, just exit so the queue retries the message.
-            if (metadata.attempt <= REPLAY_TIMEOUT_MAX_RETRIES) {
-              runLogger.warn(
-                'Workflow replay exceeded timeout but will be re-attempted (attempt < maxRetries)',
-                {
-                  timeoutMs: REPLAY_TIMEOUT_MS,
-                  attempt: metadata.attempt,
-                  maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
-                }
-              );
-              process.exit(1);
-            }
+        // --- Replay budget bookkeeping ---
+        // The replay budget bounds the *non-step* portion of a single
+        // handler invocation: deterministic event-log replay, workflow-VM
+        // execution between step boundaries, suspension handling, queue
+        // round-trips, etc. Inline step bodies (`"use step"` functions
+        // invoked via `executeStep`) are intentionally excluded — they are
+        // bounded by the platform's function `maxDuration` and the
+        // `NO_INLINE_REPLAY_AFTER_MS` early-return guard below.
+        //
+        // We track elapsed time by recording when each non-step interval
+        // starts; before any `executeStep(...)` call we pause the budget
+        // (adding the elapsed delta to `replayElapsedMs`) and resume after.
+        // The budget is checked at loop boundaries — if exceeded, we hit
+        // the retry-then-fail path that was previously driven by a
+        // `setTimeout` wrapping the whole handler.
+        //
+        // Earlier versions (pre-#2009 fix) used a single `setTimeout` that
+        // also bounded step bodies, which broke any workflow with a single
+        // step longer than the budget. See packages/core/src/runtime/constants.ts
+        // for the env var override.
+        const replayTimeoutMs = getReplayTimeoutMs();
+        let replayElapsedMs = 0;
+        let nonStepStart = Date.now();
 
-            const replayTimeoutDescription = describeError(
-              undefined,
-              RUN_ERROR_CODES.REPLAY_TIMEOUT
-            );
-            runLogger.error(
-              'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
+        // Accumulate the elapsed delta since the last checkpoint (handler
+        // entry or the most recent `resumeReplayBudget`) and reset the
+        // start marker. Call this immediately before any inline step body.
+        const pauseReplayBudget = (): void => {
+          replayElapsedMs += Date.now() - nonStepStart;
+        };
+
+        // Reset the non-step interval start marker. Call this immediately
+        // after a step body returns, before any further non-step work.
+        const resumeReplayBudget = (): void => {
+          nonStepStart = Date.now();
+        };
+
+        // Returns true if the replay budget is exhausted. The caller is
+        // expected to call `handleReplayBudgetExhausted()` afterward and
+        // return from the handler.
+        const isReplayBudgetExhausted = (): boolean => {
+          return Date.now() - nonStepStart + replayElapsedMs >= replayTimeoutMs;
+        };
+
+        // Fail the run (or retry, on early attempts) when the replay
+        // budget is exhausted. Matches the semantics of the old setTimeout
+        // guard: on attempts <= REPLAY_TIMEOUT_MAX_RETRIES it `process.exit(1)`s
+        // so the queue redelivers; on the next attempt it writes
+        // `run_failed` with `RUN_ERROR_CODES.REPLAY_TIMEOUT` then exits.
+        const handleReplayBudgetExhausted = async (): Promise<void> => {
+          if (metadata.attempt <= REPLAY_TIMEOUT_MAX_RETRIES) {
+            runLogger.warn(
+              'Workflow replay exceeded timeout but will be re-attempted (attempt < maxRetries)',
               {
-                timeoutMs: REPLAY_TIMEOUT_MS,
+                timeoutMs: replayTimeoutMs,
                 attempt: metadata.attempt,
                 maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
-                errorCode: replayTimeoutDescription.errorCode,
-                errorAttribution: replayTimeoutDescription.attribution,
               }
             );
-
-            try {
-              const world = await getWorld();
-              const getEncryptionKey = memoizeEncryptionKey(world, runId);
-              const timeoutErr = new FatalError(
-                `Workflow replay exceeded maximum duration (${REPLAY_TIMEOUT_MS / 1000}s) after ${metadata.attempt} attempts`
-              );
-              await world.events.create(
-                runId,
-                {
-                  eventType: 'run_failed',
-                  specVersion: SPEC_VERSION_CURRENT,
-                  eventData: {
-                    error: await dehydrateRunError(
-                      timeoutErr,
-                      runId,
-                      await getEncryptionKey()
-                    ),
-                    errorCode: RUN_ERROR_CODES.REPLAY_TIMEOUT,
-                  },
-                },
-                { requestId }
-              );
-            } catch (err) {
-              // Best effort — process exits regardless. Surface why so
-              // operators can diagnose repeat timeouts against the backend.
-              runLogger.warn(
-                'Unable to mark run as failed. The queue will continue to retry',
-                {
-                  attempt: metadata.attempt,
-                  errorName: err instanceof Error ? err.name : 'UnknownError',
-                  errorMessage:
-                    err instanceof Error ? err.message : String(err),
-                  errorStack: err instanceof Error ? err.stack : undefined,
-                }
-              );
-            }
-            // Note that this also prevents the runtime from acking the queue message,
-            // so the queue will call back once, after which a 410 will get it to exit early.
             process.exit(1);
-          }, REPLAY_TIMEOUT_MS);
-          replayTimeout.unref();
-        }
+          }
+
+          const replayTimeoutDescription = describeError(
+            undefined,
+            RUN_ERROR_CODES.REPLAY_TIMEOUT
+          );
+          runLogger.error(
+            'Workflow replay exceeded timeout and max retries exceeded. Failing the run',
+            {
+              timeoutMs: replayTimeoutMs,
+              attempt: metadata.attempt,
+              maxRetries: REPLAY_TIMEOUT_MAX_RETRIES,
+              errorCode: replayTimeoutDescription.errorCode,
+              errorAttribution: replayTimeoutDescription.attribution,
+            }
+          );
+
+          try {
+            const world = await getWorld();
+            const getEncryptionKey = memoizeEncryptionKey(world, runId);
+            const timeoutErr = new FatalError(
+              `Workflow replay exceeded maximum duration (${replayTimeoutMs / 1000}s) after ${metadata.attempt} attempts`
+            );
+            await world.events.create(
+              runId,
+              {
+                eventType: 'run_failed',
+                specVersion: SPEC_VERSION_CURRENT,
+                eventData: {
+                  error: await dehydrateRunError(
+                    timeoutErr,
+                    runId,
+                    await getEncryptionKey()
+                  ),
+                  errorCode: RUN_ERROR_CODES.REPLAY_TIMEOUT,
+                },
+              },
+              { requestId }
+            );
+          } catch (err) {
+            // Best effort — process exits regardless. Surface why so
+            // operators can diagnose repeat timeouts against the backend.
+            runLogger.warn(
+              'Unable to mark run as failed. The queue will continue to retry',
+              {
+                attempt: metadata.attempt,
+                errorName: err instanceof Error ? err.name : 'UnknownError',
+                errorMessage: err instanceof Error ? err.message : String(err),
+                errorStack: err instanceof Error ? err.stack : undefined,
+              }
+            );
+          }
+          // Note that this also prevents the runtime from acking the queue
+          // message, so the queue will call back once, after which a 410
+          // will get it to exit early.
+          process.exit(1);
+        };
 
         return await withTraceContext(traceContext, async () => {
           return await withWorkflowBaggage(
@@ -346,14 +385,24 @@ export function workflowEntrypoint(
                     const bgStartedAt = bgRun.startedAt
                       ? +bgRun.startedAt
                       : Date.now();
-                    const stepResult = await executeStep({
-                      world,
-                      workflowRunId: runId,
-                      workflowName,
-                      workflowStartedAt: bgStartedAt,
-                      stepId: incomingStepId,
-                      stepName: incomingStepName,
-                    });
+                    // Pause the replay budget while the step body runs —
+                    // step duration is bounded by the platform's function
+                    // maxDuration, not by the replay timeout. See the
+                    // budget bookkeeping helpers defined above.
+                    pauseReplayBudget();
+                    let stepResult: Awaited<ReturnType<typeof executeStep>>;
+                    try {
+                      stepResult = await executeStep({
+                        world,
+                        workflowRunId: runId,
+                        workflowName,
+                        workflowStartedAt: bgStartedAt,
+                        stepId: incomingStepId,
+                        stepName: incomingStepName,
+                      });
+                    } finally {
+                      resumeReplayBudget();
+                    }
                     if (stepResult.type === 'retry') {
                       return { timeoutSeconds: stepResult.timeoutSeconds };
                     }
@@ -592,6 +641,19 @@ export function workflowEntrypoint(
                   // biome-ignore lint/correctness/noConstantCondition: intentional loop
                   while (true) {
                     loopIteration++;
+
+                    // Replay-budget check: bail out (retry or fail) if
+                    // non-step time within this invocation has exceeded
+                    // the configured budget. Step bodies are excluded
+                    // because pauseReplayBudget/resumeReplayBudget bracket
+                    // every `executeStep` call.
+                    if (isReplayBudgetExhausted()) {
+                      await handleReplayBudgetExhausted();
+                      // handleReplayBudgetExhausted always exits the
+                      // process, but return for type-safety and to make
+                      // the control flow explicit.
+                      return;
+                    }
 
                     // Check timeout before replay
                     if (
@@ -950,15 +1012,27 @@ export function workflowEntrypoint(
                           return;
                         }
 
-                        // Execute inline step
-                        const stepResult = await executeStep({
-                          world,
-                          workflowRunId: runId,
-                          workflowName,
-                          workflowStartedAt,
-                          stepId: inlineStep.correlationId,
-                          stepName: inlineStep.stepName,
-                        });
+                        // Execute inline step. Pause the replay budget
+                        // for the duration of the step body — step duration
+                        // is bounded by the platform's function maxDuration,
+                        // not by the replay timeout. Without this the
+                        // replay-budget check at the top of the next loop
+                        // iteration would (incorrectly) charge the step
+                        // body against the budget.
+                        pauseReplayBudget();
+                        let stepResult: Awaited<ReturnType<typeof executeStep>>;
+                        try {
+                          stepResult = await executeStep({
+                            world,
+                            workflowRunId: runId,
+                            workflowName,
+                            workflowStartedAt,
+                            stepId: inlineStep.correlationId,
+                            stepName: inlineStep.stepName,
+                          });
+                        } finally {
+                          resumeReplayBudget();
+                        }
 
                         if (stepResult.type === 'retry') {
                           // Step needs retry — queue self with stepId for retry
@@ -1136,10 +1210,6 @@ export function workflowEntrypoint(
               ); // End trace
             }
           ); // End withWorkflowBaggage
-        }).finally(() => {
-          if (replayTimeout) {
-            clearTimeout(replayTimeout);
-          }
         }); // End withTraceContext
       }
     );
