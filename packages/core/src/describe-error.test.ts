@@ -73,7 +73,9 @@ describe('describeError', () => {
     const result = describeError(undefined, RUN_ERROR_CODES.REPLAY_TIMEOUT);
     expect(result.attribution).toBe('sdk');
     expect(result.errorCode).toBe(RUN_ERROR_CODES.REPLAY_TIMEOUT);
-    expect(result.hint).toContain('replay between step boundaries');
+    expect(result.hint).toContain(
+      'replay between step boundaries took too long'
+    );
   });
 
   test('MAX_DELIVERIES_EXCEEDED via precomputed errorCode is attributed to the SDK', () => {
@@ -141,7 +143,9 @@ describe('describeRunError', () => {
       errorCode: RUN_ERROR_CODES.REPLAY_TIMEOUT,
     });
     expect(result.attribution).toBe('sdk');
-    expect(result.hint).toContain('replay between step boundaries');
+    expect(result.hint).toContain(
+      'replay between step boundaries took too long'
+    );
   });
 
   test('MAX_DELIVERIES_EXCEEDED errorCode is attributed to the SDK', () => {
