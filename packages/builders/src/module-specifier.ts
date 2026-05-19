@@ -232,6 +232,28 @@ function normalizeExportPath(path: string): string {
   return path;
 }
 
+function stripKnownJsTsExtension(path: string): string {
+  return path.replace(/\.(?:[cm]?[jt]sx?)$/, '');
+}
+
+function resolvePrivatePackageSubpath(
+  filePath: string,
+  pkg: PackageInfo
+): string | undefined {
+  const relativePath = toPackageRelativePath(filePath, pkg);
+  if (!relativePath) {
+    return undefined;
+  }
+
+  const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+  const canonicalPath = normalizedRelativePath.startsWith('src/')
+    ? `dist/${normalizedRelativePath.slice('src/'.length)}`
+    : normalizedRelativePath;
+  const extensionlessPath = stripKnownJsTsExtension(canonicalPath);
+
+  return extensionlessPath || undefined;
+}
+
 /**
  * Check if a file path is inside node_modules.
  */
@@ -338,7 +360,7 @@ function isWorkspacePackage(filePath: string, projectRoot: string): boolean {
  * // => { moduleSpecifier: 'workflow/internal/builtins@4.0.0' }
  *
  * @example
- * // File in workspace package
+ * // Exported file in workspace package
  * resolveModuleSpecifier('/project/packages/shared/src/utils.ts', '/project')
  * // => { moduleSpecifier: '@myorg/shared@0.0.0' }
  *
@@ -373,13 +395,27 @@ export function resolveModuleSpecifier(
     allowSourceFallback: true,
   });
 
-  // Return the module specifier as "name/subpath@version" or "name@version"
-  const specifier = subpath
-    ? `${pkg.name}${subpath}@${pkg.version}`
-    : `${pkg.name}@${pkg.version}`;
+  if (subpath) {
+    return {
+      moduleSpecifier: `${pkg.name}${subpath}@${pkg.version}`,
+    };
+  }
+
+  if (isRootEntrypointFile(filePath, pkg)) {
+    return {
+      moduleSpecifier: `${pkg.name}@${pkg.version}`,
+    };
+  }
+
+  const privateSubpath = resolvePrivatePackageSubpath(filePath, pkg);
+  if (privateSubpath) {
+    return {
+      moduleSpecifier: `${pkg.name}/${privateSubpath}@${pkg.version}`,
+    };
+  }
 
   return {
-    moduleSpecifier: specifier,
+    moduleSpecifier: undefined,
   };
 }
 

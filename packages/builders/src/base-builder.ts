@@ -16,7 +16,7 @@ import {
 } from './apply-swc-transform.js';
 import { createDiscoverEntriesPlugin } from './discover-entries-esbuild-plugin.js';
 import { getEsbuildTsconfigOptions } from './esbuild-tsconfig.js';
-import { getImportPath } from './module-specifier.js';
+import { getImportPath, resolveModuleSpecifier } from './module-specifier.js';
 import { createNodeModuleErrorPlugin } from './node-module-esbuild-plugin.js';
 import { createPseudoPackagePlugin } from './pseudo-package-esbuild-plugin.js';
 import { createSwcPlugin } from './swc-esbuild-plugin.js';
@@ -88,6 +88,57 @@ async function withRealpaths(entries: string[]): Promise<string[]> {
       ).flat()
     )
   );
+}
+
+function isWorkflowInternalBuiltinsFile(filePath: string): boolean {
+  return /(^|\/)(packages\/workflow|node_modules\/workflow)\/(src|dist)\/internal\/builtins\.(ts|js)$/.test(
+    filePath.replace(/\\/g, '/')
+  );
+}
+
+function dropSourcePackageFilesBackedByDist(
+  files: Iterable<string>,
+  projectRoot: string
+): string[] {
+  const fileList = Array.from(files);
+  const groupedFiles = new Map<
+    string,
+    Array<{ file: string; isSource: boolean; isDist: boolean }>
+  >();
+
+  for (const file of fileList) {
+    const moduleSpecifier = resolveModuleSpecifier(
+      file,
+      projectRoot
+    ).moduleSpecifier;
+    if (!moduleSpecifier) {
+      continue;
+    }
+
+    const normalizedFile = file.replace(/\\/g, '/');
+    const entries = groupedFiles.get(moduleSpecifier) ?? [];
+    entries.push({
+      file,
+      isSource: normalizedFile.includes('/src/'),
+      isDist: normalizedFile.includes('/dist/'),
+    });
+    groupedFiles.set(moduleSpecifier, entries);
+  }
+
+  const sourceFilesToDrop = new Set<string>();
+  for (const entries of groupedFiles.values()) {
+    if (!entries.some((entry) => entry.isDist)) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isSource) {
+        sourceFilesToDrop.add(entry.file);
+      }
+    }
+  }
+
+  return fileList.filter((file) => !sourceFilesToDrop.has(file));
 }
 
 export interface DiscoveredEntries {
@@ -613,7 +664,12 @@ export abstract class BaseBuilder {
     const discovered =
       discoveredEntries ??
       (await this.discoverEntries(inputFiles, dirname(outfile), tsconfigPath));
-    const stepFiles = [...discovered.discoveredSteps].sort();
+    const stepFiles = dropSourcePackageFilesBackedByDist(
+      [...discovered.discoveredSteps].filter(
+        (file) => !isWorkflowInternalBuiltinsFile(file)
+      ),
+      this.transformProjectRoot
+    ).sort();
     const workflowFiles = [...discovered.discoveredWorkflows].sort();
     const serdeFiles = [...discovered.discoveredSerdeFiles].sort();
 

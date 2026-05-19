@@ -281,7 +281,30 @@ describe('getImportPath', () => {
     });
   });
 
-  it('uses the consuming app root to resolve workspace package workflow ids', () => {
+  it('uses package specifiers for workspace package root entrypoint ids', () => {
+    const projectRoot = join(testRoot, 'apps/chat');
+    const packageDir = join(testRoot, 'packages/vade');
+    const filePath = join(packageDir, 'src/index.ts');
+
+    writeJson(join(projectRoot, 'package.json'), {
+      name: 'chat',
+      dependencies: { vade: 'workspace:*' },
+    });
+
+    writeJson(join(packageDir, 'package.json'), {
+      name: 'vade',
+      version: '0.0.0',
+      main: './src/index.ts',
+    });
+
+    writeFile(filePath, `'use workflow';\n`);
+
+    expect(resolveModuleSpecifier(filePath, projectRoot)).toEqual({
+      moduleSpecifier: 'vade@0.0.0',
+    });
+  });
+
+  it('uses package-private subpaths for non-exported workspace package files', () => {
     const projectRoot = join(testRoot, 'apps/chat');
     const packageDir = join(testRoot, 'packages/vade');
     const filePath = join(
@@ -302,7 +325,38 @@ describe('getImportPath', () => {
     writeFile(filePath, `'use workflow';\n`);
 
     expect(resolveModuleSpecifier(filePath, projectRoot)).toEqual({
-      moduleSpecifier: 'vade@0.0.0',
+      moduleSpecifier:
+        'vade/dist/internal/message/workflow/handle-message@0.0.0',
+    });
+  });
+
+  it('uses the same package-private subpath for source and dist files', () => {
+    const projectRoot = join(testRoot, 'apps/chat');
+    const packageDir = join(testRoot, 'packages/agent');
+    const sourcePath = join(packageDir, 'src/agent/do-stream-step.ts');
+    const distPath = join(packageDir, 'dist/agent/do-stream-step.js');
+
+    writeJson(join(projectRoot, 'package.json'), {
+      name: 'chat',
+      dependencies: { '@internal/agent': 'workspace:*' },
+    });
+
+    writeJson(join(packageDir, 'package.json'), {
+      name: '@internal/agent',
+      version: '1.0.0',
+      exports: {
+        './agent': './dist/agent/durable-agent.js',
+      },
+    });
+
+    writeFile(sourcePath, `'use step';\n`);
+    writeFile(distPath, `'use step';\n`);
+
+    expect(resolveModuleSpecifier(sourcePath, projectRoot)).toEqual({
+      moduleSpecifier: '@internal/agent/dist/agent/do-stream-step@1.0.0',
+    });
+    expect(resolveModuleSpecifier(distPath, projectRoot)).toEqual({
+      moduleSpecifier: '@internal/agent/dist/agent/do-stream-step@1.0.0',
     });
   });
 
