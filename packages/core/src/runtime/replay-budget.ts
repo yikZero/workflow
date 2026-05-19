@@ -107,15 +107,19 @@ export class ReplayBudget {
 
 /**
  * Fail the run (or retry, on early attempts) when the replay budget is
- * exhausted. On attempts <= `REPLAY_TIMEOUT_MAX_RETRIES` we exit the
- * process so the queue redelivers; on the next attempt we write
- * `run_failed` with `RUN_ERROR_CODES.REPLAY_TIMEOUT` then exit.
+ * exhausted. The handling depends on whether the underlying World
+ * supports `process.exit(1)` as a queue redelivery signal (see
+ * `World.processExitTriggersQueueRedelivery`):
  *
- * Gated by `process.env.VERCEL_URL` to preserve prior behavior on local
- * dev / non-Vercel runtimes (`pnpm dev` should not be hard-killed by a
- * single pathological workflow). Outside Vercel the function logs and
- * returns; the queue handler will then ack the message and the request
- * completes normally.
+ * - **Managed-platform Worlds** (`world-vercel`): on attempts <=
+ *   `REPLAY_TIMEOUT_MAX_RETRIES` exit the process so the platform fails
+ *   the invocation and the queue redelivers; on the next attempt write
+ *   `run_failed` with `RUN_ERROR_CODES.REPLAY_TIMEOUT` and exit.
+ *
+ * - **In-process Worlds** (`world-local`, dev servers): calling
+ *   `process.exit()` would terminate the host (e.g. `pnpm dev`), so
+ *   instead log a warning, write `run_failed` best-effort, and return.
+ *   The framework completes the request normally.
  */
 export async function handleReplayBudgetExhausted(args: {
   runId: string;
@@ -127,17 +131,20 @@ export async function handleReplayBudgetExhausted(args: {
   const { runId, workflowName, requestId, attempt, limitMs } = args;
   const runLogger = runtimeLogger.forRun(runId, workflowName);
 
-  // Outside Vercel we don't have a queue redelivery system to rely on,
-  // and calling `process.exit(1)` would kill the user's dev server.
-  // Surface the failure via the event log if we can, then return —
-  // the caller will fall through and the request finishes normally.
-  if (process.env.VERCEL_URL === undefined) {
+  const world = await getWorld();
+  const canExitForRedelivery =
+    world.processExitTriggersQueueRedelivery === true;
+
+  // Worlds without managed-platform redelivery (e.g. world-local, custom
+  // in-process worlds) must not have us exit the process — that would
+  // kill the user's host (`pnpm dev`, CLI, etc.) without producing a
+  // retry. Surface the failure via the event log if we can, then return.
+  if (!canExitForRedelivery) {
     runLogger.warn(
-      'Workflow replay exceeded timeout (non-Vercel runtime: not exiting process)',
+      'Workflow replay exceeded timeout; current World does not support process exit for redelivery — failing the run and returning',
       { timeoutMs: limitMs, attempt }
     );
     try {
-      const world = await getWorld();
       const getEncryptionKey = memoizeEncryptionKey(world, runId);
       const timeoutErr = new FatalError(
         `Workflow replay exceeded maximum duration (${limitMs / 1000}s)`
@@ -159,7 +166,7 @@ export async function handleReplayBudgetExhausted(args: {
         { requestId }
       );
     } catch (err) {
-      runLogger.warn('Unable to mark run as failed (non-Vercel runtime)', {
+      runLogger.warn('Unable to mark run as failed', {
         attempt,
         errorName: err instanceof Error ? err.name : 'UnknownError',
         errorMessage: err instanceof Error ? err.message : String(err),
@@ -196,7 +203,6 @@ export async function handleReplayBudgetExhausted(args: {
   );
 
   try {
-    const world = await getWorld();
     const getEncryptionKey = memoizeEncryptionKey(world, runId);
     const timeoutErr = new FatalError(
       `Workflow replay exceeded maximum duration (${limitMs / 1000}s) after ${attempt} attempts`
