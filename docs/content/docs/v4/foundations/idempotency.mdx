@@ -68,9 +68,12 @@ import { createHook } from "workflow";
 import { HookConflictError } from "workflow/errors";
 
 type OrderRequest = { confirmed: boolean };
+type OrderResult =
+  | { status: "processed" | "cancelled" }
+  | { status: "duplicate"; runId?: string };
 declare function chargeOrder(orderId: string): Promise<void>; // @setup
 
-export async function processOrder(orderId: string) {
+export async function processOrder(orderId: string): Promise<OrderResult> {
   "use workflow";
 
   const token = `order:${orderId}`;
@@ -87,7 +90,10 @@ export async function processOrder(orderId: string) {
     return { status: "processed" as const };
   } catch (error) {
     if (HookConflictError.is(error)) { // [!code highlight]
-      return { status: "duplicate" as const };
+      return { // [!code highlight]
+        status: "duplicate" as const, // [!code highlight]
+        runId: error.conflictingRunId, // [!code highlight]
+      }; // [!code highlight]
     }
 
     throw error;
@@ -95,7 +101,7 @@ export async function processOrder(orderId: string) {
 }
 ```
 
-The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that awaits the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict) before it reaches `chargeOrder()`.
+The runtime creates the hook atomically. At most one active hook can own `order:${orderId}`, so duplicate workflow runs converge on one active owner. A duplicate run that awaits the same `createHook({ token })` fails with [`HookConflictError`](/docs/errors/hook-conflict) before it reaches `chargeOrder()`. Current worlds include `conflictingRunId` on the error, so the duplicate run can return the active owner to the caller.
 
 Outside the workflow, try to resume the hook first. If the hook is not registered yet, start the workflow and retry the resume until the new run creates the hook:
 
@@ -133,15 +139,23 @@ export async function POST(request: Request) {
 
   const run = await start(processOrder, [orderId]); // [!code highlight]
   await resumeOrder(token, payload);
+
+  const result = await run.returnValue; // [!code highlight]
+  if (result.status === "duplicate" && result.runId) { // [!code highlight]
+    return Response.json({ runId: result.runId, reused: true }); // [!code highlight]
+  } // [!code highlight]
+
   return Response.json({ runId: run.runId, reused: false });
 }
 ```
 
 <Callout type="warn">
-This avoids creating a new run only after the first run has registered its hook. Because `start()` returns before the run body executes and calls `createHook()`, two concurrent requests can both observe "no hook yet" and each call `start()`. The race is resolved inside the workflow body, where the second run's awaited hook rejects with `HookConflictError` and that run exits via the `catch` block. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
+This avoids creating a new run only after the first run has registered its hook. Because `start()` returns before the run body executes and calls `createHook()`, two concurrent requests can both observe "no hook yet" and each call `start()`. The race is resolved inside the workflow body, where the second run's awaited hook rejects with `HookConflictError` and returns the active owner's `conflictingRunId`. A native API for atomically starting a run and registering a hook is in the works. Until then, model recovery inside the workflow by handling [`HookConflictError`](/docs/errors/hook-conflict).
 </Callout>
 
 This is active-run coordination. When the workflow completes and disposes the hook, the token can be used again. If a duplicate request after completion must return the original result instead of starting fresh work, persist that completed result under the same domain key.
+
+`conflictingRunId` helps route duplicate callers to the active owner after a conflict is observed. It does not make hooks a claim-only primitive: the workflow still has to await or iterate the hook before it can receive `HookConflictError`.
 
 If duplicate requests should only reuse the active run without sending data, use [`getHookByToken()`](/docs/api-reference/workflow-api/get-hook-by-token) as an advisory pre-check before calling `start()`. The workflow should still handle [`HookConflictError`](/docs/errors/hook-conflict), because the lookup and `start()` are not atomic.
 
