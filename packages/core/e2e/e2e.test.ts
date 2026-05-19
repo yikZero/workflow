@@ -1650,6 +1650,43 @@ describe('e2e', () => {
   );
 
   test(
+    'hookReadyThenStepParallelWorkflow - hook.ready continuation step runs alongside inline step',
+    { timeout: 90_000 },
+    async () => {
+      const token = Math.random().toString(36).slice(2);
+      const customData = Math.random().toString(36).slice(2);
+
+      const run = await start(await e2e('hookReadyThenStepParallelWorkflow'), [
+        token,
+        customData,
+      ]);
+
+      const returnValue = await run.returnValue;
+      expect(returnValue).toMatchObject({
+        token,
+        customData,
+        hookReadyTestData: 'ready_then_step_runs_in_parallel',
+      });
+
+      const { stepAResult, stepBResult } = returnValue;
+      const stepADuration = stepAResult.endedAt - stepAResult.startedAt;
+      const stepStartDelta = stepBResult.startedAt - stepAResult.startedAt;
+
+      expect(stepAResult.label).toBe('A');
+      expect(stepBResult.label).toBe('B');
+      expect(stepADuration).toBeGreaterThanOrEqual(9_000);
+      expect(
+        stepBResult.startedAt,
+        'stepB should start before stepA finishes, proving hook.ready can continue independently of the inline step'
+      ).toBeLessThan(stepAResult.endedAt);
+      expect(
+        stepStartDelta,
+        'stepB should start roughly alongside stepA instead of only after stepA finishes'
+      ).toBeLessThan(8_000);
+    }
+  );
+
+  test(
     'hookReadyWorkflow - hook.ready rejects when token is already registered',
     { timeout: 60_000 },
     async () => {

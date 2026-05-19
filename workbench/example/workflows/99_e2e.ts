@@ -631,6 +631,18 @@ async function hookReadyStep(customData: string) {
   };
 }
 
+async function hookReadyTimedStep(label: 'A' | 'B', delayMs: number) {
+  'use step';
+  const { stepStartedAt } = getStepMetadata();
+  const startedAt = stepStartedAt.getTime();
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  return {
+    label,
+    startedAt,
+    endedAt: Date.now(),
+  };
+}
+
 export async function hookReadyWithPriorStepWorkflow(
   token: string,
   customData: string
@@ -675,6 +687,32 @@ export async function hookReadyWithParallelStepWorkflow(
     customData,
     stepResult,
     hookReadyTestData: 'parallel_step_completed_with_ready',
+  };
+}
+
+export async function hookReadyThenStepParallelWorkflow(
+  token: string,
+  customData: string
+) {
+  'use workflow';
+
+  using hook = createHook({
+    token,
+    metadata: { customData },
+  });
+
+  const stepBPromise = hook.ready.then(
+    async () => await hookReadyTimedStep('B', 100)
+  );
+  const stepAResult = await hookReadyTimedStep('A', 10_000);
+  const stepBResult = await stepBPromise;
+
+  return {
+    token,
+    customData,
+    stepAResult,
+    stepBResult,
+    hookReadyTestData: 'ready_then_step_runs_in_parallel',
   };
 }
 
