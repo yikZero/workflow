@@ -2,4 +2,4 @@
 "@workflow/builders": patch
 ---
 
-Keep non-exported package step IDs scoped to package-private paths and fail builds when duplicate step IDs are generated.
+Generate per-file IDs for non-exported workspace package files (previously they collapsed to `name@version`, silently overwriting same-named steps/workflows across files) and fail the build when two transformed files emit the same step or workflow ID.

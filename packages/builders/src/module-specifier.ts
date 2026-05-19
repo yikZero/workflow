@@ -232,28 +232,6 @@ function normalizeExportPath(path: string): string {
   return path;
 }
 
-function stripKnownJsTsExtension(path: string): string {
-  return path.replace(/\.(?:[cm]?[jt]sx?)$/, '');
-}
-
-function resolvePrivatePackageSubpath(
-  filePath: string,
-  pkg: PackageInfo
-): string | undefined {
-  const relativePath = toPackageRelativePath(filePath, pkg);
-  if (!relativePath) {
-    return undefined;
-  }
-
-  const normalizedRelativePath = relativePath.replace(/\\/g, '/');
-  const canonicalPath = normalizedRelativePath.startsWith('src/')
-    ? `dist/${normalizedRelativePath.slice('src/'.length)}`
-    : normalizedRelativePath;
-  const extensionlessPath = stripKnownJsTsExtension(canonicalPath);
-
-  return extensionlessPath || undefined;
-}
-
 /**
  * Check if a file path is inside node_modules.
  */
@@ -360,9 +338,14 @@ function isWorkspacePackage(filePath: string, projectRoot: string): boolean {
  * // => { moduleSpecifier: 'workflow/internal/builtins@4.0.0' }
  *
  * @example
- * // Exported file in workspace package
- * resolveModuleSpecifier('/project/packages/shared/src/utils.ts', '/project')
+ * // Exported root file in workspace package
+ * resolveModuleSpecifier('/project/packages/shared/src/index.ts', '/project')
  * // => { moduleSpecifier: '@myorg/shared@0.0.0' }
+ *
+ * @example
+ * // Non-exported / deep package file
+ * resolveModuleSpecifier('/project/packages/shared/src/internal/foo.ts', '/project')
+ * // => { moduleSpecifier: undefined }
  *
  * @example
  * // Local app file
@@ -407,13 +390,13 @@ export function resolveModuleSpecifier(
     };
   }
 
-  const privateSubpath = resolvePrivatePackageSubpath(filePath, pkg);
-  if (privateSubpath) {
-    return {
-      moduleSpecifier: `${pkg.name}/${privateSubpath}@${pkg.version}`,
-    };
-  }
-
+  // Non-exported package file (deep import that isn't reachable as a
+  // package specifier). Returning undefined makes the SWC plugin fall back
+  // to the relative file path, which keeps IDs unique per file. Previously
+  // every non-exported file collapsed to "name@version", causing same-named
+  // step/workflow functions in different files to silently overwrite each
+  // other at runtime registration; the build-time duplicate-ID check now
+  // also catches that class of collision.
   return {
     moduleSpecifier: undefined,
   };
