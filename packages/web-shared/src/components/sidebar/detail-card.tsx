@@ -86,7 +86,7 @@ export function DetailCard({
 
   if (trailing) {
     return (
-      <section className="-mx-3 border-t px-3 border-gray-alpha-400">
+      <section className="-mx-4 border-t px-4 border-gray-alpha-400">
         <div className={cn(rowClasses, summaryClassName)}>
           <div
             className="isolate relative shrink-0 text-gray-700"
@@ -106,7 +106,7 @@ export function DetailCard({
 
   if (disabled) {
     return (
-      <section className="-mx-3 border-t px-3 border-gray-alpha-400">
+      <section className="-mx-4 border-t px-4 border-gray-alpha-400">
         <div
           className={cn(rowClasses, summaryClassName)}
           style={{ color: 'var(--ds-gray-700)', cursor: 'not-allowed' }}
@@ -118,7 +118,7 @@ export function DetailCard({
   }
 
   return (
-    <section className="-mx-3 border-t px-3 border-gray-alpha-400">
+    <section className="-mx-4 border-t px-4 border-gray-alpha-400">
       <details className="group" open={open} onToggle={handleToggle}>
         <summary
           className={cn(
