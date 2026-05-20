@@ -1,5 +1,11 @@
 # @workflow/world-postgres
 
+## 5.0.0-beta.6
+
+### Patch Changes
+
+- [#2019](https://github.com/vercel/workflow/pull/2019) [`738ec5e`](https://github.com/vercel/workflow/commit/738ec5e81dc75e2c2d7574796cc3b2c7ad20feff) Thanks [@VaguelySerious](https://github.com/VaguelySerious)! - `workflow-postgres-setup` now also bootstraps the `graphile_worker` schema, fixing potential race on setup when starting the app and a test runner at the same time
+
 ## 5.0.0-beta.5
 
 ### Patch Changes
