@@ -66,6 +66,123 @@ describe('createCreateHook', () => {
     expect(ctx.onWorkflowError).not.toHaveBeenCalled();
   });
 
+  it('should invoke workflow error handler when hook_created token mismatches the hook', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_created',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          token: 'wrong-token',
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const createHook = createCreateHook(ctx);
+    createHook({ token: 'expected-token' });
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError?.message).toContain('hook_created');
+    expect(workflowError?.message).toContain('wrong-token');
+    expect(workflowError?.message).toContain('expected-token');
+  });
+
+  it('should invoke workflow error handler when hook_received token mismatches the hook', async () => {
+    const ops: Promise<any>[] = [];
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_received',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          token: 'wrong-token',
+          payload: await dehydrateStepReturnValue(
+            { message: 'hello' },
+            'wrun_test',
+            undefined,
+            ops
+          ),
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const createHook = createCreateHook(ctx);
+    const hook = createHook({ token: 'expected-token' });
+    void hook.then((v) => v);
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError?.message).toContain('hook_received');
+    expect(workflowError?.message).toContain('wrong-token');
+    expect(workflowError?.message).toContain('expected-token');
+  });
+
+  it('should invoke workflow error handler when hook_disposed token mismatches the hook', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_disposed',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          token: 'wrong-token',
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const createHook = createCreateHook(ctx);
+    createHook({ token: 'expected-token' });
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError?.message).toContain('hook_disposed');
+    expect(workflowError?.message).toContain('wrong-token');
+    expect(workflowError?.message).toContain('expected-token');
+  });
+
+  it('should invoke workflow error handler when hook_conflict token mismatches the hook', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'hook_conflict',
+        correlationId: 'hook_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          token: 'wrong-token',
+          conflictingRunId: 'wrun_conflicting',
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const createHook = createCreateHook(ctx);
+    createHook({ token: 'expected-token' });
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError?.message).toContain('hook_conflict');
+    expect(workflowError?.message).toContain('wrong-token');
+    expect(workflowError?.message).toContain('expected-token');
+  });
+
   it('should throw WorkflowSuspension when no events are available', async () => {
     const ctx = setupWorkflowContext([]);
 

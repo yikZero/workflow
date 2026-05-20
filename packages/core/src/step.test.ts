@@ -433,6 +433,36 @@ describe('createUseStep', () => {
     });
   });
 
+  it('should fail when step_created has the right correlationId but wrong stepName', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'step_created',
+        correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          stepName: 'subtract',
+          input: new Uint8Array(),
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const useStep = createUseStep(ctx);
+    const add = useStep('add');
+    void add(1, 2);
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError.message).toContain('Corrupted event log');
+    expect(workflowError.message).toContain('step_created');
+    expect(workflowError.message).toContain('subtract');
+    expect(workflowError.message).toContain('add');
+  });
+
   it('should consume step_started without removing from queue', async () => {
     // step_started is consumed but item stays in queue for potential re-enqueue
     const ctx = setupWorkflowContext([
@@ -509,6 +539,37 @@ describe('createUseStep', () => {
     expect(ctx.invocationsQueue.size).toBe(1);
   });
 
+  it('should fail when step_completed has the right correlationId but wrong stepName', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'step_completed',
+        correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          stepName: 'subtract',
+          result: await dehydrateStepReturnValue(42, 'wrun_test', undefined),
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const useStep = createUseStep(ctx);
+    const add = useStep('add');
+    void add(1, 2);
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError.message).toContain('Corrupted event log');
+    expect(workflowError.message).toContain('step_completed');
+    expect(workflowError.message).toContain('subtract');
+    expect(workflowError.message).toContain('add');
+    expect(ctx.invocationsQueue.size).toBe(1);
+  });
+
   it('should remove queue item when step_completed (terminal state)', async () => {
     const ctx = setupWorkflowContext([
       {
@@ -531,6 +592,42 @@ describe('createUseStep', () => {
     expect(result).toBe(42);
     // Queue should be empty after completion (terminal state)
     expect(ctx.invocationsQueue.size).toBe(0);
+  });
+
+  it('should fail when step_failed has the right correlationId but wrong stepName', async () => {
+    const serializedError = await dehydrateStepError(
+      new FatalError('test error'),
+      'wrun_test',
+      undefined
+    );
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'step_failed',
+        correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          stepName: 'subtract',
+          error: serializedError,
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const useStep = createUseStep(ctx);
+    const add = useStep('add');
+    void add(1, 2);
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError.message).toContain('Corrupted event log');
+    expect(workflowError.message).toContain('step_failed');
+    expect(workflowError.message).toContain('subtract');
+    expect(workflowError.message).toContain('add');
+    expect(ctx.invocationsQueue.size).toBe(1);
   });
 
   it('should remove queue item when step_failed (terminal state)', async () => {

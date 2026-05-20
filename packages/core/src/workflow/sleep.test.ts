@@ -75,6 +75,71 @@ describe('createSleep', () => {
     expect(ctx.invocationsQueue.size).toBe(0);
   });
 
+  it('should resolve old wait_completed events without eventData', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'wait_created',
+        correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
+        createdAt: new Date(),
+      },
+      {
+        eventId: 'evnt_1',
+        runId: 'wrun_123',
+        eventType: 'wait_completed',
+        correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        createdAt: new Date(),
+      },
+    ]);
+
+    const sleep = createSleep(ctx);
+    await sleep('1s');
+
+    expect(ctx.onWorkflowError).not.toHaveBeenCalled();
+    expect(ctx.invocationsQueue.size).toBe(0);
+  });
+
+  it('should invoke workflow error handler when wait_completed resumeAt mismatches the wait', async () => {
+    const ctx = setupWorkflowContext([
+      {
+        eventId: 'evnt_0',
+        runId: 'wrun_123',
+        eventType: 'wait_created',
+        correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
+        createdAt: new Date(),
+      },
+      {
+        eventId: 'evnt_1',
+        runId: 'wrun_123',
+        eventType: 'wait_completed',
+        correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:02.000Z'),
+        },
+        createdAt: new Date(),
+      },
+    ]);
+
+    const errorReceived = withResolvers<Error>();
+    ctx.onWorkflowError = errorReceived.resolve;
+
+    const sleep = createSleep(ctx);
+    void sleep('1s');
+
+    const workflowError = await errorReceived.promise;
+    expect(workflowError).toBeInstanceOf(WorkflowRuntimeError);
+    expect(workflowError?.message).toContain('wait_completed');
+    expect(workflowError?.message).toContain('resumeAt');
+    expect(workflowError?.message).toContain('wait_01K11TFZ62YS0YYFDQ3E8B9YCV');
+  });
+
   it('should throw WorkflowSuspension when no events are available', async () => {
     const ctx = setupWorkflowContext([]);
 

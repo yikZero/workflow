@@ -1622,6 +1622,58 @@ describe('runWorkflow', () => {
       ).toEqual('Hello from hook');
     });
 
+    it('should reject with WorkflowRuntimeError when hook_received token mismatches the hook', async () => {
+      const ops: Promise<any>[] = [];
+      const workflowRun: WorkflowRun = {
+        runId: 'test-run-123',
+        workflowName: 'workflow',
+        status: 'running',
+        input: await dehydrateWorkflowArguments(
+          [],
+          'wrun_123',
+          noEncryptionKey,
+          ops
+        ),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        deploymentId: 'test-deployment',
+      };
+
+      const events: Event[] = [
+        {
+          eventId: 'event-0',
+          runId: workflowRun.runId,
+          eventType: 'hook_received',
+          correlationId: 'hook_01HK153X00GYR8SV1JHHTGN5HE',
+          eventData: {
+            token: 'wrong-token',
+            payload: await dehydrateStepReturnValue(
+              { message: 'Hello from hook' },
+              'wrun_123',
+              noEncryptionKey,
+              ops
+            ),
+          },
+          createdAt: new Date(),
+        },
+      ];
+
+      await expect(
+        runWorkflow(
+          `const createHook = globalThis[Symbol.for("WORKFLOW_CREATE_HOOK")];
+          async function workflow() {
+            const hook = createHook({ token: "expected-token" });
+            const payload = await hook;
+            return payload.message;
+          }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          noEncryptionKey
+        )
+      ).rejects.toThrow(WorkflowRuntimeError);
+    });
+
     it('should resolve multiple `createHook` awaits upon "hook_received" events', async () => {
       const ops: Promise<any>[] = [];
       const workflowRun: WorkflowRun = {
@@ -3024,6 +3076,63 @@ describe('runWorkflow', () => {
           ops
         )
       ).toEqual('sleep completed');
+    });
+
+    it('should reject with WorkflowRuntimeError when wait_completed resumeAt mismatches the wait', async () => {
+      const ops: Promise<any>[] = [];
+      const workflowRunId = 'test-run-123';
+      const workflowRun: WorkflowRun = {
+        runId: workflowRunId,
+        workflowName: 'workflow',
+        status: 'running',
+        input: await dehydrateWorkflowArguments(
+          [],
+          'wrun_123',
+          noEncryptionKey,
+          ops
+        ),
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        deploymentId: 'test-deployment',
+      };
+
+      const resumeAt = new Date('2024-01-01T00:00:05.000Z');
+      const events: Event[] = [
+        {
+          eventId: 'event-0',
+          runId: workflowRunId,
+          eventType: 'wait_created',
+          correlationId: 'wait_01HK153X00GYR8SV1JHHTGN5HE',
+          eventData: {
+            resumeAt,
+          },
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        },
+        {
+          eventId: 'event-1',
+          runId: workflowRunId,
+          eventType: 'wait_completed',
+          correlationId: 'wait_01HK153X00GYR8SV1JHHTGN5HE',
+          eventData: {
+            resumeAt: new Date('2024-01-01T00:00:06.000Z'),
+          },
+          createdAt: new Date('2024-01-01T00:00:05.000Z'),
+        },
+      ];
+
+      await expect(
+        runWorkflow(
+          `const sleep = globalThis[Symbol.for("WORKFLOW_SLEEP")];
+          async function workflow() {
+            await sleep('5s');
+            return 'sleep completed';
+          }${getWorkflowTransformCode('workflow')}`,
+          workflowRun,
+          events,
+          noEncryptionKey
+        )
+      ).rejects.toThrow(WorkflowRuntimeError);
     });
 
     it('should throw `WorkflowSuspension` when sleep has no wait_completed event', async () => {

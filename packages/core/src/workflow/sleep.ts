@@ -57,6 +57,30 @@ export function createSleep(ctx: WorkflowOrchestratorContext) {
 
       // Check for wait_completed event
       if (event.eventType === 'wait_completed') {
+        const eventResumeAt = event.eventData?.resumeAt;
+        if (eventResumeAt !== undefined) {
+          const queueItem = ctx.invocationsQueue.get(correlationId);
+          const expectedResumeAt =
+            queueItem && queueItem.type === 'wait'
+              ? queueItem.resumeAt
+              : resumeAt;
+          const eventResumeAtMs = new Date(eventResumeAt).getTime();
+          const expectedResumeAtMs = expectedResumeAt.getTime();
+
+          if (eventResumeAtMs !== expectedResumeAtMs) {
+            ctx.promiseQueue = ctx.promiseQueue.then(() => {
+              ctx.onWorkflowError(
+                new WorkflowRuntimeError(
+                  `Corrupted event log: wait_completed event for ${correlationId} has resumeAt "${new Date(
+                    eventResumeAt
+                  ).toISOString()}", but the current wait consumer expects "${expectedResumeAt.toISOString()}"`
+                )
+              );
+            });
+            return EventConsumerResult.Finished;
+          }
+        }
+
         // Remove this wait from the invocations queue (O(1) delete using Map)
         ctx.invocationsQueue.delete(correlationId);
 
