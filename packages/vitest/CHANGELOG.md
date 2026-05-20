@@ -1,5 +1,18 @@
 # @workflow/vitest
 
+## 4.0.6
+
+### Patch Changes
+
+- [#1898](https://github.com/vercel/workflow/pull/1898) [`e428cdb`](https://github.com/vercel/workflow/commit/e428cdb1d55b64956914a165ac57e0da76d1a33c) Thanks [@VaguelySerious](https://github.com/VaguelySerious)! - Fix local-world recovery isolation in Vitest and support custom test directories
+
+- Updated dependencies [[`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d), [`15e44b3`](https://github.com/vercel/workflow/commit/15e44b360535dcf1e5303cb7389db1f4007a24e8), [`76352f0`](https://github.com/vercel/workflow/commit/76352f0b66514726fb4adde0a618fd1767436799), [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc), [`e428cdb`](https://github.com/vercel/workflow/commit/e428cdb1d55b64956914a165ac57e0da76d1a33c), [`14326ad`](https://github.com/vercel/workflow/commit/14326adcf9b8f5dce753a739555e162cd03dc19f)]:
+  - @workflow/core@4.2.5
+  - @workflow/world@4.1.2
+  - @workflow/world-local@4.1.2
+  - @workflow/builders@4.0.6
+  - @workflow/rollup@4.0.5
+
 ## 4.0.5
 
 ### Patch Changes

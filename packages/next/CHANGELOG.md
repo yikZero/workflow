@@ -1,5 +1,19 @@
 # @workflow/next
 
+## 4.0.6
+
+### Patch Changes
+
+- [#2023](https://github.com/vercel/workflow/pull/2023) [`9ebe5e4`](https://github.com/vercel/workflow/commit/9ebe5e47cad339f77833982e45f343c22313c607) Thanks [@github-actions](https://github.com/apps/github-actions)! - Move `workflow-socket.json` out of `.next/cache/` so it isn't preserved across Vercel/Turborepo builds, and clean up stale copies at builder boot. Resolves `ECONNREFUSED 127.0.0.1:<port>` failures from the webpack loader when a prior build's socket-info file was restored from build cache. The loader now also annotates connection errors with the port, credentials source, and the file being processed.
+
+- [#1986](https://github.com/vercel/workflow/pull/1986) [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc) Thanks [@pranaygp](https://github.com/pranaygp)! - Fix local workflow port detection, make generated health endpoints respond to HEAD requests, materialize manual webhook response bodies before returning them, wait for step return stream serialization before completing the step, bound Vercel stream and health-check operations so stuck writes or queue sends retry or time out instead of hanging, and stabilize remote Vercel e2e checks around CLI inspection, sleep timing, and hook registration/disposal.
+
+- [#1940](https://github.com/vercel/workflow/pull/1940) [`14326ad`](https://github.com/vercel/workflow/commit/14326adcf9b8f5dce753a739555e162cd03dc19f) Thanks [@github-actions](https://github.com/apps/github-actions)! - Auto-remove workflow-enabled packages from Next.js `serverExternalPackages` so they can be transformed, and retain a best-effort `externalPackages` warning fallback for non-Next builders.
+
+- Updated dependencies [[`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d), [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc), [`14326ad`](https://github.com/vercel/workflow/commit/14326adcf9b8f5dce753a739555e162cd03dc19f)]:
+  - @workflow/core@4.2.5
+  - @workflow/builders@4.0.6
+
 ## 4.0.5
 
 ### Patch Changes

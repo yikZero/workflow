@@ -1,5 +1,16 @@
 # @workflow/astro
 
+## 4.0.5
+
+### Patch Changes
+
+- [#1986](https://github.com/vercel/workflow/pull/1986) [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc) Thanks [@pranaygp](https://github.com/pranaygp)! - Fix local workflow port detection, make generated health endpoints respond to HEAD requests, materialize manual webhook response bodies before returning them, wait for step return stream serialization before completing the step, bound Vercel stream and health-check operations so stuck writes or queue sends retry or time out instead of hanging, and stabilize remote Vercel e2e checks around CLI inspection, sleep timing, and hook registration/disposal.
+
+- Updated dependencies [[`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc), [`14326ad`](https://github.com/vercel/workflow/commit/14326adcf9b8f5dce753a739555e162cd03dc19f)]:
+  - @workflow/builders@4.0.6
+  - @workflow/rollup@4.0.5
+  - @workflow/vite@4.0.5
+
 ## 4.0.4
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @workflow/builders
 
+## 4.0.6
+
+### Patch Changes
+
+- [#1986](https://github.com/vercel/workflow/pull/1986) [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc) Thanks [@pranaygp](https://github.com/pranaygp)! - Fix local workflow port detection, make generated health endpoints respond to HEAD requests, materialize manual webhook response bodies before returning them, wait for step return stream serialization before completing the step, bound Vercel stream and health-check operations so stuck writes or queue sends retry or time out instead of hanging, and stabilize remote Vercel e2e checks around CLI inspection, sleep timing, and hook registration/disposal.
+
+- [#1940](https://github.com/vercel/workflow/pull/1940) [`14326ad`](https://github.com/vercel/workflow/commit/14326adcf9b8f5dce753a739555e162cd03dc19f) Thanks [@github-actions](https://github.com/apps/github-actions)! - Auto-remove workflow-enabled packages from Next.js `serverExternalPackages` so they can be transformed, and retain a best-effort `externalPackages` warning fallback for non-Next builders.
+
+- Updated dependencies [[`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d), [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc)]:
+  - @workflow/core@4.2.5
+  - @workflow/utils@4.1.2
+  - @workflow/errors@4.1.2
+
 ## 4.0.5
 
 ### Patch Changes

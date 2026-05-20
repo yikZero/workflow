@@ -1,5 +1,19 @@
 # @workflow/world-postgres
 
+## 4.1.2
+
+### Patch Changes
+
+- [#2029](https://github.com/vercel/workflow/pull/2029) [`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d) Thanks [@pranaygp](https://github.com/pranaygp)! - Refresh workflow events after completing elapsed waits so concurrent hook events preserve deterministic replay order.
+
+- [#2027](https://github.com/vercel/workflow/pull/2027) [`be506cc`](https://github.com/vercel/workflow/commit/be506ccbd039881df8953234068aefaabb6fc4c1) Thanks [@github-actions](https://github.com/apps/github-actions)! - `workflow-postgres-setup` now also bootstraps the `graphile_worker` schema, fixing potential race on setup when starting the app and a test runner at the same time
+
+- Updated dependencies [[`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d), [`15e44b3`](https://github.com/vercel/workflow/commit/15e44b360535dcf1e5303cb7389db1f4007a24e8), [`76352f0`](https://github.com/vercel/workflow/commit/76352f0b66514726fb4adde0a618fd1767436799), [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc), [`e428cdb`](https://github.com/vercel/workflow/commit/e428cdb1d55b64956914a165ac57e0da76d1a33c)]:
+  - @workflow/world@4.1.2
+  - @workflow/world-local@4.1.2
+  - @workflow/utils@4.1.2
+  - @workflow/errors@4.1.2
+
 ## 4.1.1
 
 ### Patch Changes

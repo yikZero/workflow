@@ -1,5 +1,20 @@
 # @workflow/world-local
 
+## 4.1.2
+
+### Patch Changes
+
+- [#2029](https://github.com/vercel/workflow/pull/2029) [`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d) Thanks [@pranaygp](https://github.com/pranaygp)! - Refresh workflow events after completing elapsed waits so concurrent hook events preserve deterministic replay order.
+
+- [#1998](https://github.com/vercel/workflow/pull/1998) [`76352f0`](https://github.com/vercel/workflow/commit/76352f0b66514726fb4adde0a618fd1767436799) Thanks [@github-actions](https://github.com/apps/github-actions)! - Improve the local queue error message when a Next.js proxy intercepts workflow routes.
+
+- [#1898](https://github.com/vercel/workflow/pull/1898) [`e428cdb`](https://github.com/vercel/workflow/commit/e428cdb1d55b64956914a165ac57e0da76d1a33c) Thanks [@VaguelySerious](https://github.com/VaguelySerious)! - Fix local-world recovery isolation in Vitest and support custom test directories
+
+- Updated dependencies [[`a434184`](https://github.com/vercel/workflow/commit/a4341848589f6b02f4dea048a58a05c72f0d816d), [`15e44b3`](https://github.com/vercel/workflow/commit/15e44b360535dcf1e5303cb7389db1f4007a24e8), [`16f2c23`](https://github.com/vercel/workflow/commit/16f2c236d3b64643f07f5e85906c0112b7c132cc)]:
+  - @workflow/world@4.1.2
+  - @workflow/utils@4.1.2
+  - @workflow/errors@4.1.2
+
 ## 4.1.1
 
 ### Patch Changes
