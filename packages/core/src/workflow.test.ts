@@ -3990,9 +3990,7 @@ describe('runWorkflow', () => {
             runId: workflowRun.runId,
             eventType: 'hook_created' as const,
             correlationId: 'hook_01HK153X00GYR8SV1JHHTGN5HE',
-            eventData: {
-              token: 'test-token',
-            },
+            eventData: {},
             createdAt: new Date(),
           },
           {
@@ -4688,7 +4686,7 @@ describe('runWorkflow', () => {
         runId: workflowRunId,
         eventType: 'hook_created',
         correlationId: hookCorr,
-        eventData: { token: 'tok', isWebhook: false },
+        eventData: { isWebhook: false },
         createdAt: startedAt,
       },
       {

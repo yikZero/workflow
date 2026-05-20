@@ -164,7 +164,7 @@ function defineTests(mode: 'sync' | 'async') {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId: `hook_${CORR_IDS[0]}`,
-          eventData: { token: 'test-token', isWebhook: false },
+          eventData: { isWebhook: false },
           createdAt: new Date(),
         },
         {
@@ -247,7 +247,7 @@ function defineTests(mode: 'sync' | 'async') {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId: `hook_${CORR_IDS[0]}`,
-          eventData: { token: 'test-token', isWebhook: false },
+          eventData: { isWebhook: false },
           createdAt: new Date(),
         },
         {
@@ -308,7 +308,7 @@ function defineTests(mode: 'sync' | 'async') {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId: `hook_${CORR_IDS[0]}`,
-          eventData: { token: 'test-token', isWebhook: false },
+          eventData: { isWebhook: false },
           createdAt: new Date(),
         },
         {
@@ -655,7 +655,7 @@ function defineTests(mode: 'sync' | 'async') {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId: `hook_${CORR_IDS[0]}`,
-          eventData: { token: 'test-token', isWebhook: false },
+          eventData: { isWebhook: false },
           createdAt: new Date(),
         },
         {
@@ -777,7 +777,7 @@ function defineTests(mode: 'sync' | 'async') {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId: `hook_${CORR_IDS[0]}`,
-          eventData: { token: 'test-token', isWebhook: false },
+          eventData: { isWebhook: false },
           createdAt: new Date(),
         },
         {

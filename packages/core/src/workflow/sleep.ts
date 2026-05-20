@@ -64,16 +64,18 @@ export function createSleep(ctx: WorkflowOrchestratorContext) {
             queueItem && queueItem.type === 'wait'
               ? queueItem.resumeAt
               : resumeAt;
-          const eventResumeAtMs = new Date(eventResumeAt).getTime();
+          const eventResumeAtDate = new Date(eventResumeAt);
+          const eventResumeAtMs = eventResumeAtDate.getTime();
           const expectedResumeAtMs = expectedResumeAt.getTime();
+          const eventResumeAtForMessage = Number.isFinite(eventResumeAtMs)
+            ? eventResumeAtDate.toISOString()
+            : String(eventResumeAt);
 
           if (eventResumeAtMs !== expectedResumeAtMs) {
             ctx.promiseQueue = ctx.promiseQueue.then(() => {
               ctx.onWorkflowError(
                 new WorkflowRuntimeError(
-                  `Corrupted event log: wait_completed event for ${correlationId} has resumeAt "${new Date(
-                    eventResumeAt
-                  ).toISOString()}", but the current wait consumer expects "${expectedResumeAt.toISOString()}"`
+                  `Corrupted event log: wait_completed event for ${correlationId} has resumeAt "${eventResumeAtForMessage}", but the current wait consumer expects "${expectedResumeAt.toISOString()}"`
                 )
               );
             });
