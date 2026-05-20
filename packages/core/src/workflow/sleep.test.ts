@@ -63,7 +63,9 @@ describe('createSleep', () => {
         runId: 'wrun_123',
         eventType: 'wait_completed',
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
         createdAt: new Date(),
       },
     ]);
@@ -201,6 +203,7 @@ describe('createSleep', () => {
         eventType: 'step_completed', // Wrong event type for a wait!
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'unexpectedStep',
           result: ['test'],
         },
         createdAt: new Date(),
@@ -269,6 +272,7 @@ describe('createSleep', () => {
         eventType: 'hook_received', // Wrong event type for a wait!
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          token: 'test-token',
           payload: { data: 'test' },
         },
         createdAt: new Date(),
@@ -338,7 +342,9 @@ describe('createSleep', () => {
         runId: 'wrun_123',
         eventType: 'wait_completed',
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
         createdAt: new Date(),
       },
     ]);
@@ -376,7 +382,9 @@ describe('createSleep', () => {
         runId: 'wrun_123',
         eventType: 'wait_completed',
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
         createdAt: new Date(),
       },
       {
@@ -384,7 +392,9 @@ describe('createSleep', () => {
         runId: 'wrun_123',
         eventType: 'wait_completed', // Duplicate!
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          resumeAt: new Date('2024-01-01T00:00:01.000Z'),
+        },
         createdAt: new Date(),
       },
     ]);
@@ -402,13 +412,26 @@ describe('createSleep', () => {
   });
 
   it('should resolve with void when wait_completed', async () => {
+    const resumeAt = new Date('2024-01-01T00:00:01.000Z');
     const ctx = setupWorkflowContext([
       {
         eventId: 'evnt_0',
         runId: 'wrun_123',
+        eventType: 'wait_created',
+        correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          resumeAt,
+        },
+        createdAt: new Date(),
+      },
+      {
+        eventId: 'evnt_1',
+        runId: 'wrun_123',
         eventType: 'wait_completed',
         correlationId: 'wait_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          resumeAt,
+        },
         createdAt: new Date(),
       },
     ]);

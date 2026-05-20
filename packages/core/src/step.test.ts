@@ -74,6 +74,7 @@ describe('createUseStep', () => {
         eventType: 'step_completed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           result: await dehydrateStepReturnValue(3, 'wrun_test', undefined),
         },
         createdAt: new Date(),
@@ -99,6 +100,7 @@ describe('createUseStep', () => {
         eventType: 'step_failed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           error: serializedError,
         },
         createdAt: new Date(),
@@ -230,6 +232,7 @@ describe('createUseStep', () => {
         eventType: 'step_completed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'step//input.js//my_step_function',
           result: await dehydrateStepReturnValue(
             undefined,
             'wrun_test',
@@ -471,7 +474,9 @@ describe('createUseStep', () => {
         runId: 'wrun_123',
         eventType: 'step_started',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
-        eventData: {},
+        eventData: {
+          stepName: 'add',
+        },
         createdAt: new Date(),
       },
     ]);
@@ -510,6 +515,7 @@ describe('createUseStep', () => {
         eventType: 'step_retrying',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           error: new Uint8Array(),
         },
         createdAt: new Date(),
@@ -578,6 +584,7 @@ describe('createUseStep', () => {
         eventType: 'step_completed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           result: await dehydrateStepReturnValue(42, 'wrun_test', undefined),
         },
         createdAt: new Date(),
@@ -643,6 +650,7 @@ describe('createUseStep', () => {
         eventType: 'step_failed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           error: serializedError,
         },
         createdAt: new Date(),
@@ -683,6 +691,7 @@ describe('createUseStep', () => {
         eventType: 'step_failed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           error: serializedError,
         },
         createdAt: new Date(),
@@ -723,6 +732,7 @@ describe('createUseStep', () => {
         eventType: 'step_failed',
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
         eventData: {
+          stepName: 'add',
           error: serializedError,
         },
         createdAt: new Date(),
@@ -752,6 +762,9 @@ describe('createUseStep', () => {
         runId: 'wrun_123',
         eventType: 'wait_completed', // Wrong event type for a step!
         correlationId: 'step_01K11TFZ62YS0YYFDQ3E8B9YCV',
+        eventData: {
+          resumeAt: new Date(),
+        },
         createdAt: new Date(),
       },
     ]);
@@ -899,7 +912,9 @@ describe('AbortController hook integration', () => {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId,
-          eventData: {},
+          eventData: {
+            token: ABORT_HOOK_TOKEN,
+          },
           createdAt: new Date(),
         },
         {
@@ -907,7 +922,10 @@ describe('AbortController hook integration', () => {
           runId: 'wrun_test',
           eventType: 'hook_received',
           correlationId,
-          eventData: { payload: dehydratedPayload as any },
+          eventData: {
+            token: ABORT_HOOK_TOKEN,
+            payload: dehydratedPayload as any,
+          },
           createdAt: new Date(),
         },
       ]);
@@ -944,7 +962,9 @@ describe('AbortController hook integration', () => {
           runId: 'wrun_test',
           eventType: 'hook_created',
           correlationId,
-          eventData: {},
+          eventData: {
+            token: ABORT_HOOK_TOKEN,
+          },
           createdAt: new Date(),
         },
       ]);
