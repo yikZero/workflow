@@ -812,32 +812,10 @@ export async function getNextBuilderDeferred() {
       }
     }
 
-    private resolveSourceBackedPackagePath(filePath: string): string {
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      if (!normalizedPath.includes('/dist/')) {
-        return filePath;
-      }
-
-      const sourceCandidate = normalizedPath.replace('/dist/', '/src/');
-      const resolvedSourceCandidate =
-        this.resolveCopiedStepImportTargetPath(sourceCandidate);
-      if (
-        !existsSync(resolvedSourceCandidate) ||
-        !this.shouldPreferSourceBackedPackagePath(filePath)
-      ) {
-        return filePath;
-      }
-
-      return existsSync(resolvedSourceCandidate)
-        ? resolvedSourceCandidate
-        : filePath;
-    }
-
     private normalizeDiscoveredFilePath(filePath: string): string {
-      const absolutePath = isAbsolute(filePath)
+      return isAbsolute(filePath)
         ? filePath
         : resolve(this.config.workingDir, filePath);
-      return this.resolveSourceBackedPackagePath(absolutePath);
     }
 
     private async filterExistingFiles(filePaths: string[]): Promise<string[]> {
@@ -1283,43 +1261,6 @@ export async function getNextBuilderDeferred() {
       } catch {
         // Manifest may not exist (e.g. manifest generation failed); ignore.
       }
-    }
-
-    private resolveCopiedStepImportTargetPath(targetPath: string): string {
-      if (existsSync(targetPath)) {
-        return targetPath;
-      }
-
-      const extensionMatch = targetPath.match(/(\.[^./\\]+)$/);
-      const extension = extensionMatch?.[1]?.toLowerCase();
-      if (!extension) {
-        return targetPath;
-      }
-
-      const extensionFallbacks =
-        extension === '.js'
-          ? ['.ts', '.tsx', '.mts', '.cts']
-          : extension === '.mjs'
-            ? ['.mts']
-            : extension === '.cjs'
-              ? ['.cts']
-              : extension === '.jsx'
-                ? ['.tsx']
-                : [];
-
-      if (extensionFallbacks.length === 0) {
-        return targetPath;
-      }
-
-      const targetWithoutExtension = targetPath.slice(0, -extension.length);
-      for (const fallbackExtension of extensionFallbacks) {
-        const fallbackPath = `${targetWithoutExtension}${fallbackExtension}`;
-        if (existsSync(fallbackPath)) {
-          return fallbackPath;
-        }
-      }
-
-      return targetPath;
     }
 
     private extractRelativeImportSpecifiers(source: string): string[] {
