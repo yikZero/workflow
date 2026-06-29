@@ -259,7 +259,14 @@ function errorFromV4Response(
   const retryAfter = parseRetryAfter(
     readHeader(responseHeaders, 'retry-after')
   );
-  return errorForResponse(statusCode, message, { retryAfter, code, url });
+  // A firewall-challenge 429 is routed to the retryable transport path (not
+  // ThrottleError) so step_started writes back off + cap rather than looping.
+  return errorForResponse(statusCode, message, {
+    retryAfter,
+    code,
+    url,
+    mitigated: readHeader(responseHeaders, 'x-vercel-mitigated'),
+  });
 }
 
 /**

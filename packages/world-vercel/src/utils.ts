@@ -57,6 +57,57 @@ export const MAX_BODY_PARSE_RETRIES = 2;
 const BODY_PARSE_RETRY_BASE_MS = 100;
 
 /**
+ * Transient transport failure codes. When a request to workflow-server cannot
+ * complete, `fetch()` throws rather than returning a response: the shared
+ * `RetryAgent` exhausted its retries (`UND_ERR_REQ_RETRY` — e.g. the firewall
+ * in front of workflow-server shedding load with sustained 429/503, which the
+ * RetryAgent retries internally and never surfaces to us), the socket dropped,
+ * or connect/DNS failed. These are retryable infrastructure failures, not
+ * contract or user errors, so we map them to a typed `WorkflowWorldError`
+ * (`code: 'TRANSPORT'`) that the runtime recognizes as retryable and bubbles
+ * to the queue for a fast redrive — instead of crashing the invocation or
+ * failing the run.
+ */
+const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
+  'UND_ERR_REQ_RETRY',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_CLOSED',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EPIPE',
+]);
+
+/**
+ * Walks the `cause` chain of a thrown value looking for a transient transport
+ * error code. `fetch()` wraps the underlying undici error in a
+ * `TypeError: fetch failed` whose `cause` carries the real `.code`, so the
+ * code we care about is usually one level down (sometimes two). Bounded depth
+ * guards against pathological or cyclic `cause` chains.
+ */
+function getTransientTransportCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; current != null && depth < 5; depth++) {
+    if (typeof current === 'object' && 'code' in current) {
+      const code = (current as { code?: unknown }).code;
+      if (
+        typeof code === 'string' &&
+        TRANSIENT_TRANSPORT_ERROR_CODES.has(code)
+      ) {
+        return code;
+      }
+    }
+    current = (current as { cause?: unknown })?.cause;
+  }
+  return undefined;
+}
+
+/**
  * Effective workflow-server URL override. The inline constant wins when
  * set; otherwise falls back to the `VERCEL_WORKFLOW_SERVER_URL` env var.
  *
@@ -329,11 +380,25 @@ export async function makeRequest<T>({
           ) {
             const timeoutError = new WorkflowWorldError(
               `${method} ${endpoint} timed out after ${elapsed}ms`,
-              { url, cause: error }
+              { url, code: 'TIMEOUT', cause: error }
             );
             span?.setAttributes({ ...ErrorType('TIMEOUT') });
             span?.recordException?.(timeoutError);
             throw timeoutError;
+          }
+          // Transient transport failure (RetryAgent retries exhausted, socket
+          // reset, connect/DNS failure). Surface as a retryable
+          // WorkflowWorldError so the runtime redrives via the queue instead
+          // of failing the run. See TRANSIENT_TRANSPORT_ERROR_CODES.
+          const transportCode = getTransientTransportCode(error);
+          if (transportCode) {
+            const transportError = new WorkflowWorldError(
+              `${method} ${endpoint} transport failure after ${elapsed}ms (${transportCode})`,
+              { url, code: 'TRANSPORT', cause: error }
+            );
+            span?.setAttributes({ ...ErrorType('TRANSPORT') });
+            span?.recordException?.(transportError);
+            throw transportError;
           }
           throw error;
         }
@@ -353,8 +418,8 @@ export async function makeRequest<T>({
               .catch(() => ({}));
           logCurlRepro(request.method, url, headers);
 
-          // RetryAgent handles most 429 retries automatically, but this catches
-          // the case where retries are exhausted. Used by 425 and 429.
+          // Used by 425 and 429. The RetryAgent no longer retries 429
+          // in-process (see http-client.ts), so every 429 reaches here.
           const retryAfter = parseRetryAfter(
             response.headers.get('Retry-After')
           );
@@ -365,11 +430,13 @@ export async function makeRequest<T>({
             responseDiagnostics;
 
           // Map the status to the typed error the runtime branches on (shared
-          // with the v4 path via errorForResponse).
+          // with the v4 path via errorForResponse). A firewall-challenge 429 is
+          // routed to the retryable transport path via `mitigated`.
           const error = errorForResponse(response.status, defaultMessage, {
             url,
             code: errorData.code,
             retryAfter,
+            mitigated: response.headers.get('x-vercel-mitigated'),
           });
           span?.setAttributes({
             ...ErrorType(errorData.code || `HTTP ${response.status}`),

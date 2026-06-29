@@ -61,12 +61,20 @@ export const HTTP_DEBUG_ENABLED =
   typeof process.env.DEBUG === 'string' &&
   (process.env.DEBUG.includes('workflow:') || process.env.DEBUG === '*');
 
-/** Diagnostic response headers worth surfacing in logs and error messages. */
-const DIAGNOSTIC_HEADERS = ['x-vercel-id', 'x-vercel-error'] as const;
+/** Diagnostic response headers worth surfacing in logs and error messages.
+ * `x-vercel-mitigated` (`challenge` | `deny`) is set by the Vercel firewall
+ * when it intercepts a request in front of the backend — surfacing it makes a
+ * firewall block diagnosable from the error message and DEBUG logs. */
+const DIAGNOSTIC_HEADERS = [
+  'x-vercel-id',
+  'x-vercel-error',
+  'x-vercel-mitigated',
+] as const;
 
 /**
  * Extract the Vercel diagnostic response headers (x-vercel-id /
- * x-vercel-error) as `key=value` strings, skipping any that are absent.
+ * x-vercel-error / x-vercel-mitigated) as `key=value` strings, skipping any
+ * that are absent.
  */
 export function getVercelDiagnostics(headers: Headers): string[] {
   return DIAGNOSTIC_HEADERS.flatMap((header) => {
@@ -140,7 +148,9 @@ export function parseRetryAfter(
  *   - 410 → RunExpiredError (runtime exits without retrying)
  *   - 425 → TooEarlyError + retryAfter (step retry pacing — see #1806 for what
  *     happens when a 425 degrades into an untyped error)
- *   - 429 → ThrottleError + retryAfter
+ *   - 429 → ThrottleError + retryAfter, EXCEPT a firewall challenge (429 +
+ *     `x-vercel-mitigated: challenge`) → retryable transport WorkflowWorldError
+ *     (`code: 'TRANSPORT'`); see isFirewallChallenge429
  *   - anything else → WorkflowWorldError with `status` (the hook 404 →
  *     HookNotFoundError translation in events.ts keys off status === 404)
  *
@@ -150,14 +160,56 @@ export function parseRetryAfter(
 export function errorForResponse(
   status: number,
   message: string,
-  opts: { retryAfter?: number; code?: string; url?: string } = {}
+  opts: {
+    retryAfter?: number;
+    code?: string;
+    url?: string;
+    mitigated?: string | null;
+  } = {}
 ): Error {
-  const { retryAfter, code, url } = opts;
+  const { retryAfter, code, url, mitigated } = opts;
   if (status === 409) return new EntityConflictError(message);
   if (status === 410) return new RunExpiredError(message);
   if (status === 425) return new TooEarlyError(message, { retryAfter });
-  if (status === 429) return new ThrottleError(message, { retryAfter });
+  if (status === 429) {
+    // A firewall challenge can't be solved by a server-to-server client, so map
+    // it to the retryable transport path instead of ThrottleError — see
+    // isFirewallChallenge429. A genuine application 429 stays a ThrottleError.
+    if (isFirewallChallenge429(status, mitigated)) {
+      return new WorkflowWorldError(
+        `${message} (x-vercel-mitigated=challenge)`,
+        {
+          url,
+          status,
+          code: 'TRANSPORT',
+          retryAfter,
+        }
+      );
+    }
+    return new ThrottleError(message, { retryAfter });
+  }
   return new WorkflowWorldError(message, { url, status, code, retryAfter });
+}
+
+/**
+ * The Vercel firewall answers an intercepted request with HTTP 429 and
+ * `x-vercel-mitigated: challenge`. A challenge is meant to be solved by a
+ * browser, which our server-to-server client can't do, so the 429 recurs for
+ * the life of the incident.
+ *
+ * Such a 429 must NOT surface as a `ThrottleError`: on the `step_started` write
+ * the runtime defers a `ThrottleError` by self-enqueuing a FRESH queue message,
+ * which resets the delivery count — so it never backs off past `retryAfter` and
+ * never reaches `MAX_QUEUE_DELIVERIES`, hot-looping against an already-overloaded
+ * firewall. Mapping it to a retryable transport `WorkflowWorldError` (`code:
+ * 'TRANSPORT'`) instead lets the runtime rethrow it to the queue handler —
+ * earning the delivery-count backoff AND the delivery cap.
+ */
+export function isFirewallChallenge429(
+  status: number,
+  mitigated: string | null | undefined
+): boolean {
+  return status === 429 && mitigated === 'challenge';
 }
 
 /**
