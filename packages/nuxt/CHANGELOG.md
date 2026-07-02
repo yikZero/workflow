@@ -1,5 +1,14 @@
 # @workflow/nuxt
 
+## 5.0.0-beta.27
+
+### Patch Changes
+
+- [`3077b8a`](https://github.com/vercel/workflow/commit/3077b8a8034c61b85ced46166f53c1532fddfd65) - Use Nitro's workspace root for workflow module resolution so Nitro and Nuxt monorepo apps can import sibling workspace packages without extra config.
+
+- Updated dependencies [[`3077b8a`](https://github.com/vercel/workflow/commit/3077b8a8034c61b85ced46166f53c1532fddfd65)]:
+  - @workflow/nitro@5.0.0-beta.27
+
 ## 5.0.0-beta.26
 
 ### Patch Changes

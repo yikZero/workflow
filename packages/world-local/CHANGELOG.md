@@ -1,5 +1,16 @@
 # @workflow/world-local
 
+## 5.0.0-beta.23
+
+### Patch Changes
+
+- [`fc5bdcb`](https://github.com/vercel/workflow/commit/fc5bdcb003051815e84f60ee00f5d8d6cc11c663) - Reduce local sequential-step replay I/O with bounded recent-event and storage-directory caches.
+
+- Updated dependencies [[`f6772d9`](https://github.com/vercel/workflow/commit/f6772d95c81038bfa57aa14ea2cca20a07191475), [`f76377b`](https://github.com/vercel/workflow/commit/f76377bf04239eccd8c85a6db19d0465e7bdb2ee)]:
+  - @workflow/utils@5.0.0-beta.5
+  - @workflow/world@5.0.0-beta.15
+  - @workflow/errors@5.0.0-beta.9
+
 ## 5.0.0-beta.22
 
 ### Patch Changes

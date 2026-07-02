@@ -1,5 +1,11 @@
 # @workflow/world
 
+## 5.0.0-beta.15
+
+### Minor Changes
+
+- [`f76377b`](https://github.com/vercel/workflow/commit/f76377bf04239eccd8c85a6db19d0465e7bdb2ee) - Add an optional metadata-only `world.analytics` namespace for observability reads (runs, steps, events, hooks, waits). Implemented by `@workflow/world-vercel`; payload-bearing fields remain on the canonical runtime storage APIs.
+
 ## 5.0.0-beta.14
 
 ### Patch Changes

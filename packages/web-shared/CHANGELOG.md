@@ -1,5 +1,22 @@
 # @workflow/web-shared
 
+## 5.0.0-beta.27
+
+### Patch Changes
+
+- [`ce0bbb1`](https://github.com/vercel/workflow/commit/ce0bbb119856d7d3ad9298d6cb9c8f9aaee8e44e) - Use Unicode ellipsis character (…) instead of three dots (...) in middle-truncate component.
+
+- [`53ecc57`](https://github.com/vercel/workflow/commit/53ecc57e4c3c76fa611d2e65c3e513346bc7c53d) - Align the detail panel top info rows with the Attributes section styling, group them in a collapsible Metadata section, and render values in monospace.
+
+- [`6080b8e`](https://github.com/vercel/workflow/commit/6080b8ecdf11b60cb63747a183cc39876a863dc9) - Add arrow key support on trace viewer
+
+- [`89f4726`](https://github.com/vercel/workflow/commit/89f4726b7308b02e8898c1e564b2c94272df6f4f) - Decompress gzip- and zstd-prefixed serialized data returned from Vercel Workflow storage, and route OSS web hydration through the async WASM-capable path for compressed payloads.
+
+- Updated dependencies [[`5a23159`](https://github.com/vercel/workflow/commit/5a231598e41ce7cd46b647c9aaaa900e55ad3c35), [`f6772d9`](https://github.com/vercel/workflow/commit/f6772d95c81038bfa57aa14ea2cca20a07191475), [`f6772d9`](https://github.com/vercel/workflow/commit/f6772d95c81038bfa57aa14ea2cca20a07191475), [`f76377b`](https://github.com/vercel/workflow/commit/f76377bf04239eccd8c85a6db19d0465e7bdb2ee)]:
+  - @workflow/core@5.0.0-beta.27
+  - @workflow/utils@5.0.0-beta.5
+  - @workflow/world@5.0.0-beta.15
+
 ## 5.0.0-beta.26
 
 ### Patch Changes

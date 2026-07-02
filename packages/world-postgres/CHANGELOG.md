@@ -1,5 +1,19 @@
 # @workflow/world-postgres
 
+## 5.0.0-beta.21
+
+### Minor Changes
+
+- [`97b8469`](https://github.com/vercel/workflow/commit/97b846902087fd2f7e8d5fd708a20eb175e4d636) - Move Workflow Postgres enum types into the workflow schema.
+
+### Patch Changes
+
+- Updated dependencies [[`f6772d9`](https://github.com/vercel/workflow/commit/f6772d95c81038bfa57aa14ea2cca20a07191475), [`fc5bdcb`](https://github.com/vercel/workflow/commit/fc5bdcb003051815e84f60ee00f5d8d6cc11c663), [`f76377b`](https://github.com/vercel/workflow/commit/f76377bf04239eccd8c85a6db19d0465e7bdb2ee)]:
+  - @workflow/utils@5.0.0-beta.5
+  - @workflow/world-local@5.0.0-beta.23
+  - @workflow/world@5.0.0-beta.15
+  - @workflow/errors@5.0.0-beta.9
+
 ## 5.0.0-beta.20
 
 ### Patch Changes
