@@ -3,6 +3,7 @@ import {
   CorruptedEventLogError,
   EntityConflictError,
   FatalError,
+  MaxEventsExceededError,
   PreconditionFailedError,
   ReplayDivergenceError,
   RUN_ERROR_CODES,
@@ -37,6 +38,7 @@ import { type StepInvocationQueueItem, WorkflowSuspension } from './global.js';
 import { runtimeLogger } from './logger.js';
 import { ReplayPayloadCache } from './replay-payload-cache.js';
 import {
+  getMaxEventsOverride,
   getMaxQueueDeliveries,
   getReplayDivergenceMaxRetries,
   isInlineOwnershipEnabled,
@@ -150,6 +152,20 @@ export {
   setWorld,
   type WorldFactoryModule,
 } from './runtime/world.js';
+
+/**
+ * Apply the optional client-side event-limit override.
+ * `WORKFLOW_MAX_EVENTS_OVERRIDE`, when set to a positive integer, clamps the
+ * server-supplied per-run event ceiling to a smaller value so enforcement can
+ * be exercised without a server-side change. Clamp-down only: it never raises
+ * the server's limit, and it takes effect even when the server returns none.
+ * Unset ⇒ server value passes through unchanged.
+ */
+function clampMaxEvents(serverValue: number | undefined): number | undefined {
+  const override = getMaxEventsOverride();
+  if (override === undefined) return serverValue;
+  return serverValue === undefined ? override : Math.min(serverValue, override);
+}
 
 function getWorkflowSetupErrorCode(err: unknown): RunErrorCode | null {
   if (WorkflowRuntimeError.is(err)) {
@@ -578,6 +594,9 @@ export function workflowEntrypoint(
                   // Shared state: set by either the background step path
                   // or the run_started setup below.
                   let workflowRun: WorkflowRun | undefined;
+                  // Server-supplied per-run event ceiling from the run_started
+                  // response. Undefined ⇒ no enforcement (older servers, turbo).
+                  let maxEventsLimit: number | undefined;
                   let workflowStartedAt = -1;
                   let preloadedEvents: Event[] | undefined;
                   let preloadedEventsCursor: string | null | undefined;
@@ -1036,6 +1055,19 @@ export function workflowEntrypoint(
                         { requestId, skipPreload: true }
                       );
                       runReadyBarrier = startedPromise;
+                      // Turbo backgrounds run_started, so the non-turbo assignment
+                      // below never runs — thread the per-run event ceiling off the
+                      // backgrounded response here instead. The guard re-checks
+                      // maxEventsLimit every loop iteration, so a value that lands
+                      // shortly after start still enforces well before a runaway
+                      // log approaches the ceiling.
+                      startedPromise.then(
+                        (r) => {
+                          const limit = clampMaxEvents(r?.maxEvents);
+                          if (limit !== undefined) maxEventsLimit = limit;
+                        },
+                        () => {}
+                      );
                       // Attach a no-op rejection handler so an early failure
                       // never surfaces as an unhandledRejection before a consumer
                       // (await/then) is attached; consumers still observe it.
@@ -1099,6 +1131,7 @@ export function workflowEntrypoint(
                           );
                         }
                         workflowRun = result.run;
+                        maxEventsLimit = clampMaxEvents(result.maxEvents);
                         // Anchors RSFS — see the declaration above.
                         runStartedReceivedAtMs = Date.now();
 
@@ -1483,6 +1516,20 @@ export function workflowEntrypoint(
                       // delivery is done.
                       if (hasRecordedTerminalRunEvent(events, runId)) {
                         return;
+                      }
+
+                      // Event-limit guard: fail a runaway run once its log
+                      // reaches the server-supplied ceiling (undefined ⇒ no
+                      // enforcement). The throw is caught below and written as
+                      // run_failed / MAX_EVENTS_EXCEEDED.
+                      if (
+                        maxEventsLimit !== undefined &&
+                        events.length >= maxEventsLimit
+                      ) {
+                        throw new MaxEventsExceededError(
+                          events.length,
+                          maxEventsLimit
+                        );
                       }
 
                       // Update cache reference (may have been set for first time)
