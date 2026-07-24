@@ -1,5 +1,11 @@
 # @workflow/world-postgres
 
+## 5.0.0-beta.29
+
+### Patch Changes
+
+- [#3064](https://github.com/vercel/workflow/pull/3064) [`cdb3db4`](https://github.com/vercel/workflow/commit/cdb3db4049e96d7e7f3746302f618de62aa69f91) Thanks [@joeyhotz](https://github.com/joeyhotz)! - On shutdown, abort stalled workflow and step HTTP deliveries after Graphile Worker's grace period so their Postgres job rows are unlocked through normal failure handling instead of waiting for stale-lock recovery; aborted deliveries still consume an attempt and retry only when budget remains. Add opt-in application-managed shutdown through `applicationManagedShutdown` or `WORKFLOW_POSTGRES_APPLICATION_MANAGED_SHUTDOWN=1` so applications can await `world.close()` before closing their HTTP server and caller-owned pool.
+
 ## 5.0.0-beta.28
 
 ### Minor Changes

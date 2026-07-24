@@ -1,5 +1,11 @@
 # @workflow/world-vercel
 
+## 5.0.0-beta.33
+
+### Patch Changes
+
+- [#3062](https://github.com/vercel/workflow/pull/3062) [`313a074`](https://github.com/vercel/workflow/commit/313a074ad17f8acbc82e04e6eea77c63439a1df8) Thanks [@karthikscale3](https://github.com/karthikscale3)! - Add `WORKFLOW_DISABLE_ANALYTICS_READS=1` to opt the world's `analytics` read namespace off, forcing `workflow inspect` list paths onto strongly consistent primary storage. Intended for tests and tooling that read entities immediately after writing them, where the analytics store's asynchronous ingestion can return stale pages.
+
 ## 5.0.0-beta.32
 
 ### Minor Changes

@@ -1,5 +1,15 @@
 # @workflow/next
 
+## 5.0.0-beta.37
+
+### Patch Changes
+
+- [#3071](https://github.com/vercel/workflow/pull/3071) [`f11e9fe`](https://github.com/vercel/workflow/commit/f11e9fe56f49f3477a2aee15dabc7774928b1428) Thanks [@TooTallNate](https://github.com/TooTallNate)! - Update `next` devDependency to 16.2.11 to address CVE-2026-64641
+
+- Updated dependencies [[`cfe7570`](https://github.com/vercel/workflow/commit/cfe7570d67b585363644044f5ee9c9ea1fea1d24)]:
+  - @workflow/builders@5.0.0-beta.37
+  - @workflow/core@5.0.0-beta.37
+
 ## 5.0.0-beta.36
 
 ### Patch Changes

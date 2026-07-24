@@ -1,5 +1,14 @@
 # @workflow/web-shared
 
+## 5.0.0-beta.37
+
+### Patch Changes
+
+- [#3060](https://github.com/vercel/workflow/pull/3060) [`45a56a3`](https://github.com/vercel/workflow/commit/45a56a387d343a6a77158426aaf93d158b4c443d) Thanks [@mitul-s](https://github.com/mitul-s)! - Animate the new trace viewer's zoom controls consistently with span focus.
+
+- Updated dependencies []:
+  - @workflow/core@5.0.0-beta.37
+
 ## 5.0.0-beta.36
 
 ### Minor Changes

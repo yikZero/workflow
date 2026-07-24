@@ -1,5 +1,17 @@
 # @workflow/builders
 
+## 5.0.0-beta.37
+
+### Minor Changes
+
+- [#3054](https://github.com/vercel/workflow/pull/3054) [`cfe7570`](https://github.com/vercel/workflow/commit/cfe7570d67b585363644044f5ee9c9ea1fea1d24) Thanks [@VaguelySerious](https://github.com/VaguelySerious)! - Add a `discoverWorkflowsInNodeModules` option (and `WORKFLOW_DISCOVER_NODE_MODULES` env var) to stop workflow discovery from descending into `node_modules`, skipping the cost of scanning third-party dependencies for workflow/step/serde code.
+
+### Patch Changes
+
+- Updated dependencies [[`313a074`](https://github.com/vercel/workflow/commit/313a074ad17f8acbc82e04e6eea77c63439a1df8)]:
+  - @workflow/world-vercel@5.0.0-beta.33
+  - @workflow/core@5.0.0-beta.37
+
 ## 5.0.0-beta.36
 
 ### Patch Changes
