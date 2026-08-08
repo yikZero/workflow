@@ -1,5 +1,13 @@
 # @workflow/next
 
+## 5.0.0-beta.41
+
+### Patch Changes
+
+- Updated dependencies [[`74dbf81`](https://github.com/vercel/workflow/commit/74dbf81d327b8574cca429b56757c7322a26b4ef), [`65139ac`](https://github.com/vercel/workflow/commit/65139acfd7118d3b73672435a6e1c47115f6e23f), [`a8db185`](https://github.com/vercel/workflow/commit/a8db185c3b19b3dab971f51aa076aead81ed26ea), [`4bb86d3`](https://github.com/vercel/workflow/commit/4bb86d305423a2da813cbef8b7d6fe4421288bba), [`439a495`](https://github.com/vercel/workflow/commit/439a495a715b9426ef4dbcf8d928a8fc50ffb040), [`eb9e13f`](https://github.com/vercel/workflow/commit/eb9e13fd23eb12e353cd8f53ed4357da06f8e5ac), [`19b5b85`](https://github.com/vercel/workflow/commit/19b5b85c8b78cfd6c8ebbdf62ae7b8241a109595), [`22349e9`](https://github.com/vercel/workflow/commit/22349e95fd85a112cbec3f425900b74bf5ccc77f), [`65139ac`](https://github.com/vercel/workflow/commit/65139acfd7118d3b73672435a6e1c47115f6e23f)]:
+  - @workflow/core@5.0.0-beta.41
+  - @workflow/builders@5.0.0-beta.41
+
 ## 5.0.0-beta.40
 
 ### Patch Changes
